@@ -1,0 +1,7 @@
+orders:
+  use_bracket: true
+  default_take_profit_pct: 0.004   # 0.40%
+  default_stop_loss_pct: 0.006     # 0.60%
+
+  data:
+  hist_concurrency_soft_limit: 10

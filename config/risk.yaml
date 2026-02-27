@@ -1,0 +1,8 @@
+# 全局
+risk_per_trade: 0.002          # 0.20%
+max_open_positions: 8
+max_gross_leverage: 1.2
+
+# 短线桶日内风控（可控止损）
+daily_loss_limit_short: -0.01  # -1.0% 触发短线停机
+max_consecutive_losses: 5
