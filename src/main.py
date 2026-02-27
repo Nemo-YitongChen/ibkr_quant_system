@@ -18,6 +18,8 @@ from .risk.limits import DailyRiskGate
 from .scheduler.runner import Runner, RunnerConfig
 from .app.engine import TradingEngine, EngineConfig
 
+from .strategies import EngineStrategy, StrategyConfig  # ✅ 新增
+
 log = get_logger("main")
 
 
@@ -69,14 +71,17 @@ def main():
     runner = Runner(ib, RunnerConfig(), account=account)
 
     universe = UniverseService(ib, UniverseConfig(max_short_candidates=15))
+
+    # ✅ 用 strategies/ 里的适配器，避免 app/ 再造 strategy.py
+    strategy = EngineStrategy(orders=orders, gate=gate, cfg=StrategyConfig())
+
     engine = TradingEngine(
         ib=ib,
-        md=md,
-        orders=orders,
-        gate=gate,
-        universe=universe,
+        universe_svc=universe,
+        strategy=strategy,
         runner=runner,
         cfg=EngineConfig(),
+        md=md,
     )
 
     log.info("Starting engine...")

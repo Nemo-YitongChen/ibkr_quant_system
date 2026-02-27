@@ -52,6 +52,41 @@ class Storage:
                 value REAL,
                 details TEXT
             )""")
+c.execute("""
+CREATE TABLE IF NOT EXISTS signals_audit (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT,
+    symbol TEXT,
+    bar_end_time TEXT,
+    o REAL,
+    h REAL,
+    l REAL,
+    c REAL,
+    v REAL,
+    last3_close TEXT,
+    range20 REAL,
+    mr_sig REAL,
+    bo_sig REAL,
+    short_sig REAL,
+    mid_scale REAL,
+    total_sig REAL,
+    threshold REAL,
+    should_trade INTEGER,
+    action TEXT,
+    reason TEXT
+)""")
+c.execute("""
+CREATE TABLE IF NOT EXISTS md_quality (
+    day TEXT,
+    symbol TEXT,
+    buckets INTEGER,
+    duplicates INTEGER,
+    max_gap_sec INTEGER,
+    last_end_time TEXT,
+    updated_ts TEXT,
+    PRIMARY KEY (day, symbol)
+)""")
+
 
     def insert_order(self, row: Dict[str, Any]):
         # Accept sparse payloads so callers can evolve fields gradually.
@@ -81,3 +116,20 @@ class Storage:
                 "INSERT INTO risk_events (ts, kind, value, details) VALUES (?, ?, ?, ?)",
                 (datetime.utcnow().isoformat(), kind, value, details),
             )
+
+
+def insert_signal_audit(self, row: Dict[str, Any]):
+    row = dict(row)
+    row.setdefault("ts", datetime.utcnow().isoformat())
+    cols = ",".join(row.keys())
+    qs = ",".join(["?"] * len(row))
+    with self._conn() as c:
+        c.execute(f"INSERT INTO signals_audit ({cols}) VALUES ({qs})", list(row.values()))
+
+def upsert_md_quality(self, day: str, symbol: str, buckets: int, duplicates: int, max_gap_sec: int, last_end_time: str):
+    with self._conn() as c:
+        c.execute(
+            "INSERT OR REPLACE INTO md_quality (day, symbol, buckets, duplicates, max_gap_sec, last_end_time, updated_ts) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (day, symbol, int(buckets), int(duplicates), int(max_gap_sec), last_end_time, datetime.utcnow().isoformat()),
+        )
