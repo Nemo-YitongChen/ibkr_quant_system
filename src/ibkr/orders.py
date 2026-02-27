@@ -34,19 +34,10 @@ class OrderService:
             log.error(f"orderStatus handler error: {e}")
 
     def _on_error(self, reqId, errorCode, errorString, contract):
-        msg = errorString or ""
-
-        # ✅ 162：scanner 被我们主动 cancel 时的“信息性”提示（不算错误）
-        if errorCode == 162 and "scanner subscription cancelled" in msg.lower():
-            log.info(f"IBKR Info: reqId={reqId} code={errorCode} msg={msg}")
+        if errorCode == 162 and "scanner subscription cancelled" in (errorString or "").lower():
+            log.info(f"IBKR Info: reqId={reqId} code=162 msg={errorString}")
             return
-
-        # 其它 162（例如权限/禁用的 scanner type）仍然值得关注
-        if errorCode == 162:
-            log.warning(f"IBKR Warning: reqId={reqId} code={errorCode} msg={msg}")
-            return
-
-        log.error(f"IBKR Error: reqId={reqId} code={errorCode} msg={msg}")
+        log.error(f"IBKR Error: reqId={reqId} code={errorCode} msg={errorString}")
 
     def place_bracket(self, contract: Contract, action: str, qty: float, entry_price: float, params: BracketParams):
         """

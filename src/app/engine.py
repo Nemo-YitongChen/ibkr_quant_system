@@ -5,6 +5,7 @@ import time
 import logging
 from dataclasses import dataclass, field
 from typing import Dict, Optional, List, Any
+from __future__ import annotations
 
 from ib_insync import IB, Stock, Forex  # type: ignore
 
@@ -36,17 +37,19 @@ class SymbolState:
 class TradingEngine:
     def __init__(
         self,
-        ib: IB,
+        ib,
         universe_svc: Any,
         strategy: Any,
         runner: Any,
-        cfg: EngineConfig,
+        cfg,
+        md: Optional[Any] = None,   # ✅ 新增：可选 md，默认 None（兼容旧 main）
     ) -> None:
         self.ib = ib
         self.universe_svc = universe_svc
         self.strategy = strategy
         self.runner = runner
         self.cfg = cfg
+        self.md = md
 
         self._states: Dict[str, SymbolState] = {}
         self._aggs: Dict[str, RealTime5mAggregator] = {}
