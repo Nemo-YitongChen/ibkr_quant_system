@@ -1,0 +1,68 @@
+data:
+  mid_lookback_days: 220
+  long_years: 5
+  earnings_top_k: 24
+
+market_profile:
+  name: "hk_equities"
+  timezone: "Asia/Hong_Kong"
+  benchmark_symbol: "2800.HK"
+  style_bias: "cashflow_value_and_policy_resilience"
+  notes:
+    - "港股更容易受中国政策与流动性预期影响，优先看现金流、分红能力、ROE 和监管可见度。"
+    - "联系汇率下利率仍偏紧，地产高杠杆链条维持谨慎，平台、保险、电信和高股息龙头更适合作为核心仓。"
+
+scoring:
+  long_score_weight: 1.00
+  trend_vs_ma200_weight: 0.60
+  mid_scale_weight: 0.40
+  regime_composite_weight: 0.32
+  trend_slope_weight: 0.28
+  drawdown_penalty_weight: 0.38
+  rebalance_penalty: 0.32
+  risk_off_penalty: 0.16
+  earnings_penalty: 0.08
+  macro_penalty: 0.12
+  vix_elevated_threshold: 20.0
+  vix_high_threshold: 28.0
+  vix_elevated_penalty: 0.08
+  vix_high_penalty: 0.18
+  accumulate_threshold: 0.34
+  hold_threshold: 0.10
+  reduce_threshold: -0.05
+  min_mid_scale_accumulate: 0.56
+  valuation_weight: 0.18
+  profit_margin_weight: 0.18
+  operating_margin_weight: 0.10
+  revenue_growth_weight: 0.08
+  roe_weight: 0.16
+  valuation_anchor_pe: 16.0
+  trailing_pe_cap: 32.0
+  forward_pe_cap: 24.0
+  profit_margin_floor: 0.06
+  operating_margin_floor: 0.10
+  revenue_growth_floor: 0.02
+  roe_floor: 0.12
+
+plan:
+  size_mult_normal: 0.95
+  size_mult_elevated: 0.80
+  size_mult_high: 0.62
+  vix_elevated_threshold: 20.0
+  vix_high_threshold: 28.0
+  min_allocation_mult: 0.35
+  max_allocation_mult: 1.15
+  staged_entry_parts: 3
+  accumulate_pullback_pct: 0.04
+  rebalance_window_days: 30
+  review_window_days: 75
+  trim_fraction: 0.25
+
+backtest:
+  holding_periods_days: [30, 60, 90]
+  sample_step_days: 5
+  min_trade_samples: 4
+  min_history_bars: 360
+  mid_lookback_days: 220
+  long_drawdown_window: 252
+  history_days: 1764

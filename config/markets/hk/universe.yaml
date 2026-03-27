@@ -1,0 +1,25 @@
+name: hk_market_core
+asset_class: equity
+region: hk
+symbol_master_db: "symbol_master.db"
+seed_symbols: []
+seed_watchlist_yaml: "config/watchlists/resolved_hk_top100_tech_growth.yaml"
+report_watchlist_yaml: "config/watchlists/resolved_hk_market_core.yaml"
+symbol_master_watchlists:
+  - "config/watchlists/resolved_hk_market_core.yaml"
+notes:
+  - "Default HK equity universe for live seed and report generation."
+  - "Report universe uses the union of bluechip and tech-growth watchlists."
+  - "Resolved HK market core remains the broad stage-1 source until a larger verified HK universe is added."
+layered_scan:
+  enabled: true
+  include_symbol_master: true
+  include_recent: false
+  include_scanner: true
+  broad_limit: 180
+  deep_limit: 54
+  enrichment_limit: 24
+  history_workers: 5
+  network_reserve_ratio: 0.45
+  progress_interval: 15
+  scanner_limit: 24

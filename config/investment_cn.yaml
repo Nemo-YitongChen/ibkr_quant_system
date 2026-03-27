@@ -1,0 +1,71 @@
+research_only_yfinance: true
+
+data:
+  mid_lookback_days: 240
+  long_years: 5
+  earnings_top_k: 20
+
+market_profile:
+  name: "cn_a_share_research"
+  timezone: "Asia/Shanghai"
+  benchmark_symbol: "510300.SS"
+  style_bias: "quality_and_policy_resilience"
+  notes:
+    - "当前为 research-only 中国A股推荐池，不启用 execution、guard 或 broker submit。"
+    - "开市 broad scan 会合并 IB scanner 的沪股通、深股通和科创板候选，但仍只生成推荐、不自动提交。"
+    - "优先高现金流、高ROE、行业龙头和政策可见度较强的标的，降低高杠杆和高故事性标的权重。"
+
+scoring:
+  long_score_weight: 1.00
+  trend_vs_ma200_weight: 0.58
+  mid_scale_weight: 0.32
+  regime_composite_weight: 0.30
+  trend_slope_weight: 0.22
+  drawdown_penalty_weight: 0.40
+  rebalance_penalty: 0.34
+  risk_off_penalty: 0.18
+  earnings_penalty: 0.08
+  macro_penalty: 0.16
+  vix_elevated_threshold: 20.0
+  vix_high_threshold: 28.0
+  vix_elevated_penalty: 0.08
+  vix_high_penalty: 0.16
+  accumulate_threshold: 0.34
+  hold_threshold: 0.10
+  reduce_threshold: -0.05
+  min_mid_scale_accumulate: 0.55
+  valuation_weight: 0.14
+  profit_margin_weight: 0.16
+  operating_margin_weight: 0.15
+  revenue_growth_weight: 0.09
+  roe_weight: 0.16
+  valuation_anchor_pe: 20.0
+  trailing_pe_cap: 35.0
+  forward_pe_cap: 28.0
+  profit_margin_floor: 0.06
+  operating_margin_floor: 0.10
+  revenue_growth_floor: 0.05
+  roe_floor: 0.12
+
+plan:
+  size_mult_normal: 0.95
+  size_mult_elevated: 0.80
+  size_mult_high: 0.65
+  vix_elevated_threshold: 20.0
+  vix_high_threshold: 28.0
+  min_allocation_mult: 0.35
+  max_allocation_mult: 1.08
+  staged_entry_parts: 3
+  accumulate_pullback_pct: 0.025
+  rebalance_window_days: 30
+  review_window_days: 90
+  trim_fraction: 0.25
+
+backtest:
+  holding_periods_days: [30, 60, 90]
+  sample_step_days: 5
+  min_trade_samples: 4
+  min_history_bars: 360
+  mid_lookback_days: 240
+  long_drawdown_window: 252
+  history_days: 1764

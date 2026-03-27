@@ -1,0 +1,30 @@
+mode: paper
+execution_mode: investment_only
+host: "127.0.0.1"
+port: 4002
+client_id: 151
+account_id: "DUQ152001"
+timezone: "Asia/Shanghai"
+risk_config: "config/risk.yaml"
+strategy_config: "config/strategy_defaults_cn.yaml"
+report_config: "config/report_scoring.yaml"
+investment_config: "config/investment_cn.yaml"
+regime_adaptor_config: "config/regime_adaptor_cn.yaml"
+scanner_enabled: true
+scanner_instrument: "STOCK.HK"
+scanner_location_code: "STK.HK.SEHKNTL"
+scanner_location_codes:
+  - "STK.HK.SEHKNTL"
+  - "STK.HK.SEHKSZSE"
+  - "STK.HK.SEHKSTAR"
+scanner_refresh_sec: 120
+scanner_max_codes_per_run: 3
+scanner_limit: 20
+scanner_codes:
+  - HOT_BY_VOLUME
+  - MOST_ACTIVE
+  - TOP_PERC_GAIN
+  - TOP_PERC_LOSE
+seed_watchlist_yaml: "config/watchlists/cn_top_quality.yaml"
+report_watchlist_yaml: "config/watchlists/cn_top_quality.yaml"
+research_only_yfinance: true

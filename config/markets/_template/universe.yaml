@@ -1,0 +1,10 @@
+name: template_market
+asset_class: equity
+region: template
+symbol_master_db: "symbol_master.db"
+seed_symbols: []
+seed_watchlist_yaml: ""
+report_watchlist_yaml: ""
+notes:
+  - "Copy this directory when onboarding a new market or asset class."
+  - "For futures/commodities, point watchlist files to canonical contract lists rather than equities."

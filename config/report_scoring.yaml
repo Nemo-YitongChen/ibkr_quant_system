@@ -1,0 +1,46 @@
+features:
+  daily_lookback_days: 180
+  min_daily_bars: 60
+  ret_lookback_short: 5
+  ret_lookback_long: 20
+  ma_fast_window: 20
+  ma_slow_window: 60
+  atr_window: 14
+  intraday_need_bars: 240
+  intraday_window_bars: 60
+  min_last_price: 2.0
+  min_avg_daily_volume: 0.0
+  min_avg_daily_dollar_volume: 0.0
+  min_short_avg_bar_volume: 0.0
+
+scoring:
+  engine_score_weight: 1.00
+  overlay_score_weight: 0.35
+  trend_ret_20d_weight: 0.60
+  trend_ret_5d_weight: 0.40
+  trend_slope_weight: 0.30
+  mr_dist_ma20_weight: -0.25
+  tradable_range_weight: 0.20
+  tradable_volume_weight: 0.20
+  short_range_scale: 10.0
+  short_vol_scale: 1000000.0
+  vix_elevated_threshold: 18.0
+  vix_high_threshold: 25.0
+  vix_elevated_penalty: 0.20
+  vix_high_penalty: 0.40
+  earnings_penalty: 0.35
+  macro_penalty: 0.25
+  long_threshold: 0.25
+  short_threshold: -0.25
+
+trade_plan:
+  vix_elevated_threshold: 18.0
+  vix_high_threshold: 25.0
+  size_mult_normal: 1.00
+  size_mult_elevated: 0.80
+  size_mult_high: 0.60
+  long_stop_atr_mult: 1.20
+  long_take_profit_atr_mult: 2.00
+  short_stop_atr_mult: 1.20
+  short_take_profit_atr_mult: 2.00
+  min_atr_abs: 0.01

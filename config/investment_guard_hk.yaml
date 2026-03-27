@@ -1,0 +1,17 @@
+guard:
+  history_days: 90
+  trailing_high_lookback_days: 55
+  atr_lookback_days: 20
+  stop_loss_pct: 0.09
+  trailing_stop_pct: 0.065
+  trailing_stop_min_gain_pct: 0.09
+  atr_stop_mult: 2.3
+  take_profit_pct: 0.20
+  take_profit_pullback_pct: 0.04
+  trim_fraction: 0.34
+  max_actions_per_run: 2
+  allow_stop_loss: true
+  allow_take_profit: true
+  min_trade_value: 2000.0
+  use_intraday_5m: true
+  intraday_lookback_bars: 24

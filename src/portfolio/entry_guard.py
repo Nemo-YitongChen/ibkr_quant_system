@@ -78,7 +78,7 @@ class EntryGuard:
     def record_entry(self, symbol: str, now: float, total_sig: float, mid_scale: float):
         self._last[symbol] = (now, total_sig, mid_scale)
 
-    def can_open_long(
+    def can_open_trade(
         self,
         symbol: str,
         now: float,
@@ -114,3 +114,13 @@ class EntryGuard:
             return True, "allowed: breakout_scale_override"
 
         return False, "blocked: cooldown_active"
+
+    def can_open_long(
+        self,
+        symbol: str,
+        now: float,
+        total_sig: float,
+        mid_scale: float,
+        breakout: bool,
+    ) -> Tuple[bool, str]:
+        return self.can_open_trade(symbol, now, total_sig, mid_scale, breakout)

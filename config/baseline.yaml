@@ -1,0 +1,10 @@
+markets:
+  HK:
+    report_dir: "reports_investment_hk/resolved_hk_top100_bluechip"
+    portfolio_id: "HK:resolved_hk_top100_bluechip"
+  US:
+    report_dir: "reports_investment/watchlist"
+    portfolio_id: "US:watchlist"
+  XETRA:
+    report_dir: "reports_investment_xetra/xetra_top_quality"
+    portfolio_id: "XETRA:xetra_top_quality"

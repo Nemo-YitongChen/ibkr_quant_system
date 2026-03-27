@@ -1,6 +1,10 @@
 import time
 from ib_insync import IB
-from src.common.logger import get_logger
+
+try:
+    from ..common.logger import get_logger
+except ImportError:  # Support direct script execution from the src/ tree.
+    from common.logger import get_logger
 
 log = get_logger("ibkr.connection")
 

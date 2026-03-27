@@ -1,0 +1,9 @@
+symbol,borrow_fee_bps,source,note
+SPY,36.24,iborrowdesk_borrow,"IB socket API does not expose borrow fee rate directly.,date=2026-03-11"
+QQQ,30.52,iborrowdesk_borrow,"IB socket API does not expose borrow fee rate directly.,date=2026-03-11"
+IWM,112.12,iborrowdesk_borrow,"IB socket API does not expose borrow fee rate directly.,date=2026-03-11"
+DIA,41.42,iborrowdesk_borrow,"IB socket API does not expose borrow fee rate directly.,date=2026-03-11"
+VTI,42.44,iborrowdesk_borrow,"IB socket API does not expose borrow fee rate directly.,date=2026-03-11"
+AAPL,25.00,iborrowdesk_borrow,"IB socket API does not expose borrow fee rate directly.,date=2026-03-11"
+MSFT,40.81,iborrowdesk_borrow,"IB socket API does not expose borrow fee rate directly.,date=2026-03-11"
+NVDA,25.00,iborrowdesk_borrow,"IB socket API does not expose borrow fee rate directly.,date=2026-03-11"

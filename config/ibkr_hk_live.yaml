@@ -1,0 +1,35 @@
+mode: live
+execution_mode: investment_only
+host: "127.0.0.1"
+port: 4001
+client_id: 211
+account_id: "LIVE_ACCOUNT_ID"
+timezone: "Australia/Sydney"
+risk_config: "config/risk_hk.yaml"
+strategy_config: "config/strategy_defaults_hk.yaml"
+report_config: "config/report_scoring_hk.yaml"
+investment_config: "config/investment_hk.yaml"
+investment_paper_config: "config/investment_paper_hk.yaml"
+investment_execution_config: "config/investment_execution_hk.yaml"
+investment_guard_config: "config/investment_guard_hk.yaml"
+investment_opportunity_config: "config/investment_opportunity_hk.yaml"
+regime_adaptor_config: "config/regime_adaptor_hk.yaml"
+paper_allowed_execution_sources:
+  - REALTIME
+entry_timeout_sec: 60
+enforce_pretrade_risk_gate: true
+scanner_enabled: true
+scanner_instrument: "STOCK.HK"
+scanner_location_code: "STK.HK.SEHK"
+scanner_location_codes:
+  - "STK.HK.SEHK"
+scanner_refresh_sec: 120
+scanner_max_codes_per_run: 3
+scanner_limit: 20
+scanner_codes:
+  - HOT_BY_VOLUME
+  - MOST_ACTIVE
+  - TOP_PERC_GAIN
+  - TOP_PERC_LOSE
+seed_watchlist_yaml: "config/watchlists/resolved_hk_top100_tech_growth.yaml"
+report_watchlist_yaml: "config/watchlists/resolved_hk_market_core.yaml"

@@ -1,0 +1,68 @@
+data:
+  mid_lookback_days: 240
+  long_years: 5
+  earnings_top_k: 24
+
+market_profile:
+  name: "xetra_equities"
+  timezone: "Europe/Berlin"
+  benchmark_symbol: "EXS1.DE"
+  style_bias: "quality_exporters_and_margin_discipline"
+  notes:
+    - "欧元区通胀已经明显回落，但增长仍偏弱，优先软件、医疗、保险、交易所和高质量工业，而不是低利润率深周期。"
+    - "汽车、化工和重工业更受能源成本、全球制造业和贸易新闻影响，要求更高的利润率与估值安全边际。"
+
+scoring:
+  long_score_weight: 1.02
+  trend_vs_ma200_weight: 0.62
+  mid_scale_weight: 0.34
+  regime_composite_weight: 0.30
+  trend_slope_weight: 0.24
+  drawdown_penalty_weight: 0.42
+  rebalance_penalty: 0.34
+  risk_off_penalty: 0.17
+  earnings_penalty: 0.12
+  macro_penalty: 0.14
+  vix_elevated_threshold: 18.0
+  vix_high_threshold: 25.0
+  vix_elevated_penalty: 0.09
+  vix_high_penalty: 0.18
+  accumulate_threshold: 0.34
+  hold_threshold: 0.10
+  reduce_threshold: -0.05
+  min_mid_scale_accumulate: 0.56
+  valuation_weight: 0.16
+  profit_margin_weight: 0.16
+  operating_margin_weight: 0.16
+  revenue_growth_weight: 0.08
+  roe_weight: 0.15
+  valuation_anchor_pe: 18.0
+  trailing_pe_cap: 30.0
+  forward_pe_cap: 24.0
+  profit_margin_floor: 0.06
+  operating_margin_floor: 0.11
+  revenue_growth_floor: 0.03
+  roe_floor: 0.12
+
+plan:
+  size_mult_normal: 0.98
+  size_mult_elevated: 0.82
+  size_mult_high: 0.66
+  vix_elevated_threshold: 18.0
+  vix_high_threshold: 25.0
+  min_allocation_mult: 0.35
+  max_allocation_mult: 1.15
+  staged_entry_parts: 3
+  accumulate_pullback_pct: 0.025
+  rebalance_window_days: 30
+  review_window_days: 90
+  trim_fraction: 0.25
+
+backtest:
+  holding_periods_days: [30, 60, 90]
+  sample_step_days: 5
+  min_trade_samples: 4
+  min_history_bars: 360
+  mid_lookback_days: 240
+  long_drawdown_window: 252
+  history_days: 1764

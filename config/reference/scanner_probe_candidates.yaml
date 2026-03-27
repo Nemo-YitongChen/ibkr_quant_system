@@ -1,0 +1,71 @@
+markets:
+  US:
+    instrument: "STK"
+    notes:
+      - "US stays on the plain STK instrument family."
+      - "The location codes below all appear in reqScannerParameters() for this runtime."
+    location_codes:
+      - "STK.US.MAJOR"
+      - "STK.US"
+      - "STK.NASDAQ.NMS"
+      - "STK.NASDAQ.SCM"
+      - "STK.NYSE"
+      - "STK.AMEX"
+    scanner_codes:
+      - "HOT_BY_VOLUME"
+      - "MOST_ACTIVE"
+      - "TOP_PERC_GAIN"
+      - "TOP_PERC_LOSE"
+  HK:
+    instrument: "STOCK.HK"
+    notes:
+      - "Hong Kong stock scanners live under the STOCK.HK instrument family in reqScannerParameters()."
+      - "SEHKSTAR is kept as an extra probe target because it is a separate HK-connected board in the runtime XML."
+    location_codes:
+      - "STK.HK.SEHK"
+      - "STK.HK.SEHKSTAR"
+    scanner_codes:
+      - "HOT_BY_VOLUME"
+      - "MOST_ACTIVE"
+      - "TOP_PERC_GAIN"
+      - "TOP_PERC_LOSE"
+  ASX:
+    instrument: "STOCK.HK"
+    notes:
+      - "ASX appears under the STOCK.HK scanner family as STK.HK.ASX in reqScannerParameters()."
+      - "This is the exact runtime-discovered candidate, not a guessed code."
+    location_codes:
+      - "STK.HK.ASX"
+    scanner_codes:
+      - "HOT_BY_VOLUME"
+      - "MOST_ACTIVE"
+      - "TOP_PERC_GAIN"
+      - "TOP_PERC_LOSE"
+  CN:
+    instrument: "STOCK.HK"
+    notes:
+      - "Northbound China scanners are exposed via the STOCK.HK family in this runtime."
+      - "SEHKNTL covers Shanghai-Hong Kong Connect and SEHKSZSE covers Shenzhen in reqScannerParameters()."
+    location_codes:
+      - "STK.HK.SEHKNTL"
+      - "STK.HK.SEHKSZSE"
+      - "STK.HK.SEHKSTAR"
+    scanner_codes:
+      - "HOT_BY_VOLUME"
+      - "MOST_ACTIVE"
+      - "TOP_PERC_GAIN"
+      - "TOP_PERC_LOSE"
+  XETRA:
+    instrument: "STOCK.EU"
+    notes:
+      - "IBIS/XETRA lives under STOCK.EU in reqScannerParameters()."
+      - "XETRA is an explicit child location under STK.EU.IBIS in the runtime XML."
+    location_codes:
+      - "STK.EU.IBIS"
+      - "STK.EU.IBIS-XETRA"
+      - "STK.EU.IBIS-ETF"
+    scanner_codes:
+      - "HOT_BY_VOLUME"
+      - "MOST_ACTIVE"
+      - "TOP_PERC_GAIN"
+      - "TOP_PERC_LOSE"

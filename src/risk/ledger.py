@@ -2,6 +2,16 @@
 from dataclasses import dataclass
 from typing import Dict
 
+
+def normalize_action(action: str) -> str:
+    raw = str(action or "").strip().upper()
+    if raw in ("BUY", "BOT"):
+        return "BUY"
+    if raw in ("SELL", "SLD"):
+        return "SELL"
+    return raw
+
+
 @dataclass
 class PositionState:
     qty: float = 0.0
@@ -20,7 +30,7 @@ class Ledger:
         """
         返回本次成交产生的 realized PnL（不含佣金）。
         """
-        action = action.upper()
+        action = normalize_action(action)
         signed_qty = qty if action == "BUY" else -qty
 
         st = self.pos.get(symbol, PositionState())

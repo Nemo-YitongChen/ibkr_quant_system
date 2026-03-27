@@ -1,0 +1,37 @@
+mode: live
+execution_mode: investment_only
+host: "127.0.0.1"
+port: 4001
+client_id: 201
+account_id: "LIVE_ACCOUNT_ID"
+timezone: "Australia/Sydney"
+risk_config: "config/risk_us.yaml"
+strategy_config: "config/strategy_defaults_us.yaml"
+report_config: "config/report_scoring_us.yaml"
+investment_config: "config/investment_us.yaml"
+investment_paper_config: "config/investment_paper_us.yaml"
+investment_execution_config: "config/investment_execution_us.yaml"
+investment_guard_config: "config/investment_guard_us.yaml"
+investment_opportunity_config: "config/investment_opportunity_us.yaml"
+regime_adaptor_config: "config/regime_adaptor_us.yaml"
+paper_allowed_execution_sources:
+  - REALTIME
+entry_timeout_sec: 60
+enforce_pretrade_risk_gate: true
+scanner_enabled: true
+scanner_instrument: "STK"
+scanner_location_code: "STK.NYSE"
+scanner_location_codes:
+  - "STK.NYSE"
+  - "STK.NASDAQ.SCM"
+  - "STK.AMEX"
+scanner_refresh_sec: 120
+scanner_max_codes_per_run: 3
+scanner_limit: 20
+scanner_codes:
+  - HOT_BY_VOLUME
+  - MOST_ACTIVE
+  - TOP_PERC_GAIN
+  - TOP_PERC_LOSE
+seed_watchlist_yaml: "config/watchlist.yaml"
+report_watchlist_yaml: "config/watchlist.yaml"

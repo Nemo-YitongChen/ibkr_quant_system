@@ -1,0 +1,348 @@
+timezone: "Australia/Sydney"
+poll_sec: 30
+market_holidays_config: "config/market_holidays.yaml"
+summary_out_dir: "reports_supervisor_live"
+scope_summary_out_dir: true
+report_max_age_hours: 168
+report_max_trading_days_old: 1
+watchlist_timeout_sec: 180
+report_timeout_sec: 1200
+paper_timeout_sec: 300
+execution_timeout_sec: 300
+guard_timeout_sec: 240
+short_safety_timeout_sec: 300
+dashboard_enabled: true
+dashboard_auto_open: true
+dashboard_timeout_sec: 120
+dashboard_execution_kpi_dir: "reports_investment_execution"
+dashboard_weekly_review_dir: "reports_investment_weekly_live"
+dashboard_labeling_dir: "reports_investment_labeling_live"
+dashboard_db: "audit.db"
+run_investment_labeling: true
+labeling_interval_min: 180
+labeling_only_when_all_markets_closed: true
+labeling_timeout_sec: 300
+labeling_horizons: "5,20,60"
+labeling_limit: 400
+run_investment_weekly_review: true
+weekly_review_interval_min: 180
+weekly_review_only_when_all_markets_closed: true
+weekly_review_timeout_sec: 300
+weekly_review_auto_apply_paper: true
+weekly_review_auto_apply_live: false
+weekly_review_overlay_dir: "auto_feedback_configs"
+dashboard_control_enabled: true
+dashboard_control_host: "127.0.0.1"
+dashboard_control_port: 8766
+
+markets:
+  - name: "hk"
+    market: "HK"
+    local_timezone: "Asia/Hong_Kong"
+    enabled: true
+    watchlist_refresh_time: "17:10"
+    report_time: "18:00"
+    short_safety_sync:
+      enabled: false
+      time: "19:40"
+      max_age_sec: 21600
+      retry_sec: 900
+      run_before_report: true
+      run_before_live: true
+      max_symbols: 200
+      snapshot_wait_sec: 2.5
+      batch_size: 30
+      market_data_type: 1
+      fallback_market_data_type: 4
+    watchlists:
+      - config: "config/watchlists/hk_top100_bluechip.yaml"
+        out: "config/watchlists/resolved_hk_top100_bluechip.yaml"
+      - config: "config/watchlists/hk_top100_tech_growth.yaml"
+        out: "config/watchlists/resolved_hk_top100_tech_growth.yaml"
+    reports:
+      - out_dir: "reports_investment"
+        kind: "investment"
+        ibkr_config: "config/ibkr_hk_live.yaml"
+        watchlist_yaml: "config/watchlists/resolved_hk_top100_bluechip.yaml"
+        investment_config: "config/investment_hk.yaml"
+        paper_config: "config/investment_paper_hk.yaml"
+        opportunity_config: "config/investment_opportunity_hk.yaml"
+        report_schedule:
+          - name: "pre"
+            time: "09:00"
+          - name: "mid"
+            time: "12:15"
+          - name: "post"
+            time: "18:00"
+        timeout_sec: 1200
+        request_timeout_sec: 15
+        backtest_top_k: 8
+        fundamentals_top_k: 8
+        paper_timeout_sec: 300
+        run_investment_paper: true
+        force_local_paper_ledger: true
+        run_baseline_regression: true
+        baseline_out_dir: "reports_baseline"
+        run_investment_execution: true
+        execution_time: "09:35"
+        execution_timeout_sec: 300
+        submit_investment_execution: true
+        execution_config: "config/investment_execution_hk.yaml"
+        run_investment_guard: true
+        guard_config: "config/investment_guard_hk.yaml"
+        run_investment_opportunity: true
+        guard_start: "09:40"
+        guard_end: "15:50"
+        guard_interval_min: 15
+        guard_timeout_sec: 240
+        submit_investment_guard: false
+        opportunity_start: "09:40"
+        opportunity_end: "15:50"
+        opportunity_interval_min: 15
+        opportunity_timeout_sec: 240
+        use_audit_recent: false
+        db: "audit.db"
+        audit_limit: 500
+        max_universe: 1000
+        top_n: 10
+      - out_dir: "reports_investment"
+        kind: "investment"
+        ibkr_config: "config/ibkr_hk_live.yaml"
+        watchlist_yaml: "config/watchlists/resolved_hk_top100_tech_growth.yaml"
+        investment_config: "config/investment_hk.yaml"
+        paper_config: "config/investment_paper_hk.yaml"
+        opportunity_config: "config/investment_opportunity_hk.yaml"
+        report_schedule:
+          - name: "pre"
+            time: "09:00"
+          - name: "mid"
+            time: "12:15"
+          - name: "post"
+            time: "18:00"
+        timeout_sec: 1200
+        request_timeout_sec: 15
+        backtest_top_k: 8
+        fundamentals_top_k: 8
+        paper_timeout_sec: 300
+        run_investment_paper: true
+        force_local_paper_ledger: true
+        run_baseline_regression: true
+        baseline_out_dir: "reports_baseline"
+        run_investment_execution: true
+        execution_time: "09:35"
+        execution_timeout_sec: 300
+        submit_investment_execution: true
+        execution_config: "config/investment_execution_hk.yaml"
+        run_investment_guard: true
+        guard_config: "config/investment_guard_hk.yaml"
+        run_investment_opportunity: true
+        guard_start: "09:40"
+        guard_end: "15:50"
+        guard_interval_min: 15
+        guard_timeout_sec: 240
+        submit_investment_guard: false
+        opportunity_start: "09:40"
+        opportunity_end: "15:50"
+        opportunity_interval_min: 15
+        opportunity_timeout_sec: 240
+        use_audit_recent: false
+        db: "audit.db"
+        audit_limit: 500
+        max_universe: 1000
+        top_n: 10
+    trading:
+      enabled: false
+      weekdays: [0, 1, 2, 3, 4]
+      start: "09:30"
+      end: "16:10"
+
+  - name: "us"
+    market: "US"
+    local_timezone: "America/New_York"
+    enabled: true
+    watchlist_refresh_time: "16:10"
+    report_time: "16:30"
+    short_safety_sync:
+      enabled: false
+      time: "16:40"
+      max_age_sec: 21600
+      retry_sec: 900
+      run_before_report: true
+      run_before_live: true
+      max_symbols: 200
+      snapshot_wait_sec: 2.5
+      batch_size: 40
+      market_data_type: 1
+      fallback_market_data_type: 4
+    watchlists: []
+    reports:
+      - out_dir: "reports_investment"
+        kind: "investment"
+        ibkr_config: "config/ibkr_us_live.yaml"
+        watchlist_yaml: "config/watchlist.yaml"
+        investment_config: "config/investment_us.yaml"
+        paper_config: "config/investment_paper_us.yaml"
+        opportunity_config: "config/investment_opportunity_us.yaml"
+        report_schedule:
+          - name: "pre"
+            time: "08:45"
+          - name: "mid"
+            time: "12:15"
+          - name: "post"
+            time: "16:30"
+        timeout_sec: 1200
+        request_timeout_sec: 15
+        backtest_top_k: 8
+        fundamentals_top_k: 8
+        paper_timeout_sec: 300
+        run_investment_paper: true
+        force_local_paper_ledger: true
+        run_baseline_regression: true
+        baseline_out_dir: "reports_baseline"
+        run_investment_execution: true
+        execution_time: "09:40"
+        execution_timeout_sec: 300
+        submit_investment_execution: true
+        execution_config: "config/investment_execution_us.yaml"
+        run_investment_guard: true
+        guard_config: "config/investment_guard_us.yaml"
+        run_investment_opportunity: true
+        guard_start: "09:40"
+        guard_end: "15:40"
+        guard_interval_min: 15
+        guard_timeout_sec: 240
+        submit_investment_guard: false
+        opportunity_start: "09:40"
+        opportunity_end: "15:40"
+        opportunity_interval_min: 15
+        opportunity_timeout_sec: 240
+        use_audit_recent: false
+        db: "audit.db"
+        audit_limit: 500
+        max_universe: 1000
+        top_n: 10
+    trading:
+      enabled: false
+      weekdays: [0, 1, 2, 3, 4]
+      start: "09:30"
+      end: "16:10"
+
+  - name: "xetra"
+    market: "XETRA"
+    local_timezone: "Europe/Berlin"
+    enabled: true
+    report_time: "18:00"
+    short_safety_sync:
+      enabled: false
+    watchlists: []
+    reports:
+      - out_dir: "reports_investment_xetra"
+        kind: "investment"
+        ibkr_config: "config/ibkr_xetra_live.yaml"
+        watchlist_yaml: "config/watchlists/xetra_top_quality.yaml"
+        investment_config: "config/investment_xetra.yaml"
+        paper_config: "config/investment_paper_xetra.yaml"
+        execution_config: "config/investment_execution_xetra.yaml"
+        guard_config: "config/investment_guard_xetra.yaml"
+        opportunity_config: "config/investment_opportunity_xetra.yaml"
+        report_schedule:
+          - name: "pre"
+            time: "08:30"
+          - name: "mid"
+            time: "12:30"
+          - name: "post"
+            time: "18:00"
+        timeout_sec: 1200
+        request_timeout_sec: 15
+        backtest_top_k: 8
+        fundamentals_top_k: 8
+        paper_timeout_sec: 300
+        run_investment_paper: true
+        force_local_paper_ledger: true
+        run_baseline_regression: true
+        baseline_out_dir: "reports_baseline"
+        run_investment_execution: true
+        execution_time: "09:20"
+        execution_timeout_sec: 300
+        submit_investment_execution: true
+        run_investment_guard: true
+        run_investment_opportunity: true
+        guard_start: "09:25"
+        guard_end: "17:20"
+        guard_interval_min: 30
+        guard_timeout_sec: 240
+        submit_investment_guard: false
+        opportunity_start: "09:25"
+        opportunity_end: "17:20"
+        opportunity_interval_min: 30
+        opportunity_timeout_sec: 240
+        use_audit_recent: false
+        db: "audit.db"
+        audit_limit: 500
+        max_universe: 1000
+        top_n: 10
+    trading:
+      enabled: false
+      weekdays: [0, 1, 2, 3, 4]
+      start: "09:00"
+      end: "17:30"
+
+  - name: "asx"
+    market: "ASX"
+    local_timezone: "Australia/Sydney"
+    enabled: true
+    report_time: "16:30"
+    short_safety_sync:
+      enabled: false
+    watchlists: []
+    reports:
+      - out_dir: "reports_investment_asx"
+        kind: "investment"
+        ibkr_config: "config/ibkr_asx_live.yaml"
+        watchlist_yaml: "config/watchlists/asx_top_quality.yaml"
+        investment_config: "config/investment_asx.yaml"
+        paper_config: "config/investment_paper_asx.yaml"
+        execution_config: "config/investment_execution_asx.yaml"
+        guard_config: "config/investment_guard_asx.yaml"
+        opportunity_config: "config/investment_opportunity_asx.yaml"
+        report_schedule:
+          - name: "pre"
+            time: "09:00"
+          - name: "mid"
+            time: "12:30"
+          - name: "post"
+            time: "16:30"
+        timeout_sec: 1200
+        request_timeout_sec: 15
+        backtest_top_k: 8
+        fundamentals_top_k: 8
+        paper_timeout_sec: 300
+        run_investment_paper: true
+        force_local_paper_ledger: true
+        run_baseline_regression: true
+        baseline_out_dir: "reports_baseline"
+        run_investment_execution: true
+        execution_time: "10:05"
+        execution_timeout_sec: 300
+        submit_investment_execution: true
+        run_investment_guard: true
+        run_investment_opportunity: true
+        guard_start: "10:10"
+        guard_end: "16:00"
+        guard_interval_min: 15
+        guard_timeout_sec: 240
+        submit_investment_guard: false
+        opportunity_start: "10:10"
+        opportunity_end: "16:00"
+        opportunity_interval_min: 15
+        opportunity_timeout_sec: 240
+        use_audit_recent: false
+        db: "audit.db"
+        audit_limit: 500
+        max_universe: 1000
+        top_n: 10
+    trading:
+      enabled: false
+      weekdays: [0, 1, 2, 3, 4]
+      start: "10:00"
+      end: "16:10"

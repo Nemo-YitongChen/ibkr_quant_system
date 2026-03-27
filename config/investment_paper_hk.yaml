@@ -1,0 +1,12 @@
+paper:
+  initial_cash: 100000.0
+  rebalance_frequency: weekly
+  rebalance_weekday: 4
+  max_holdings: 10
+  max_single_weight: 0.18
+  max_sector_weight: 0.30
+  max_country_weight: 1.00
+  max_market_weight: 1.00
+  max_net_exposure: 0.82
+  min_position_weight: 0.04
+  hold_weight_multiplier: 0.85

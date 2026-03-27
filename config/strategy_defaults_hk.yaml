@@ -1,0 +1,28 @@
+orders:
+  use_bracket: true
+  default_take_profit_pct: 0.006
+  default_stop_loss_pct: 0.009
+
+mid_regime:
+  ma_fast: 24
+  ma_slow: 84
+  momentum_lookback: 60
+  vol_lookback: 84
+  drawdown_lookback: 84
+  vol_elevated: 0.012
+  vol_extreme: 0.022
+  drawdown_warn: -0.04
+  drawdown_stop: -0.08
+  scale_floor: 0.12
+  scale_neutral: 0.45
+  scale_bull: 0.80
+  scale_bear: 0.28
+  trend_weight: 0.40
+  momentum_weight: 0.20
+  volatility_weight: 0.20
+  drawdown_weight: 0.20
+  risk_on_threshold: 0.52
+  hard_risk_off_threshold: 0.24
+
+data:
+  hist_concurrency_soft_limit: 10

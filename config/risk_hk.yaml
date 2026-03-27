@@ -1,0 +1,65 @@
+# HK market risk profile
+risk_per_trade: 0.0015
+max_open_positions: 10
+max_gross_leverage: 1.0
+paper_enable_min_order_qty_floor: true
+paper_min_order_qty: 1.0
+
+daily_loss_limit_short: -0.008
+max_consecutive_losses: 4
+
+trade_risk:
+  atr_window: 14
+  atr_stop_mult: 1.2
+  min_stop_loss_pct: 0.006
+  slippage_floor_bps: 5.0
+  gap_floor_pct: 0.0025
+  liquidity_target_bar_volume: 30000.0
+  min_avg_bar_volume: 3000.0
+  liquidity_stop_addon_max_pct: 0.0035
+  short_borrow_stop_addon_mult: 0.25
+  max_short_borrow_addon_pct: 0.005
+  take_profit_risk_mult: 1.9
+  max_short_borrow_fee_bps: 175.0
+
+risk_context:
+  refresh_sec: 1800
+  macro_block_importance: ["high", "3"]
+  block_on_earnings: true
+  short_borrow_fee_bps_default: 0.0
+  short_borrow_fee_file: "config/reference/short_borrow_fee_hk.csv"
+  short_borrow_fee_bps: {}
+  blocked_short_symbols: []
+
+short_data_sources:
+  - enabled: true
+    name: "yahoo_quote_spread"
+    provider: "yahoo_quote"
+    url: "https://query1.finance.yahoo.com/v7/finance/quote"
+    timeout_sec: 12.0
+    batch_size: 10
+
+short_safety:
+  shadow_mode: true
+  require_locate: true
+  require_ssr_state: false
+  require_borrow_data: true
+  require_spread_data: true
+  require_uptick_data_when_ssr: true
+  min_avg_bar_volume: 3000.0
+  max_spread_bps: 25.0
+  borrow_fee_warn_bps: 90.0
+  max_short_borrow_fee_bps: 175.0
+  market_timezone: "Asia/Hong_Kong"
+  market_open_hhmm: "09:30"
+  market_close_hhmm: "16:00"
+  open_block_minutes: 10
+  close_block_minutes: 5
+  short_safety_file: "config/reference/short_safety_rules_hk.csv"
+  locate_status: {}
+  ssr_status: {}
+  spread_bps: {}
+  has_uptick_data: {}
+  ssr_rule201:
+    enabled: false
+    state_file: "config/reference/short_ssr_state_hk.json"

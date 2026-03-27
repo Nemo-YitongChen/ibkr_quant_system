@@ -1,0 +1,69 @@
+# US market risk profile
+risk_per_trade: 0.002
+max_open_positions: 8
+max_gross_leverage: 1.2
+paper_enable_min_order_qty_floor: true
+paper_min_order_qty: 1.0
+
+daily_loss_limit_short: -0.01
+max_consecutive_losses: 5
+
+trade_risk:
+  atr_window: 14
+  atr_stop_mult: 1.2
+  min_stop_loss_pct: 0.006
+  slippage_floor_bps: 4.0
+  gap_floor_pct: 0.002
+  liquidity_target_bar_volume: 50000.0
+  min_avg_bar_volume: 5000.0
+  liquidity_stop_addon_max_pct: 0.003
+  short_borrow_stop_addon_mult: 0.25
+  max_short_borrow_addon_pct: 0.004
+  take_profit_risk_mult: 1.8
+  max_short_borrow_fee_bps: 150.0
+
+risk_context:
+  refresh_sec: 1800
+  macro_block_importance: ["high", "3"]
+  block_on_earnings: true
+  short_borrow_fee_bps_default: 0.0
+  short_borrow_fee_file: "config/reference/short_borrow_fee_us.csv"
+  short_borrow_fee_bps: {}
+  blocked_short_symbols: []
+
+short_data_sources:
+  - enabled: true
+    name: "iborrowdesk_borrow"
+    provider: "iborrowdesk"
+    url: "https://iborrowdesk.com/api/ticker/{symbol}"
+    timeout_sec: 12.0
+  - enabled: true
+    name: "yahoo_quote_spread"
+    provider: "yahoo_quote"
+    url: "https://query1.finance.yahoo.com/v7/finance/quote"
+    timeout_sec: 12.0
+    batch_size: 10
+
+short_safety:
+  shadow_mode: true
+  require_locate: true
+  require_ssr_state: true
+  require_borrow_data: true
+  require_spread_data: true
+  require_uptick_data_when_ssr: true
+  min_avg_bar_volume: 5000.0
+  max_spread_bps: 20.0
+  borrow_fee_warn_bps: 80.0
+  max_short_borrow_fee_bps: 150.0
+  market_open_hhmm: "09:30"
+  market_close_hhmm: "16:00"
+  open_block_minutes: 10
+  close_block_minutes: 5
+  short_safety_file: "config/reference/short_safety_rules_us.csv"
+  locate_status: {}
+  ssr_status: {}
+  spread_bps: {}
+  has_uptick_data: {}
+  ssr_rule201:
+    enabled: true
+    state_file: "config/reference/short_ssr_state_us.json"

@@ -1,0 +1,9 @@
+symbol,locate_status,ssr_status,spread_bps,has_uptick_data,source,shortable_shares,shortable_level,bid,ask,note
+0700.HK,UNKNOWN,UNKNOWN,,,ibkr_socket_api:type_4,,,,,"ibkr_shortable_missing,ibkr_bid_ask_missing"
+1810.HK,UNKNOWN,UNKNOWN,,,ibkr_socket_api:type_4,,,,,"ibkr_shortable_missing,ibkr_bid_ask_missing"
+3690.HK,UNKNOWN,UNKNOWN,,,ibkr_socket_api:type_4,,,,,"ibkr_shortable_missing,ibkr_bid_ask_missing"
+9618.HK,UNKNOWN,UNKNOWN,,,ibkr_socket_api:type_4,,,,,"ibkr_shortable_missing,ibkr_bid_ask_missing"
+9988.HK,UNKNOWN,UNKNOWN,,,ibkr_socket_api:type_4,,,,,"ibkr_shortable_missing,ibkr_bid_ask_missing"
+9999.HK,UNKNOWN,UNKNOWN,,,ibkr_socket_api:type_4,,,,,"ibkr_shortable_missing,ibkr_bid_ask_missing"
+0020.HK,UNKNOWN,UNKNOWN,,,ibkr_socket_api:type_4,,,,,"ibkr_shortable_missing,ibkr_bid_ask_missing"
+0241.HK,UNKNOWN,UNKNOWN,,,ibkr_socket_api:type_4,,,,,"ibkr_shortable_missing,ibkr_bid_ask_missing"

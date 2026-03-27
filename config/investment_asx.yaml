@@ -1,0 +1,68 @@
+data:
+  mid_lookback_days: 240
+  long_years: 5
+  earnings_top_k: 24
+
+market_profile:
+  name: "asx_equities"
+  timezone: "Australia/Sydney"
+  benchmark_symbol: "VAS.AX"
+  style_bias: "quality_dividend_and_resource_balance"
+  notes:
+    - "澳洲市场更集中于金融、资源、医疗与消费防御，优先高质量龙头和现金流稳定公司。"
+    - "资源股受大宗商品和中国需求影响较大，银行股受本地利率与地产周期影响较大。"
+
+scoring:
+  long_score_weight: 1.00
+  trend_vs_ma200_weight: 0.60
+  mid_scale_weight: 0.34
+  regime_composite_weight: 0.30
+  trend_slope_weight: 0.22
+  drawdown_penalty_weight: 0.40
+  rebalance_penalty: 0.32
+  risk_off_penalty: 0.16
+  earnings_penalty: 0.10
+  macro_penalty: 0.12
+  vix_elevated_threshold: 18.0
+  vix_high_threshold: 25.0
+  vix_elevated_penalty: 0.09
+  vix_high_penalty: 0.18
+  accumulate_threshold: 0.32
+  hold_threshold: 0.08
+  reduce_threshold: -0.05
+  min_mid_scale_accumulate: 0.54
+  valuation_weight: 0.15
+  profit_margin_weight: 0.16
+  operating_margin_weight: 0.15
+  revenue_growth_weight: 0.07
+  roe_weight: 0.15
+  valuation_anchor_pe: 18.0
+  trailing_pe_cap: 28.0
+  forward_pe_cap: 22.0
+  profit_margin_floor: 0.06
+  operating_margin_floor: 0.10
+  revenue_growth_floor: 0.03
+  roe_floor: 0.11
+
+plan:
+  size_mult_normal: 0.98
+  size_mult_elevated: 0.80
+  size_mult_high: 0.65
+  vix_elevated_threshold: 18.0
+  vix_high_threshold: 25.0
+  min_allocation_mult: 0.35
+  max_allocation_mult: 1.12
+  staged_entry_parts: 3
+  accumulate_pullback_pct: 0.025
+  rebalance_window_days: 30
+  review_window_days: 90
+  trim_fraction: 0.25
+
+backtest:
+  holding_periods_days: [30, 60, 90]
+  sample_step_days: 5
+  min_trade_samples: 4
+  min_history_bars: 360
+  mid_lookback_days: 240
+  long_drawdown_window: 252
+  history_days: 1764

@@ -1,0 +1,9 @@
+symbol,borrow_fee_bps,source,note
+0700.HK,,ibkr_socket_api:type_4,IB socket API does not expose borrow fee rate directly.
+1810.HK,,ibkr_socket_api:type_4,IB socket API does not expose borrow fee rate directly.
+3690.HK,,ibkr_socket_api:type_4,IB socket API does not expose borrow fee rate directly.
+9618.HK,,ibkr_socket_api:type_4,IB socket API does not expose borrow fee rate directly.
+9988.HK,,ibkr_socket_api:type_4,IB socket API does not expose borrow fee rate directly.
+9999.HK,,ibkr_socket_api:type_4,IB socket API does not expose borrow fee rate directly.
+0020.HK,,ibkr_socket_api:type_4,IB socket API does not expose borrow fee rate directly.
+0241.HK,,ibkr_socket_api:type_4,IB socket API does not expose borrow fee rate directly.

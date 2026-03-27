@@ -1,0 +1,24 @@
+name: us_market_core
+asset_class: equity
+region: us
+symbol_master_db: "symbol_master.db"
+seed_symbols: []
+seed_watchlist_yaml: "config/watchlist.yaml"
+report_watchlist_yaml: "config/watchlist.yaml"
+symbol_master_watchlists:
+  - "config/watchlists/us_market_core.yaml"
+notes:
+  - "Default US equity universe for live seed and report generation."
+  - "Symbol master is expanded by a broader US market-core watchlist for layered scan stage-1 coverage."
+layered_scan:
+  enabled: true
+  include_symbol_master: true
+  include_recent: false
+  include_scanner: true
+  broad_limit: 320
+  deep_limit: 72
+  enrichment_limit: 36
+  history_workers: 6
+  network_reserve_ratio: 0.40
+  progress_interval: 20
+  scanner_limit: 36

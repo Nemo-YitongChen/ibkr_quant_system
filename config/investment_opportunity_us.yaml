@@ -1,0 +1,14 @@
+opportunity:
+  history_days: 180
+  ma_fast_days: 20
+  ma_slow_days: 50
+  atr_lookback_days: 14
+  recent_high_lookback_days: 60
+  max_candidates: 10
+  min_score: 0.12
+  pullback_entry_pct: 0.02
+  ma_buffer_pct: 0.01
+  atr_discount_mult: 0.30
+  include_hold_candidates: true
+  use_intraday_5m: true
+  intraday_lookback_bars: 24

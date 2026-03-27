@@ -1,0 +1,18 @@
+mode: paper
+execution_mode: investment_only
+host: "127.0.0.1"
+port: 4002
+client_id: 112
+account_id: "DUQ152001"
+timezone: "Australia/Sydney"
+risk_config: "config/risk_hk.yaml"
+strategy_config: "config/strategy_defaults_hk.yaml"
+report_config: "config/report_scoring_hk.yaml"
+investment_config: "config/investment_hk.yaml"
+investment_paper_config: "config/investment_paper_hk.yaml"
+investment_execution_config: "config/investment_execution_hk.yaml"
+regime_adaptor_config: "config/regime_adaptor_hk.yaml"
+paper_allowed_execution_sources:
+  - REALTIME
+entry_timeout_sec: 60
+enforce_pretrade_risk_gate: true

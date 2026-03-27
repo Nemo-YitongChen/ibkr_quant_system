@@ -1,0 +1,25 @@
+name: cn_market_core
+asset_class: equity
+region: cn
+symbol_master_db: "symbol_master.db"
+seed_symbols: []
+seed_watchlist_yaml: "config/watchlists/cn_top_quality.yaml"
+report_watchlist_yaml: "config/watchlists/cn_top_quality.yaml"
+symbol_master_watchlists:
+  - "config/watchlists/cn_market_core.yaml"
+research_only_yfinance: true
+notes:
+  - "China A-share research-only universe used for dashboard recommendations."
+  - "Uses yfinance daily data fallback and does not enable paper execution."
+  - "Symbol master is expanded by a broader CN market-core watchlist for layered scan stage-1 coverage."
+layered_scan:
+  enabled: true
+  include_symbol_master: true
+  include_recent: false
+  include_scanner: true
+  broad_limit: 120
+  deep_limit: 36
+  enrichment_limit: 18
+  history_workers: 3
+  network_reserve_ratio: 0.55
+  progress_interval: 10

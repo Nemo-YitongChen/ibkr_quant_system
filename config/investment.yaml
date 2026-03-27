@@ -1,0 +1,66 @@
+data:
+  mid_lookback_days: 180
+  long_years: 5
+  earnings_top_k: 30
+
+market_profile:
+  name: "default_equity_market"
+  timezone: "UTC"
+  benchmark_symbol: ""
+  style_bias: "quality_trend"
+  notes: []
+
+scoring:
+  long_score_weight: 1.00
+  trend_vs_ma200_weight: 0.60
+  mid_scale_weight: 0.35
+  regime_composite_weight: 0.35
+  trend_slope_weight: 0.25
+  drawdown_penalty_weight: 0.40
+  rebalance_penalty: 0.35
+  risk_off_penalty: 0.15
+  earnings_penalty: 0.12
+  macro_penalty: 0.10
+  vix_elevated_threshold: 18.0
+  vix_high_threshold: 25.0
+  vix_elevated_penalty: 0.08
+  vix_high_penalty: 0.18
+  accumulate_threshold: 0.35
+  hold_threshold: 0.10
+  reduce_threshold: -0.05
+  min_mid_scale_accumulate: 0.55
+  valuation_weight: 0.12
+  profit_margin_weight: 0.18
+  operating_margin_weight: 0.10
+  revenue_growth_weight: 0.10
+  roe_weight: 0.10
+  valuation_anchor_pe: 20.0
+  trailing_pe_cap: 45.0
+  forward_pe_cap: 35.0
+  profit_margin_floor: 0.05
+  operating_margin_floor: 0.08
+  revenue_growth_floor: 0.03
+  roe_floor: 0.10
+
+plan:
+  size_mult_normal: 1.00
+  size_mult_elevated: 0.85
+  size_mult_high: 0.70
+  vix_elevated_threshold: 18.0
+  vix_high_threshold: 25.0
+  min_allocation_mult: 0.35
+  max_allocation_mult: 1.25
+  staged_entry_parts: 3
+  accumulate_pullback_pct: 0.03
+  rebalance_window_days: 30
+  review_window_days: 90
+  trim_fraction: 0.25
+
+backtest:
+  holding_periods_days: [30, 60, 90]
+  sample_step_days: 5
+  min_trade_samples: 3
+  min_history_bars: 320
+  mid_lookback_days: 180
+  long_drawdown_window: 252
+  history_days: 1512

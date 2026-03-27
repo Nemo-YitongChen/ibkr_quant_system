@@ -1,0 +1,68 @@
+data:
+  mid_lookback_days: 252
+  long_years: 5
+  earnings_top_k: 36
+
+market_profile:
+  name: "us_equities"
+  timezone: "America/New_York"
+  benchmark_symbol: "SPY"
+  style_bias: "quality_growth_with_defensive_filter"
+  notes:
+    - "当前更偏向高利润率、现金流稳健的大盘龙头，RISK_OFF 环境下避免追逐扩张过快但估值过高的标的。"
+    - "美国利率仍高于疫情后宽松阶段，盈利兑现和利润率质量比单纯高增速更重要。"
+
+scoring:
+  long_score_weight: 1.05
+  trend_vs_ma200_weight: 0.65
+  mid_scale_weight: 0.35
+  regime_composite_weight: 0.30
+  trend_slope_weight: 0.25
+  drawdown_penalty_weight: 0.45
+  rebalance_penalty: 0.35
+  risk_off_penalty: 0.18
+  earnings_penalty: 0.15
+  macro_penalty: 0.12
+  vix_elevated_threshold: 18.0
+  vix_high_threshold: 25.0
+  vix_elevated_penalty: 0.10
+  vix_high_penalty: 0.20
+  accumulate_threshold: 0.38
+  hold_threshold: 0.12
+  reduce_threshold: -0.04
+  min_mid_scale_accumulate: 0.58
+  valuation_weight: 0.10
+  profit_margin_weight: 0.22
+  operating_margin_weight: 0.12
+  revenue_growth_weight: 0.14
+  roe_weight: 0.12
+  valuation_anchor_pe: 24.0
+  trailing_pe_cap: 55.0
+  forward_pe_cap: 40.0
+  profit_margin_floor: 0.08
+  operating_margin_floor: 0.12
+  revenue_growth_floor: 0.04
+  roe_floor: 0.14
+
+plan:
+  size_mult_normal: 1.00
+  size_mult_elevated: 0.82
+  size_mult_high: 0.65
+  vix_elevated_threshold: 18.0
+  vix_high_threshold: 25.0
+  min_allocation_mult: 0.35
+  max_allocation_mult: 1.20
+  staged_entry_parts: 3
+  accumulate_pullback_pct: 0.03
+  rebalance_window_days: 30
+  review_window_days: 90
+  trim_fraction: 0.25
+
+backtest:
+  holding_periods_days: [30, 60, 90]
+  sample_step_days: 5
+  min_trade_samples: 4
+  min_history_bars: 360
+  mid_lookback_days: 252
+  long_drawdown_window: 252
+  history_days: 1764

@@ -1,0 +1,25 @@
+name: asx_market_core
+asset_class: equity
+region: asx
+symbol_master_db: "symbol_master.db"
+seed_symbols: []
+seed_watchlist_yaml: "config/watchlists/asx_top_quality.yaml"
+report_watchlist_yaml: "config/watchlists/asx_top_quality.yaml"
+symbol_master_watchlists:
+  - "config/watchlists/asx_market_core.yaml"
+notes:
+  - "Default ASX equity universe for investment report and paper execution."
+  - "Uses a curated liquid large-cap quality list for final reporting."
+  - "Symbol master is expanded by a broader ASX market-core watchlist for layered scan stage-1 coverage."
+layered_scan:
+  enabled: true
+  include_symbol_master: true
+  include_recent: false
+  include_scanner: true
+  broad_limit: 180
+  deep_limit: 36
+  enrichment_limit: 18
+  history_workers: 4
+  network_reserve_ratio: 0.45
+  progress_interval: 10
+  scanner_limit: 24

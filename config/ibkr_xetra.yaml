@@ -1,0 +1,35 @@
+mode: paper
+execution_mode: investment_only
+host: "127.0.0.1"
+port: 4002
+client_id: 131
+account_id: "DUQ152001"
+timezone: "Europe/Berlin"
+risk_config: "config/risk.yaml"
+strategy_config: "config/strategy_defaults_xetra.yaml"
+report_config: "config/report_scoring.yaml"
+investment_config: "config/investment_xetra.yaml"
+investment_paper_config: "config/investment_paper_xetra.yaml"
+investment_execution_config: "config/investment_execution_xetra.yaml"
+investment_guard_config: "config/investment_guard_xetra.yaml"
+investment_opportunity_config: "config/investment_opportunity_xetra.yaml"
+regime_adaptor_config: "config/regime_adaptor_xetra.yaml"
+paper_allowed_execution_sources:
+  - REALTIME
+entry_timeout_sec: 60
+enforce_pretrade_risk_gate: true
+scanner_enabled: true
+scanner_instrument: "STOCK.EU"
+scanner_location_code: "STK.EU.IBIS-XETRA"
+scanner_location_codes:
+  - "STK.EU.IBIS-XETRA"
+scanner_refresh_sec: 120
+scanner_max_codes_per_run: 3
+scanner_limit: 20
+scanner_codes:
+  - HOT_BY_VOLUME
+  - MOST_ACTIVE
+  - TOP_PERC_GAIN
+  - TOP_PERC_LOSE
+seed_watchlist_yaml: "config/watchlists/xetra_top_quality.yaml"
+report_watchlist_yaml: "config/watchlists/xetra_top_quality.yaml"

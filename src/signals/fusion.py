@@ -13,11 +13,12 @@ def fuse(short_sig: float, long_sig: float, mid_scale: float, can_trade_short: b
     - 中期：mid_scale 做过滤与调权（不是硬性必须同向）
     """
 
-    if not can_trade_short:
-        return 0.0
-
     s = clamp(short_sig, -1.0, 1.0)
     m = clamp(mid_scale, 0.0, 1.0)
+
+    # Short bans should only suppress short exposure, not long exposure.
+    if not can_trade_short and s < 0.0:
+        s = 0.0
 
     # 中期过滤：m 太差时，短线“追涨型信号”不让做（保留反转/均值回归的机会）
     # 这里假设 short_sig > 0 表示做多倾向；若你未来做空，逻辑可对称扩展。

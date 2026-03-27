@@ -1,0 +1,77 @@
+version: 1
+name: hk_top100_tech_growth
+generated_at: '2026-03-26 23:08:49'
+target_n: 100
+count: 62
+symbols:
+- 0700.HK
+- 1810.HK
+- 3690.HK
+- 9618.HK
+- 9988.HK
+- 9999.HK
+- 0020.HK
+- 0241.HK
+- 0268.HK
+- 0285.HK
+- 0300.HK
+- 0780.HK
+- 0981.HK
+- 0992.HK
+- 1024.HK
+- 1211.HK
+- 1347.HK
+- 1698.HK
+- 2015.HK
+- 2382.HK
+- 3888.HK
+- 6618.HK
+- 6690.HK
+- 9626.HK
+- 9660.HK
+- 9863.HK
+- 9866.HK
+- 9868.HK
+- 9888.HK
+- 9961.HK
+- 2423.HK
+- 2628.HK
+- 2899.HK
+- 3328.HK
+- 3968.HK
+- 3988.HK
+- 6160.HK
+- 9633.HK
+- 9987.HK
+- 9992.HK
+- 0175.HK
+- 0267.HK
+- 0386.HK
+- 0688.HK
+- 0762.HK
+- 0857.HK
+- 0883.HK
+- 0939.HK
+- 0941.HK
+- 1088.HK
+- 1093.HK
+- 1109.HK
+- 1288.HK
+- 1378.HK
+- 1398.HK
+- 1658.HK
+- 1801.HK
+- 2020.HK
+- 2057.HK
+- 2313.HK
+- 2318.HK
+- 2328.HK
+source_config: /Users/nemo/Library/CloudStorage/OneDrive-AustralianNationalUniversity/Nemo_Creation/AI
+  Assisted Projects/My Website/ibkr_quant_system/config/watchlists/hk_top100_tech_growth.yaml
+sources:
+- type: aastocks_index_constituents
+  index: HSTECH
+  url: https://www.aastocks.com/en/stocks/market/index/hk-index-con.aspx?index=HSTECH
+- type: aastocks_index_constituents
+  index: HSCEI
+  url: https://www.aastocks.com/en/stocks/market/index/hk-index-con.aspx?index=HSCEI

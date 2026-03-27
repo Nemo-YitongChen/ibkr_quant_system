@@ -1,0 +1,73 @@
+execution:
+  # 基础资金与单笔上限
+  min_cash_buffer_pct: 0.05
+  cash_buffer_floor: 1000.0
+  min_trade_value: 500.0
+  max_order_value_pct: 0.06
+  weight_tolerance: 0.015
+  max_orders_per_run: 6
+  lot_size: 1
+  lot_size_file: ""
+  order_type: "MKT"
+  limit_price_buffer_bps: 15.0
+  wait_fill_sec: 20.0
+  poll_interval_sec: 1.0
+  allow_buys: true
+  allow_sells: true
+  account_allocation_pct: 0.30
+  # 质量 / shadow ML / 人工审核门
+  manual_review_enabled: true
+  manual_review_order_value_pct: 0.10
+  shadow_ml_review_enabled: true
+  shadow_ml_min_score_auto_submit: 0.00
+  shadow_ml_min_positive_prob_auto_submit: 0.50
+  shadow_ml_min_training_samples: 80
+  # 流动性与拆单：先按 ADV 做参与率约束，再决定是否拆成多笔子单
+  adv_max_participation_pct: 0.05
+  adv_split_trigger_pct: 0.02
+  max_slices_per_symbol: 4
+  split_order_pause_sec: 2.0
+  prefer_limit_orders_for_sliced_execution: true
+  # 开盘 / 午盘 / 尾盘的 lite 执行风格参数
+  open_session_participation_scale: 0.70
+  midday_session_participation_scale: 1.00
+  close_session_participation_scale: 0.85
+  open_session_limit_buffer_scale: 1.25
+  midday_session_limit_buffer_scale: 0.85
+  close_session_limit_buffer_scale: 1.10
+  # weekly review 的执行热点会落到这里：
+  # 开盘/尾盘严重热点优先延后，其他时段则自动降速、提早拆单、并改成更保守的限价单。
+  execution_hotspot_penalties: []
+  execution_hotspot_defer_session_buckets: ["OPEN", "CLOSE"]
+  execution_hotspot_defer_min_execution_penalty: 0.04
+  execution_hotspot_defer_min_expected_cost_bps_add: 8.0
+  execution_hotspot_adv_participation_scale: 0.70
+  execution_hotspot_split_trigger_scale: 0.70
+  execution_hotspot_limit_buffer_scale: 1.25
+  execution_hotspot_force_min_slices: 2
+  execution_hotspot_force_limit_order: true
+  # 组合级风险轨迹告警：
+  # WATCH 默认只降速；ALERT 在开盘/尾盘优先延后，大额新单可以直接转人工确认。
+  risk_alert_guard_enabled: true
+  risk_alert_history_max_age_hours: 96
+  risk_alert_scale_alert_threshold: 0.75
+  risk_alert_corr_alert_threshold: 0.62
+  risk_alert_stress_alert_threshold: 0.085
+  risk_alert_scale_watch_delta: -0.05
+  risk_alert_corr_watch_delta: 0.04
+  risk_alert_stress_watch_delta: 0.01
+  risk_alert_defer_session_buckets: ["OPEN", "CLOSE"]
+  risk_alert_manual_review_order_value_pct: 0.05
+  risk_alert_watch_adv_participation_scale: 0.85
+  risk_alert_watch_split_trigger_scale: 0.85
+  risk_alert_watch_limit_buffer_scale: 1.10
+  risk_alert_alert_adv_participation_scale: 0.65
+  risk_alert_alert_split_trigger_scale: 0.65
+  risk_alert_alert_limit_buffer_scale: 1.30
+  risk_alert_force_min_slices_alert: 2
+  risk_alert_force_limit_order: true
+  # 港股等整手市场的最小 lot override
+  allow_min_lot_buy_override: false
+  min_lot_buy_override_value_pct: 0.0
+  allow_min_lot_sell_override: false
+  min_lot_sell_override_value_pct: 0.0

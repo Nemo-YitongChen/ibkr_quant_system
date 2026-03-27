@@ -5,3 +5,54 @@ port: 4002            # IB Gateway paper default :contentReference[oaicite:5]{in
 client_id: 101
 account_id: "UXXXXXXX"  # 改成你的
 timezone: "Australia/Sydney"
+regime_adaptor_config: "config/regime_adaptor.yaml"
+paper_allowed_execution_sources:
+  - REALTIME
+entry_timeout_sec: 60
+enforce_pretrade_risk_gate: true
+
+# universe / scanner
+scanner_enabled: true
+scanner_instrument: "STK"
+scanner_location_code: "STK.NYSE"
+scanner_location_codes:
+  - "STK.NYSE"
+  - "STK.NASDAQ.SCM"
+  - "STK.AMEX"
+seed_batch_enabled: true
+seed_batch_size: 40
+seed_rotation_sec: 300
+seed_symbols:
+  - SPY
+report_watchlist_yaml: "config/watchlist.yaml"
+max_short_candidates: 15
+recent_trade_limit: 30
+scanner_refresh_sec: 120
+scanner_max_codes_per_run: 3
+scanner_limit: 20
+scanner_codes:
+  - HOT_BY_VOLUME
+  - MOST_ACTIVE
+  - TOP_PERC_GAIN
+  - TOP_PERC_LOSE
+
+# market-data quality cooldown
+cooldown_enabled: true
+cooldown_minutes: 30
+dup_per_bucket_threshold: 10.0
+max_gap_sec_threshold: 1800
+min_buckets_for_eval: 1
+
+# phase3 ranking/filter
+phase3_enabled: true
+phase3_lookback_bars: 48
+phase3_price_min: 2.0
+phase3_avg_vol_min: 50000
+phase3_atr_pct_min: 0.002
+phase3_volume_log_weight: 1.0
+phase3_atr_pct_weight: 100.0
+phase3_price_bonus_weight: 0.0
+phase3_price_bonus_ref: 20.0
+phase3_repeat_halflife_min: 60.0
+phase3_repeat_penalty: 0.25
+phase3_bad_symbol_cooldown_min: 30

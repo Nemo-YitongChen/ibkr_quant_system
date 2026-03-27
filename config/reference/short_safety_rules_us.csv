@@ -1,0 +1,9 @@
+symbol,locate_status,ssr_status,spread_bps,has_uptick_data,source,shortable_shares,shortable_level,bid,ask,note
+SPY,AVAILABLE,UNKNOWN,0.45,,iborrowdesk_borrow,1329121,,671.2700,671.3000,date=2026-03-11
+QQQ,AVAILABLE,UNKNOWN,0.33,,iborrowdesk_borrow,7265823,,602.9600,602.9800,date=2026-03-11
+IWM,AVAILABLE,UNKNOWN,3.61,,iborrowdesk_borrow,639520,,248.9700,249.0600,date=2026-03-11
+DIA,AVAILABLE,UNKNOWN,9.13,,iborrowdesk_borrow,542520,,470.5300,470.9600,date=2026-03-11
+VTI,AVAILABLE,UNKNOWN,7.86,,iborrowdesk_borrow,14927164,,330.5600,330.8200,date=2026-03-11
+AAPL,AVAILABLE,UNKNOWN,19.67,,iborrowdesk_borrow,93079882,,259.0100,259.5200,date=2026-03-11
+MSFT,AVAILABLE,UNKNOWN,4.48,,iborrowdesk_borrow,38824635,,402.0000,402.1800,date=2026-03-11
+NVDA,AVAILABLE,UNKNOWN,6.51,,iborrowdesk_borrow,95081594,,184.3000,184.4200,date=2026-03-11

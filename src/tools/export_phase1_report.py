@@ -9,8 +9,8 @@ from pathlib import Path
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", default="audit.db")
-    ap.add_argument("--out", default="phase1_signals_audit.csv")
-    ap.add_argument("--day", default=None, help="UTC day YYYY-MM-DD; default=all")
+    ap.add_argument("--out", default="phase1_md_quality.csv")
+    ap.add_argument("--day", default=None, help="UTC day YYYY-MM-DD; default=today")
     args = ap.parse_args()
 
     db = Path(args.db)
@@ -20,14 +20,18 @@ def main():
     conn = sqlite3.connect(str(db))
     cur = conn.cursor()
 
-    q = "SELECT ts, symbol, bar_end_time, o,h,l,c,v,last3_close,range20,mr_sig,bo_sig,short_sig,mid_scale,total_sig,threshold,should_trade,action,reason FROM signals_audit"
-    params = ()
-    if args.day:
-        q += " WHERE substr(bar_end_time,1,10)=?"
-        params = (args.day,)
-    q += " ORDER BY bar_end_time ASC"
+    if args.day is None:
+        # Use UTC today
+        cur.execute("SELECT strftime('%Y-%m-%d','now')")  # UTC in sqlite
+        day = cur.fetchone()[0]
+    else:
+        day = args.day
 
-    rows = cur.execute(q, params).fetchall()
+    q = ("SELECT day, symbol, buckets, duplicates, "
+         "CASE WHEN (buckets+1) > 0 THEN (1.0*duplicates)/(buckets+1) ELSE 0 END AS dup_per_bucket, "
+         "max_gap_sec, last_end_time, updated_ts "
+         "FROM md_quality WHERE day=? ORDER BY dup_per_bucket DESC, max_gap_sec DESC")
+    rows = cur.execute(q, (day,)).fetchall()
     headers = [d[0] for d in cur.description]
 
     with open(args.out, "w", newline="", encoding="utf-8") as f:

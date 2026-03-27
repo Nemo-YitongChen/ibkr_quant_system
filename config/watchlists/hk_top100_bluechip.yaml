@@ -1,0 +1,25 @@
+version: 1
+name: hk_top100_bluechip
+market: HK
+format: "####.HK"
+target_n: 100
+dedupe: true
+keep_order: true
+
+sources:
+  - type: aastocks_index_constituents
+    index: HSI
+    url: "https://www.aastocks.com/en/stocks/market/index/hk-index-con.aspx?index=HSI"
+  - type: aastocks_index_constituents
+    index: HSCEI
+    url: "https://www.aastocks.com/en/stocks/market/index/hk-index-con.aspx?index=HSCEI"
+
+manual_include:
+  - "0700.HK"
+  - "9988.HK"
+
+ibkr:
+  secType: "STK"
+  exchange: "SEHK"
+  currency: "HKD"
+  normalize_symbol: "strip_suffix_and_leading_zeros"
