@@ -194,19 +194,24 @@
 
 优先级最高的不是再加新策略，而是把现有系统的工程边界先稳住。
 
-建议事项：
+当前已完成：
 
-- 完成项目级文档体系
+- 项目级文档体系
   - 架构图
-  - 数据流说明
+  - 运行路径说明
   - market/config 对照表
   - paper/live 切换说明
-- 增加 `.env.example` 或更明确的环境变量说明
-- 引入 `pyproject.toml`、统一 lint/test 命令，减少运行入口分散
-- 为 GitHub 增加基础 CI
-  - 至少自动跑测试
-  - 可选增加基础静态检查
-- 把“研究产物目录”和“源代码目录”的关系在文档中说明清楚
+- `.env.example` 和更明确的环境变量入口
+- `pyproject.toml`、console scripts、README 安装运行闭环
+- GitHub 基础 CI
+  - 自动跑测试
+- `src.main` 收口为 CLI 入口，核心装配下沉到独立 bootstrap 模块
+
+下一步建议：
+
+- 为 lint / static check 增加统一命令
+- 继续把“研究产物目录”和“源代码目录”的关系在文档中说明清楚
+- 继续压缩 `main` 之外的大文件复杂度
 
 预期目标：
 

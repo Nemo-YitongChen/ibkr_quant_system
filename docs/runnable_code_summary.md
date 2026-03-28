@@ -2,6 +2,18 @@
 
 这份文档整理当前项目里可以直接运行的入口脚本，以及这些入口背后的核心模块。
 
+Phase 0 之后的运行约定：
+
+- 推荐先在仓库根执行 `python -m pip install -e ".[dev]"`
+- 安装后优先使用 console scripts
+  - `ibkr-quant-preflight`
+  - `ibkr-quant-supervisor`
+  - `ibkr-quant-engine`
+  - `ibkr-quant-report`
+  - `ibkr-quant-paper`
+  - `ibkr-quant-execution`
+- 原有 `python -m src...` 路径继续兼容
+
 当前主路径已经切到中长期投资：
 
 - `US` / `HK` 的 `config/ibkr_*.yaml` 默认是 `investment_only`
@@ -23,7 +35,8 @@
 
 约定：
 
-- 主运行方式是 `python -m ...`
+- 推荐主运行方式是 console scripts
+- `python -m ...` 仍然兼容
 - `src/*` 里多数文件是库模块，不是直接执行入口
 - `tests/*` 是测试入口
 
