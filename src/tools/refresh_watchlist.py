@@ -36,6 +36,27 @@ def _resolve_path(path_str: str) -> Path:
     return (BASE_DIR / path).resolve()
 
 
+def _source_config_value(path: Path) -> str:
+    resolved = path.resolve()
+    try:
+        return resolved.relative_to(BASE_DIR).as_posix()
+    except ValueError:
+        return str(resolved)
+
+
+def _generated_at_value(out_path: Path, resolved_symbols: List[str]) -> str:
+    if out_path.exists():
+        try:
+            existing = yaml.safe_load(out_path.read_text(encoding="utf-8")) or {}
+        except Exception:
+            existing = {}
+        existing_symbols = [str(x).upper() for x in list(existing.get("symbols") or [])]
+        existing_generated_at = str(existing.get("generated_at") or "").strip()
+        if existing_generated_at and existing_symbols == [str(x).upper() for x in list(resolved_symbols or [])]:
+            return existing_generated_at
+    return time.strftime("%Y-%m-%d %H:%M:%S")
+
+
 def load_yaml(path: str) -> Dict[str, Any]:
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
@@ -107,11 +128,11 @@ def main() -> None:
     out_doc = {
         "version": int(cfg.get("version", 1)),
         "name": str(cfg.get("name", "watchlist")),
-        "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "generated_at": _generated_at_value(out_path, resolved),
         "target_n": target_n,
         "count": len(resolved),
         "symbols": resolved,
-        "source_config": str(config_path),
+        "source_config": _source_config_value(config_path),
         "sources": sources,
     }
 

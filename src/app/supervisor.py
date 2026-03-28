@@ -23,6 +23,16 @@ from ..common.markets import market_config_path, market_timezone_name, resolve_m
 from ..common.runtime_paths import resolve_repo_path, resolve_scoped_runtime_path, scope_from_ibkr_config
 from ..enrichment.providers import EnrichmentProviders
 from .dashboard_control import DashboardControlService
+from .supervisor_support import (
+    clamp_float as _clamp_float,
+    feedback_confidence_value as _feedback_confidence_value,
+    in_window as _in_window,
+    merge_execution_feedback_penalties as _merge_execution_feedback_penalties,
+    parse_feedback_penalty_rows as _parse_feedback_penalty_rows,
+    past_time as _past_time,
+    scale_feedback_delta as _scale_feedback_delta,
+    scale_feedback_penalty_rows as _scale_feedback_penalty_rows,
+)
 from ..tools.preflight_supervisor import run_preflight
 
 log = get_logger("app.supervisor")
@@ -69,153 +79,6 @@ def _load_json_file(path: Path) -> Dict[str, Any]:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return {}
-
-
-def _clamp_float(value: Any, lo: float, hi: float) -> float:
-    try:
-        number = float(value)
-    except Exception:
-        number = float(lo)
-    return max(float(lo), min(float(hi), number))
-
-
-def _parse_feedback_penalty_rows(value: Any) -> List[Dict[str, Any]]:
-    if isinstance(value, list):
-        return [dict(row) for row in value if isinstance(row, dict)]
-    if not isinstance(value, str) or not value:
-        return []
-    try:
-        parsed = json.loads(value)
-    except Exception:
-        return []
-    if not isinstance(parsed, list):
-        return []
-    return [dict(row) for row in parsed if isinstance(row, dict)]
-
-
-def _merge_execution_feedback_penalties(
-    current_rows: List[Dict[str, Any]],
-    previous_rows: List[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
-    current_map = {
-        str(row.get("symbol") or "").upper().strip(): dict(row)
-        for row in list(current_rows or [])
-        if str(row.get("symbol") or "").strip()
-    }
-    previous_map = {
-        str(row.get("symbol") or "").upper().strip(): dict(row)
-        for row in list(previous_rows or [])
-        if str(row.get("symbol") or "").strip()
-    }
-    out: List[Dict[str, Any]] = list(current_map.values())
-
-    for symbol, row in previous_map.items():
-        if symbol in current_map:
-            continue
-        # 这里保留“执行热点记忆”，但按周逐步衰减，避免旧热点永久压制候选。
-        decayed = dict(row)
-        decayed["symbol"] = symbol
-        decayed["score_penalty"] = round(float(row.get("score_penalty", 0.0) or 0.0) * 0.70, 6)
-        decayed["execution_penalty"] = round(float(row.get("execution_penalty", 0.0) or 0.0) * 0.65, 6)
-        decayed["expected_cost_bps_add"] = round(float(row.get("expected_cost_bps_add", 0.0) or 0.0) * 0.60, 6)
-        decayed["slippage_proxy_bps_add"] = round(float(row.get("slippage_proxy_bps_add", 0.0) or 0.0) * 0.60, 6)
-        decayed["decay_steps"] = int(row.get("decay_steps", 0) or 0) + 1
-        decayed["reason"] = "execution_hotspot_decay"
-        if (
-            float(decayed.get("score_penalty", 0.0) or 0.0) < 0.005
-            and float(decayed.get("execution_penalty", 0.0) or 0.0) < 0.01
-            and float(decayed.get("expected_cost_bps_add", 0.0) or 0.0) < 1.0
-            and float(decayed.get("slippage_proxy_bps_add", 0.0) or 0.0) < 1.0
-        ):
-            continue
-        out.append(decayed)
-
-    out.sort(
-        key=lambda row: (
-            -float(row.get("execution_penalty", 0.0) or 0.0),
-            -float(row.get("expected_cost_bps_add", 0.0) or 0.0),
-            str(row.get("symbol") or ""),
-        )
-    )
-    return out
-
-
-def _feedback_confidence_value(row: Dict[str, Any]) -> float:
-    if not row:
-        return 1.0
-    raw = row.get("feedback_confidence")
-    if raw in (None, ""):
-        return 1.0
-    return _clamp_float(raw, 0.0, 1.0)
-
-
-def _scale_feedback_delta(value: Any, row: Dict[str, Any], *, min_abs: float = 0.0) -> float:
-    number = float(value or 0.0)
-    if number == 0.0:
-        return 0.0
-    scaled = number * _feedback_confidence_value(row)
-    if scaled == 0.0:
-        return 0.0
-    if min_abs > 0.0 and abs(scaled) < float(min_abs):
-        scaled = float(min_abs) if scaled > 0 else -float(min_abs)
-    return float(scaled)
-
-
-def _scale_feedback_penalty_rows(rows: List[Dict[str, Any]], row: Dict[str, Any]) -> List[Dict[str, Any]]:
-    confidence = _feedback_confidence_value(row)
-    if confidence >= 0.999:
-        return [dict(item) for item in list(rows or [])]
-    out: List[Dict[str, Any]] = []
-    for raw in list(rows or []):
-        item = dict(raw)
-        for key in (
-            "score_penalty",
-            "execution_penalty",
-            "expected_cost_bps_add",
-            "slippage_proxy_bps_add",
-        ):
-            if key in item:
-                item[key] = round(float(item.get(key, 0.0) or 0.0) * confidence, 6)
-        if "cooldown_days" in item:
-            item["cooldown_days"] = max(1, int(round(float(item.get("cooldown_days", 0) or 0) * confidence)))
-        item["feedback_confidence"] = round(confidence, 6)
-        if (
-            float(item.get("score_penalty", 0.0) or 0.0) <= 0.0
-            and float(item.get("execution_penalty", 0.0) or 0.0) <= 0.0
-            and float(item.get("expected_cost_bps_add", 0.0) or 0.0) <= 0.0
-            and float(item.get("slippage_proxy_bps_add", 0.0) or 0.0) <= 0.0
-        ):
-            continue
-        out.append(item)
-    return out
-
-
-def _parse_hhmm(s: str) -> tuple[int, int]:
-    hh, mm = str(s).split(":", 1)
-    return int(hh), int(mm)
-
-
-def _in_window(now: datetime, start_hhmm: str, end_hhmm: str, weekdays: List[int]) -> bool:
-    sh, sm = _parse_hhmm(start_hhmm)
-    eh, em = _parse_hhmm(end_hhmm)
-    start = now.replace(hour=sh, minute=sm, second=0, microsecond=0)
-    end = now.replace(hour=eh, minute=em, second=0, microsecond=0)
-    if end >= start:
-        return now.weekday() in weekdays and start <= now <= end
-
-    # Overnight window, e.g. 23:20 -> 06:10
-    if now >= start:
-        return now.weekday() in weekdays
-    if now <= end:
-        prev_weekday = (now.weekday() - 1) % 7
-        return prev_weekday in weekdays
-    return False
-
-
-def _past_time(now: datetime, hhmm: str) -> bool:
-    hh, mm = _parse_hhmm(hhmm)
-    target = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
-    return now >= target
 
 
 def _slugify_name(name: str) -> str:
@@ -659,9 +522,12 @@ class Supervisor:
         if not self._dashboard_control_enabled():
             return
         path = self._dashboard_control_state_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
         payload = self._dashboard_control_state_payload(service_status=service_status)
-        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        except OSError as e:
+            log.warning("Failed to write dashboard control state: path=%s error=%s", path, e)
 
     def _apply_dashboard_control_overrides(self) -> None:
         if not self._dashboard_control_enabled():
@@ -2166,7 +2032,8 @@ class Supervisor:
             report_time = str(item.get("report_time", market.report_time) or market.report_time).strip()
             if report_time and not _past_time(market_now, report_time):
                 return False, "before_report_time"
-        if self._market_is_holiday(market, market_now):
+        market_day = self._market_now(market_now, market).date()
+        if not self._market_is_trading_day(market, market_day):
             report_day = str(item.get("_last_successful_report_day", "") or "").strip()
             if not bool(item.get("rerun_report_on_macro_change", True)):
                 return False, "market_holiday"

@@ -7,6 +7,12 @@
   - 说明每个入口的功能、输入、输出和典型用途
 - `docs/supervisor_runbook.md`
   - 汇总 `paper / live` 的日常启动、preflight 和 dashboard 控制模式
+- `docs/project_status_roadmap.md`
+  - 汇总项目目标、当前进度、架构判断和未来规划建议
+- `docs/architecture_overview.md`
+  - 汇总系统分层、运行路径和当前市场范围
+- `docs/production_governance.md`
+  - 汇总运行模式、安全门、变更治理和 CI 基线
 
 ## Data Sources
 
@@ -38,6 +44,8 @@ TE_API_KEY=
 FINNHUB_API_KEY=
 FINNHUB_WEBHOOK_SECRET=
 ```
+
+可直接复制：`.env.example`
 
 ## Current Path
 

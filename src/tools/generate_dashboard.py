@@ -585,6 +585,15 @@ def _mode_detail(item: Dict[str, Any], runtime_scope) -> str:
     return f"{runtime_mode} 只读模式，仅显示真实账户数据与分析"
 
 
+def _runtime_mode_summary_label(item: Dict[str, Any], runtime_scope) -> str:
+    runtime_mode = str(getattr(runtime_scope, "mode", "") or "paper").strip().lower() or "paper"
+    if bool(item.get("research_only", False)):
+        return "research-only"
+    if runtime_mode == "paper":
+        return "paper-dry-run"
+    return f"{runtime_mode}-read-only"
+
+
 def _trade_view_enabled(item: Dict[str, Any], runtime_scope) -> bool:
     if bool(item.get("research_only", False)):
         return True
@@ -1128,7 +1137,6 @@ def _load_recent_feedback_automation_history_rows(
 def _load_health_summary(db_path: Path, *, portfolio_id: str, hours: int = 24) -> Dict[str, Any]:
     if not db_path.exists():
         return {}
-    cutoff_dt = datetime.utcnow() - timedelta(hours=max(1, int(hours)))
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     try:
@@ -1150,15 +1158,8 @@ def _load_health_summary(db_path: Path, *, portfolio_id: str, hours: int = 24) -
     finally:
         conn.close()
 
-    delayed_count = 0
-    permission_count = 0
-    connectivity_breaks = 0
-    connectivity_restores = 0
-    account_limit_count = 0
-    snapshot_fallback_count = 0
-    latest_event_ts = ""
-    latest_event_label = ""
-    latest_event_detail = ""
+    parsed_rows = []
+    latest_ts_obj = None
     for raw in rows:
         row = dict(raw)
         ts_raw = str(row.get("ts") or "")
@@ -1168,8 +1169,27 @@ def _load_health_summary(db_path: Path, *, portfolio_id: str, hours: int = 24) -
                 ts_obj = ts_obj.astimezone(timezone.utc).replace(tzinfo=None)
         except Exception:
             ts_obj = None
-        if ts_obj is not None and ts_obj < cutoff_dt:
-            continue
+        if latest_ts_obj is None and ts_obj is not None:
+            latest_ts_obj = ts_obj
+        parsed_rows.append((row, ts_obj))
+
+    reference_dt = latest_ts_obj or datetime.utcnow()
+    cutoff_dt = reference_dt - timedelta(hours=max(1, int(hours)))
+    scoped_rows = [(row, ts_obj) for row, ts_obj in parsed_rows if ts_obj is None or ts_obj >= cutoff_dt]
+    if not scoped_rows and parsed_rows:
+        scoped_rows = list(parsed_rows)
+
+    delayed_count = 0
+    permission_count = 0
+    connectivity_breaks = 0
+    connectivity_restores = 0
+    account_limit_count = 0
+    snapshot_fallback_count = 0
+    latest_event_ts = ""
+    latest_event_label = ""
+    latest_event_detail = ""
+    for row, _ts_obj in scoped_rows:
+        ts_raw = str(row.get("ts") or "")
         kind = str(row.get("kind") or "").upper().strip()
         code = int(float(row.get("value") or 0.0)) if str(row.get("value", "")).strip() else 0
         detail = str(row.get("details") or "")
@@ -1862,10 +1882,20 @@ def _build_paper_risk_feedback(card: Dict[str, Any], cfg: Dict[str, Any]) -> Dic
     overlay_path = _risk_feedback_overlay_path(cfg, card)
     feedback_confidence = _feedback_confidence_value(feedback_row)
     feedback_confidence_label = str(feedback_row.get("feedback_confidence_label", "") or ("HIGH" if feedback_confidence >= 0.75 else "MEDIUM" if feedback_confidence >= 0.45 else "LOW"))
-    calibration_apply_mode = str(automation_row.get("calibration_apply_mode", "") or "")
+    calibration_apply_mode = str(automation_row.get("calibration_apply_mode", "") or "").strip().upper()
     calibration_apply_mode_label = str(automation_row.get("calibration_apply_mode_label", "") or "")
     calibration_basis_label = str(automation_row.get("calibration_basis_label", "") or "")
     automation_reason = str(automation_row.get("automation_reason", "") or "")
+    resolved_calibration_apply_mode = calibration_apply_mode
+    if feedback_present and not resolved_calibration_apply_mode:
+        if auto_apply_enabled:
+            resolved_calibration_apply_mode = "AUTO_APPLY"
+            if not calibration_apply_mode_label:
+                calibration_apply_mode_label = "自动应用"
+        else:
+            resolved_calibration_apply_mode = "SUGGEST_ONLY"
+            if not calibration_apply_mode_label:
+                calibration_apply_mode_label = "建议确认"
 
     effective_values = dict(base_values)
     effective_source = "base"
@@ -1873,7 +1903,7 @@ def _build_paper_risk_feedback(card: Dict[str, Any], cfg: Dict[str, Any]) -> Dic
     apply_mode = "BASE_ONLY"
     apply_mode_label = "沿用基础配置"
 
-    if feedback_present and calibration_apply_mode == "AUTO_APPLY" and auto_apply_enabled:
+    if feedback_present and resolved_calibration_apply_mode == "AUTO_APPLY" and auto_apply_enabled:
         overlay_cfg = _safe_load_yaml_path(overlay_path)
         overlay_paper = dict(overlay_cfg.get("paper", {}) or {})
         if overlay_paper:
@@ -1938,12 +1968,12 @@ def _build_paper_risk_feedback(card: Dict[str, Any], cfg: Dict[str, Any]) -> Dic
             effective_source_label = "dashboard 预估"
         apply_mode = "AUTO_APPLY"
         apply_mode_label = "自动生效"
-    elif feedback_present and calibration_apply_mode == "SUGGEST_ONLY":
+    elif feedback_present and resolved_calibration_apply_mode == "SUGGEST_ONLY":
         apply_mode = "SUGGEST_ONLY"
         apply_mode_label = "仅建议未自动生效"
         effective_source = "base"
         effective_source_label = "基础配置（未自动改）"
-    elif feedback_present and calibration_apply_mode == "HOLD":
+    elif feedback_present and resolved_calibration_apply_mode == "HOLD":
         apply_mode = "BASE_ONLY"
         apply_mode_label = "沿用基础配置"
         effective_source = "base"
@@ -1961,7 +1991,7 @@ def _build_paper_risk_feedback(card: Dict[str, Any], cfg: Dict[str, Any]) -> Dic
         "auto_apply_enabled": auto_apply_enabled,
         "apply_mode": apply_mode,
         "apply_mode_label": apply_mode_label,
-        "calibration_apply_mode": calibration_apply_mode,
+        "calibration_apply_mode": resolved_calibration_apply_mode,
         "calibration_apply_mode_label": calibration_apply_mode_label,
         "calibration_basis_label": calibration_basis_label,
         "automation_reason": automation_reason,
@@ -2333,6 +2363,7 @@ def _build_report_card(
         "account_id": str(getattr(runtime_scope, "account_id", "") or ""),
         "account_mode": str(getattr(runtime_scope, "mode", "") or ""),
         "mode": _mode_label(item, runtime_scope),
+        "runtime_mode_summary": _runtime_mode_summary_label(item, runtime_scope),
         "mode_detail": _mode_detail(item, runtime_scope),
         "report_dir": display_report_dir,
         "paper_config_path": str(paper_config_path),
@@ -4026,7 +4057,7 @@ def _build_runtime_status(cards: List[Dict[str, Any]]) -> Dict[str, Any]:
         {
             "market": str(card.get("market", "") or "").strip(),
             "watchlist": str(card.get("watchlist", "") or "").strip(),
-            "mode": str(card.get("mode", "") or "").strip() or "-",
+            "mode": str(card.get("runtime_mode_summary", card.get("mode", "")) or "").strip() or "-",
         }
         for card in sorted(
             cards,

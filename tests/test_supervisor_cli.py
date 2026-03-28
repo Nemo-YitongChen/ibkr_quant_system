@@ -1417,6 +1417,32 @@ class SupervisorCliTests(unittest.TestCase):
             self.assertTrue(bool(mock_weekly.call_args.kwargs.get("force", False)))
             mock_refresh.assert_called()
 
+    def test_dashboard_control_state_write_ignores_oserror(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            cfg_path = base / "supervisor.yaml"
+            summary_dir = base / "reports_supervisor"
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        f'summary_out_dir: "{summary_dir}"',
+                        "dashboard_control_enabled: true",
+                        "poll_sec: 30",
+                        "markets: []",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(cfg_path))
+            with self.assertLogs("app.supervisor", level="WARNING") as logs, patch.object(
+                Path,
+                "write_text",
+                side_effect=OSError(22, "Invalid argument"),
+            ):
+                supervisor._write_dashboard_control_state()
+            self.assertIn("Failed to write dashboard control state", "\n".join(logs.output))
+
     def test_dashboard_control_run_preflight_generates_report_and_refreshes_dashboard(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
