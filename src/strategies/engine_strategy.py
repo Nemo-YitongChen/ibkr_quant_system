@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import json
-from datetime import datetime
 from typing import Dict, List, Optional, Any
 
 from ..common.logger import get_logger
+from ..common.signal_audit import SignalAuditContext, SignalAuditWriter
 from ..events.models import RiskDecision, SignalDecision
-from ..ibkr.contracts import make_stock_contract
 from ..risk.model import PreTradeRiskSnapshot, TradeRiskConfig, TradeRiskModel
 from ..regime.state import RegimeStateV2
 from ..risk.short_safety import ShortSafetyGate
@@ -15,7 +13,6 @@ from .short_mean_reversion import MRConfig, signal as mr_signal
 from .short_breakout import BOConfig, signal as bo_signal
 from .mid_regime import RegimeConfig, evaluate_regime, to_regime_state_v2
 from ..signals.fusion import fuse
-from ..ibkr.orders import BracketParams
 
 log = get_logger("strategy.engine")
 
@@ -75,19 +72,21 @@ class EngineStrategy:
     - keep rolling OHLCV per symbol
     - compute short_sig (MR+BO), mid_scale (regime), total_sig (fuse)
     - threshold -> TradeSignal
-    - execute via OrderService.place_bracket
+    - keep a compatibility execute() shim while execution lives in SignalExecutor
     """
 
     def __init__(
         self,
         *,
-        orders: Any,
-        gate: Any,
+        orders: Any = None,
+        gate: Any = None,
         cfg: Optional[StrategyConfig] = None,
         max_bars: int = 600,
         entry_guard: Any = None,
         allocator: Any = None,
         short_safety_gate: Optional[ShortSafetyGate] = None,
+        executor: Any = None,
+        audit_writer: Any = None,
     ):
         self.orders = orders
         self.gate = gate
@@ -96,7 +95,27 @@ class EngineStrategy:
         self.entry_guard = entry_guard
         self.allocator = allocator
         self.short_safety_gate = short_safety_gate
+        self.executor = executor
+        self.audit_writer = audit_writer
         self.risk_model = TradeRiskModel(self.cfg.risk)
+
+        storage = getattr(self.orders, "storage", None)
+        if self.audit_writer is None and storage is not None:
+            self.audit_writer = SignalAuditWriter(storage)
+        self.storage = getattr(self.audit_writer, "storage", None) or storage
+
+        if self.executor is None and self.orders is not None:
+            try:
+                from ..app.signal_executor import SignalExecutor
+            except ImportError:
+                from app.signal_executor import SignalExecutor
+            self.executor = SignalExecutor(
+                orders=self.orders,
+                cfg=self.cfg,
+                entry_guard=self.entry_guard,
+                allocator=self.allocator,
+                short_safety_gate=self.short_safety_gate,
+            )
 
         self._open: Dict[str, List[float]] = {}
         self._high: Dict[str, List[float]] = {}
@@ -195,50 +214,6 @@ class EngineStrategy:
                 return ""
         return ""
 
-    def _record_execution_event(
-        self,
-        kind: str,
-        sig: TradeSignal,
-        *,
-        symbol: str,
-        value: float = 0.0,
-        details_suffix: str = "",
-        event_risk_reason: str | None = None,
-        short_borrow_source: str | None = None,
-    ) -> None:
-        try:
-            storage = getattr(self.orders, "storage", None)
-            if storage is None or not hasattr(storage, "insert_risk_event"):
-                return
-            payload = getattr(sig.risk_snapshot, "to_dict", lambda: {})()
-            detail = (
-                f"symbol={symbol} tag={sig.audit_tag or 'NA'} source={sig.audit_source or 'NA'} "
-                f"channel={sig.channel or 'NA'}"
-            )
-            if details_suffix:
-                detail = f"{detail} {details_suffix}"
-            storage.insert_risk_event(
-                kind,
-                float(value),
-                detail,
-                symbol=symbol,
-                expected_price=float(sig.entry_price),
-                expected_slippage_bps=float(getattr(sig.risk_snapshot, "slippage_bps", 0.0) or 0.0),
-                event_risk_reason=str(
-                    event_risk_reason
-                    if event_risk_reason is not None
-                    else getattr(sig.risk_snapshot, "event_risk_reason", "") or ""
-                ) or None,
-                short_borrow_source=str(
-                    short_borrow_source
-                    if short_borrow_source is not None
-                    else getattr(sig.risk_snapshot, "short_borrow_source", "") or ""
-                ) or None,
-                risk_snapshot_json=json.dumps(payload, ensure_ascii=False) if payload else None,
-            )
-        except Exception:
-            pass
-
     def evaluate_from_bar(self, symbol: str, bar: Any) -> Optional[TradeSignal]:
         self._append_bar(symbol, bar)
 
@@ -330,68 +305,33 @@ class EngineStrategy:
             context=risk_snapshot.to_dict(),
         )
 
-        # ---- Phase1: signal audit persistence ----
-        try:
-            storage = getattr(self.orders, 'storage', None)
-            if storage is not None and hasattr(storage, 'insert_signal_audit'):
-                last3 = close[-3:] if len(close) >= 3 else close[:]
-                window = 20
-                if len(high) >= window and len(low) >= window:
-                    hi = max(high[-window:])
-                    lo = min(low[-window:])
-                    range20 = (hi - lo) / float(close[-1]) if float(close[-1]) else 0.0
-                else:
-                    range20 = 0.0
-
-                # Phase1-C(+): carry engine tag/source + phase2 channel into reason
-                audit_reason = ""
-                try:
-                    audit_reason = f"{self._audit_tag}|{self._audit_source}|{channel}|thr={used_thr:.3f}|qmul={qty_mult:.2f}"
-                except Exception:
-                    audit_reason = ""
-
-                storage.insert_signal_audit({
-                    'symbol': symbol,
-                    'bar_end_time': getattr(bar, 'end_time', None).isoformat() if getattr(bar, 'end_time', None) else '',
-                    'o': float(bar.open), 'h': float(bar.high), 'l': float(bar.low), 'c': float(bar.close),
-                    'v': float(getattr(bar, 'volume', 0.0) or 0.0),
-                    'last3_close': json.dumps([float(x) for x in last3]),
-                    'range20': float(range20),
-                    'mr_sig': float(s_mr),
-                    'bo_sig': float(s_bo),
-                    'short_sig': float(short_sig),
-                    'mid_scale': float(mid_scale),
-                    'total_sig': float(total),
-
-                    # Phase2 reflected fields
-                    'threshold': float(used_thr),
-                    'should_trade': 1 if should_trade else 0,
-                    'action': action if should_trade else '',
-
-                    'reason': audit_reason,
-
-                    # keep your existing extra fields (Phase1-C)
-                    'channel': channel,
-                    'can_trade_short': 1 if can_short else 0,
-                    'risk_gate': 'OK' if can_short else 'BLOCKED',
-                    'atr_stop': float(risk_snapshot.atr_stop),
-                    'slippage_bps': float(risk_snapshot.slippage_bps),
-                    'gap_addon_pct': float(risk_snapshot.gap_addon_pct),
-                    'liquidity_haircut': float(risk_snapshot.liquidity_haircut),
-                    'event_risk': str(risk_snapshot.event_risk),
-                    'event_risk_reason': str(risk_snapshot.event_risk_reason),
-                    'short_borrow_fee_bps': float(risk_snapshot.short_borrow_fee_bps),
-                    'short_borrow_source': str(risk_snapshot.short_borrow_source),
-                    'risk_allowed': 1 if risk_snapshot.allowed else 0,
-                    'block_reasons': json.dumps(risk_snapshot.block_reasons, ensure_ascii=False),
-                    'risk_snapshot_json': json.dumps(risk_snapshot.to_dict(), ensure_ascii=False),
-                    'regime_state_v2_json': json.dumps(regime_state_v2.to_dict(), ensure_ascii=False),
-                    'signal_decision_json': json.dumps(signal_decision.to_dict(), ensure_ascii=False),
-                    'risk_decision_json': json.dumps(risk_decision.to_dict(), ensure_ascii=False),
-                })
-        except Exception:
-            # never block trading on audit writes
-            pass
+        if self.audit_writer is not None:
+            self.audit_writer.write(
+                SignalAuditContext(
+                    symbol=symbol,
+                    bar=bar,
+                    closes=close,
+                    highs=high,
+                    lows=low,
+                    mr_sig=float(s_mr),
+                    bo_sig=float(s_bo),
+                    short_sig=float(short_sig),
+                    mid_scale=float(mid_scale),
+                    total_sig=float(total),
+                    threshold_used=float(used_thr),
+                    should_trade=bool(should_trade),
+                    action=action,
+                    channel=channel,
+                    qty_multiplier=float(qty_mult),
+                    can_trade_short=bool(can_short),
+                    risk_snapshot=risk_snapshot,
+                    regime_state_v2=regime_state_v2,
+                    signal_decision=signal_decision,
+                    risk_decision=risk_decision,
+                    audit_tag=str(getattr(self, "_audit_tag", "") or ""),
+                    audit_source=str(getattr(self, "_audit_source", "") or ""),
+                )
+            )
 
         # -------- decision output --------
         if not should_trade:
@@ -463,157 +403,7 @@ class EngineStrategy:
         )
 
     def execute(self, symbol: str, sig: TradeSignal, runner: Any) -> None:
-        if not sig.should_trade:
+        if self.executor is None:
+            log.info("[%s] no executor configured; skip trade execution", symbol)
             return
-
-        runtime_mode = str(getattr(self.cfg, "runtime_mode", "") or "").strip().lower()
-        allowed_sources = {str(x or "").upper() for x in list(getattr(self.cfg, "paper_allowed_execution_sources", []) or [])}
-        sig_source = str(sig.audit_source or "").upper()
-        source_exec_allowed = not (runtime_mode == "paper" and allowed_sources and sig_source not in allowed_sources)
-
-        if bool(getattr(self.cfg, "enforce_pretrade_risk_gate", True)) and sig.risk_snapshot is not None and not bool(sig.risk_snapshot.allowed):
-            self._record_execution_event(
-                "PRETRADE_RISK_BLOCK",
-                sig,
-                symbol=symbol,
-                value=float(getattr(sig.risk_snapshot, "risk_per_share", 0.0) or 0.0),
-                details_suffix=f"reasons={','.join(getattr(sig.risk_snapshot, 'block_reasons', []) or [])}",
-            )
-            log.info(f"[{symbol}] entry blocked by pretrade risk gate: {getattr(sig.risk_snapshot, 'block_reasons', [])}")
-            return
-
-        qty = float(sig.qty)
-        short_decision = None
-        if sig.action == "SELL" and self.short_safety_gate is not None:
-            avg_bar_volume = float(getattr(sig.risk_snapshot, "avg_bar_volume", 0.0) or 0.0)
-            short_decision = self.short_safety_gate.evaluate(
-                symbol,
-                now=datetime.utcnow().astimezone(),
-                avg_bar_volume=avg_bar_volume,
-                action=sig.action,
-                enforce_timing=True,
-            )
-            if not short_decision.allowed:
-                event_name = "SHORT_SAFETY_SHADOW_BLOCK" if bool(getattr(self.short_safety_gate.cfg, "shadow_mode", False)) else "SHORT_SAFETY_BLOCK"
-                shadow_mode = bool(getattr(self.short_safety_gate.cfg, "shadow_mode", False))
-                should_record_shadow = source_exec_allowed or not shadow_mode
-                if should_record_shadow:
-                    self._record_execution_event(
-                        event_name,
-                        sig,
-                        symbol=symbol,
-                        value=float(getattr(sig.risk_snapshot, "risk_per_share", 0.0) or 0.0),
-                        details_suffix=f"reasons={short_decision.blocked_reason_text()}",
-                        event_risk_reason=str(short_decision.event_risk_reason or ""),
-                    )
-                if shadow_mode:
-                    if not should_record_shadow:
-                        log.info(f"[{symbol}] short safety shadow skipped for non-executable source: {sig_source}")
-                    else:
-                        log.info(f"[{symbol}] short safety shadow block recorded: {short_decision.blocked_reason_text()}")
-                else:
-                    log.info(f"[{symbol}] short blocked by safety gate: {short_decision.blocked_reason_text()}")
-                    return
-            qty *= float(short_decision.qty_multiplier)
-            if qty <= 0:
-                self._record_execution_event(
-                    "SHORT_SAFETY_QTY_ZERO",
-                    sig,
-                    symbol=symbol,
-                    details_suffix=f"qty_multiplier={float(short_decision.qty_multiplier):.3f}",
-                    event_risk_reason=str(short_decision.event_risk_reason or ""),
-                )
-                log.info(f"[{symbol}] short reduced to zero by safety gate")
-                return
-
-        if not source_exec_allowed:
-            self._record_execution_event(
-                "SOURCE_EXEC_BLOCK",
-                sig,
-                symbol=symbol,
-                details_suffix=f"allowed_sources={','.join(sorted(allowed_sources))}",
-            )
-            log.info(f"[{symbol}] entry blocked by source gate: source={sig_source} allowed={sorted(allowed_sources)}")
-            return
-
-        now = __import__("time").time()
-        breakout = abs(float(sig.short_sig)) >= float(self.cfg.short_threshold)
-        if self.entry_guard is not None and hasattr(self.entry_guard, "can_open_trade"):
-            allowed, reason = self.entry_guard.can_open_trade(
-                symbol=symbol,
-                now=now,
-                total_sig=float(sig.total_sig),
-                mid_scale=float(sig.mid_scale),
-                breakout=breakout,
-            )
-            if not allowed:
-                self._record_execution_event(
-                    "ENTRY_GUARD_BLOCK",
-                    sig,
-                    symbol=symbol,
-                    details_suffix=f"reason={reason}",
-                )
-                log.info(f"[{symbol}] entry blocked by guard: {reason}")
-                return
-
-        if self.allocator is not None:
-            qty = float(
-                self.allocator.size_qty(
-                    requested_qty=qty,
-                    entry_price=float(sig.entry_price),
-                    risk_snapshot=sig.risk_snapshot,
-                )
-            )
-            allowed, reason = self.allocator.can_open(notional=qty * float(sig.entry_price))
-            if qty <= 0:
-                self._record_execution_event(
-                    "ALLOCATOR_QTY_ZERO",
-                    sig,
-                    symbol=symbol,
-                    value=float(getattr(sig.risk_snapshot, "risk_per_share", 0.0) or 0.0),
-                    details_suffix=f"requested_qty={float(sig.qty):.3f} sized_qty={float(qty):.3f}",
-                )
-                log.info(f"[{symbol}] entry blocked by allocator: qty={qty}")
-                return
-            if not allowed:
-                self._record_execution_event(
-                    "ALLOCATOR_BLOCK",
-                    sig,
-                    symbol=symbol,
-                    value=float(qty * float(sig.entry_price)),
-                    details_suffix=f"reason={reason} qty={float(qty):.3f}",
-                )
-                log.info(f"[{symbol}] entry blocked by allocator: {reason} qty={qty}")
-                return
-
-        contract = make_stock_contract(symbol)
-        order_entry_price = float(getattr(sig.risk_snapshot, "expected_fill_price", 0.0) or 0.0)
-        if order_entry_price <= 0:
-            order_entry_price = float(sig.entry_price)
-        params = BracketParams(
-            take_profit_pct=self.cfg.take_profit_pct,
-            stop_loss_pct=self.cfg.stop_loss_pct,
-            take_profit_price=float(getattr(sig.risk_snapshot, "take_profit_price", 0.0) or 0.0),
-            stop_loss_price=float(getattr(sig.risk_snapshot, "stop_price", 0.0) or 0.0),
-        )
-        log.info(f"[{symbol}] placing bracket: action={sig.action} qty={qty} entry={order_entry_price:.2f} reason={sig.reason}")
-        trades = self.orders.place_bracket(
-            contract=contract,
-            action=sig.action,
-            qty=qty,
-            entry_price=order_entry_price,
-            params=params,
-            risk_snapshot=sig.risk_snapshot,
-            signal_reason=sig.reason,
-            signal_tag=sig.audit_tag,
-            signal_source=sig.audit_source,
-        )
-        try:
-            if self.entry_guard is not None and hasattr(self.entry_guard, "record_entry"):
-                self.entry_guard.record_entry(symbol, now, float(sig.total_sig), float(sig.mid_scale))
-            if hasattr(runner, "watch_entry_order") and trades:
-                parent_trade = trades[0]
-                oid = int(parent_trade.order.orderId)
-                runner.watch_entry_order(oid, meta={"symbol": symbol, "reason": sig.reason})
-        except Exception:
-            pass
+        self.executor.execute(symbol, sig, runner)

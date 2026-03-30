@@ -9,6 +9,7 @@ try:
     from ..common.logger import get_logger
     from ..common.markets import load_market_universe_config, load_symbols_from_symbol_master, market_config_path
     from ..common.runtime_paths import resolve_repo_path, resolve_scoped_runtime_path, scope_from_ibkr_config
+    from ..common.signal_audit import SignalAuditWriter
     from ..common.storage import Storage
     from ..enrichment.providers import EnrichmentProviders
     from ..ibkr.account import AccountService
@@ -33,10 +34,12 @@ try:
     from ..strategies.mid_regime import RegimeConfig
     from ..strategies.regime_adaptor import RegimeAdaptConfig, RegimeAdaptor
     from .engine import EngineConfig, TradingEngine
+    from .signal_executor import SignalExecutor
 except ImportError:
     from common.logger import get_logger
     from common.markets import load_market_universe_config, load_symbols_from_symbol_master, market_config_path
     from common.runtime_paths import resolve_repo_path, resolve_scoped_runtime_path, scope_from_ibkr_config
+    from common.signal_audit import SignalAuditWriter
     from common.storage import Storage
     from enrichment.providers import EnrichmentProviders
     from ibkr.account import AccountService
@@ -61,6 +64,7 @@ except ImportError:
     from strategies.mid_regime import RegimeConfig
     from strategies.regime_adaptor import RegimeAdaptConfig, RegimeAdaptor
     from app.engine import EngineConfig, TradingEngine
+    from app.signal_executor import SignalExecutor
 
 log = get_logger("main")
 
@@ -492,20 +496,26 @@ def run_intraday_engine(
         adapt_cfg=RegimeAdaptConfig.from_dict(regime_adaptor_cfg_raw.get("regime_adaptor")),
     )
     adapted_mid_cfg = regime_adaptor.refresh_if_due(md, storage=storage, force=True)
+    strategy_cfg = _build_strategy_config(
+        strat_cfg_raw,
+        adapted_mid_cfg,
+        trade_risk_cfg,
+        runtime_mode=runtime_mode,
+        paper_allowed_execution_sources=paper_allowed_execution_sources,
+        enforce_pretrade_risk_gate=bool(ibkr_cfg.get("enforce_pretrade_risk_gate", True)),
+    )
     strategy = EngineStrategy(
         orders=orders,
         gate=gate,
+        cfg=strategy_cfg,
+        audit_writer=SignalAuditWriter(storage),
+    )
+    executor = SignalExecutor(
+        orders=orders,
+        cfg=strategy_cfg,
         entry_guard=entry_guard,
         allocator=allocator,
         short_safety_gate=short_safety_gate,
-        cfg=_build_strategy_config(
-            strat_cfg_raw,
-            adapted_mid_cfg,
-            trade_risk_cfg,
-            runtime_mode=runtime_mode,
-            paper_allowed_execution_sources=paper_allowed_execution_sources,
-            enforce_pretrade_risk_gate=bool(ibkr_cfg.get("enforce_pretrade_risk_gate", True)),
-        ),
     )
 
     engine = TradingEngine(
@@ -516,6 +526,8 @@ def run_intraday_engine(
         cfg=EngineConfig(),
         md=md,
         regime_adaptor=regime_adaptor,
+        executor=executor,
+        storage=storage,
     )
 
     log.info("Starting engine...")

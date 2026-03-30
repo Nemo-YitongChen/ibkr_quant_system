@@ -71,6 +71,8 @@ class TradingEngine:
         cfg: EngineConfig,
         md: Optional[Any] = None,
         regime_adaptor: Optional[Any] = None,
+        executor: Optional[Any] = None,
+        storage: Optional[Any] = None,
         **_ignored: Any,  # be tolerant to unknown kwargs to keep iteration stable
     ) -> None:
         self.ib = ib
@@ -80,6 +82,8 @@ class TradingEngine:
         self.cfg = cfg
         self.md = md  # optional (can be None)
         self.regime_adaptor = regime_adaptor
+        self.executor = executor
+        self.storage = storage
 
         self._states: Dict[str, SymbolState] = {}
         self._aggs: Dict[str, RealTime5mAggregator] = {}
@@ -299,9 +303,26 @@ class TradingEngine:
 
         # If your sig object contains details, keep your existing logging style outside.
         if getattr(sig, "should_trade", False):
-            self.strategy.execute(symbol, sig, self.runner)
+            executor = self.executor
+            if executor is not None and hasattr(executor, "execute"):
+                executor.execute(symbol, sig, self.runner)
+            else:
+                self.strategy.execute(symbol, sig, self.runner)
         else:
             log.info(f"[{tag}] No trade {symbol}: {sig}")
+
+
+    def _resolve_storage(self) -> Optional[Any]:
+        if self.storage is not None:
+            return self.storage
+        strategy_storage = getattr(self.strategy, "storage", None)
+        if strategy_storage is not None:
+            return strategy_storage
+        audit_writer = getattr(self.strategy, "audit_writer", None)
+        audit_storage = getattr(audit_writer, "storage", None)
+        if audit_storage is not None:
+            return audit_storage
+        return getattr(getattr(self.strategy, "orders", None), "storage", None)
 
 
     def _update_quality(self, symbol: str, end_epoch: int, is_duplicate: bool) -> None:
@@ -327,7 +348,7 @@ class TradingEngine:
 
         # write through to sqlite (non-blocking)
         try:
-            storage = getattr(getattr(self.strategy, "orders", None), "storage", None)
+            storage = self._resolve_storage()
             if storage is not None and hasattr(storage, "upsert_md_quality"):
                 storage.upsert_md_quality(
                     day=q["day"],
@@ -355,7 +376,7 @@ class TradingEngine:
                 if self.regime_adaptor is not None and self.md is not None:
                     adapted = self.regime_adaptor.refresh_if_due(
                         self.md,
-                        storage=getattr(getattr(self.strategy, "orders", None), "storage", None),
+                        storage=self._resolve_storage(),
                     )
                     try:
                         self.strategy.cfg.mid = adapted
