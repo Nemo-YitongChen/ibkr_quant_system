@@ -49,7 +49,8 @@ Phase 0 之后的运行约定：
 - `config/strategy_defaults*.yaml`
 - `audit.db`
 - 可选：`symbol_master.db`
-- 若涉及实盘或 paper 连接：本地 `TWS` 或 `IB Gateway`
+- 若涉及实盘或 paper 连接：本地 `IB Gateway`
+- 当前仅支持 `IB Gateway`，不再以 `TWS` 作为运行入口
 - 若涉及研究层增强：本地 `.env.local`
 
 研究层数据源：
@@ -87,7 +88,7 @@ Phase 0 之后的运行约定：
 - 检查 supervisor 配置是否可读
 - 检查 scoped `audit.db`
 - 检查 watchlist / ibkr_config / summary 目录
-- 检查本地 `127.0.0.1:4001/4002/7496/7497` 端口是否在监听
+- 检查本地 `127.0.0.1:4001/4002` 的 IB Gateway 端口是否在监听
 
 说明：
 

@@ -4151,7 +4151,7 @@ def _build_ops_overview(
         elif port_warning_rows:
             preflight_banner_level = "WARN"
             preflight_banner_title = "IBKR 连接未就绪，当前不建议自动执行"
-            preflight_banner_action = "先启动 TWS/Gateway，并确认目标端口处于监听状态。"
+            preflight_banner_action = "先启动 IB Gateway，并确认目标端口处于监听状态。"
         else:
             preflight_banner_level = "WARN"
             preflight_banner_title = "Preflight 存在待确认项"
@@ -4290,6 +4290,41 @@ def _merge_execution_weekly_groups(
         )
     )
     return display_rows, orphan_rows
+
+
+def _simple_gateway_status_text(health: Dict[str, Any]) -> str:
+    status = str(health.get("status", "OK") or "OK").strip() or "OK"
+    detail = str(health.get("status_detail", "") or "").strip()
+    return f"{status} | {detail}" if detail else status
+
+
+def _simple_next_step_text(
+    *,
+    mode: str,
+    is_dry_run_view: bool,
+    open_flag: bool,
+    report_fresh: str,
+    gateway_status_label: str,
+    action_label: str,
+    action_detail: str,
+    recommendation_differs: bool,
+    recommended_execution_mode_label: str,
+) -> str:
+    if mode == "research-only":
+        return "当前市场只输出研究结果，不会提交交易。"
+    if report_fresh != "fresh":
+        return "先刷新最新报告，确认这一轮数据已经生成完成。"
+    if gateway_status_label not in {"OK", "IBKR正常"}:
+        return "先启动 IB Gateway，并确认 paper/live 目标端口可连接。"
+    if recommendation_differs and recommended_execution_mode_label and recommended_execution_mode_label != "-":
+        return f"先把执行模式切到“{recommended_execution_mode_label}”。"
+    if action_label and action_label != "观察":
+        return action_detail or f"按“{action_label}”处理当前组合。"
+    if is_dry_run_view:
+        return "继续看本地模拟账本和回标结果，再决定是否调整阈值。"
+    if open_flag:
+        return "等待下一轮自动刷新，重点看“当前建议”和执行计划。"
+    return "闭市阶段优先看周报、风险反馈和下一轮计划。"
 
 
 def _render_table(headers: List[str], rows: List[List[str]]) -> str:
@@ -4887,10 +4922,17 @@ def _render_card(card: Dict[str, Any]) -> str:
             f"<div><strong>Cost Proxy</strong><span>{html.escape(cost_label)}</span></div>",
             f"<div><strong>Risk Overlay</strong><span>{html.escape(risk_label)}</span></div>",
         ]
+        simple_stats_rows = [
+            f"<div class='simple-only'><strong>模拟权益</strong><span>{_fmt_money(paper.get('equity_after'))}</span></div>",
+            f"<div class='simple-only'><strong>模拟现金</strong><span>{_fmt_money(paper.get('cash_after'))}</span></div>",
+            f"<div class='simple-only'><strong>目标持仓比例</strong><span>{_fmt_pct(paper.get('target_invested_weight'))}</span></div>",
+            f"<div class='simple-only'><strong>调仓状态</strong><span>{'需要处理' if bool(paper.get('rebalance_due', False)) else '保持观察'}</span></div>",
+            f"<div class='simple-only'><strong>IB Gateway</strong><span>{html.escape(str(health.get('status', 'OK') or 'OK'))}</span></div>",
+        ]
         holdings_grid = f"""
   <div>
     <h3>{html.escape(holdings_title)}</h3>
-    {_render_table(["symbol", "qty", "market_value", "weight", "status"], holdings_rows)}
+    {_render_table(["股票", "数量", "市值", "权重", "状态"], holdings_rows)}
   </div>
 """
         dry_run_rows = [
@@ -4935,7 +4977,7 @@ def _render_card(card: Dict[str, Any]) -> str:
         execution_plan_section = f"""
     <div>
       <h3>本地模拟调仓</h3>
-      {_render_table(["symbol", "action", "qty", "price", "trade_value", "reason"], paper_trade_rows)}
+      {_render_table(["股票", "动作", "数量", "价格", "交易金额", "原因"], paper_trade_rows)}
     </div>
 """
         shadow_review_history_section = ""
@@ -5000,10 +5042,18 @@ def _render_card(card: Dict[str, Any]) -> str:
             f"<div><strong>计划 vs 实际成本</strong><span>{html.escape(weekly_cost_compare_label)}</span></div>",
             f"<div><strong>Execution Feedback</strong><span>{html.escape(execution_feedback_label)}</span></div>",
         ]
+        simple_stats_rows = [
+            f"<div class='simple-only'><strong>账户权益</strong><span>{_fmt_money(execution.get('broker_equity') or guard.get('broker_equity'))}</span></div>",
+            f"<div class='simple-only'><strong>账户现金</strong><span>{_fmt_money(execution.get('broker_cash') or guard.get('broker_cash'))}</span></div>",
+            f"<div class='simple-only'><strong>计划投入资金</strong><span>{_fmt_money(execution.get('target_capital'))}</span></div>",
+            f"<div class='simple-only'><strong>数据状态</strong><span>{html.escape(data_quality_label)}</span></div>",
+            f"<div class='simple-only'><strong>风险状态</strong><span>{html.escape(risk_label)}</span></div>",
+            f"<div class='simple-only'><strong>IB Gateway</strong><span>{html.escape(str(health.get('status', 'OK') or 'OK'))}</span></div>",
+        ]
         holdings_grid = f"""
   <div>
     <h3>{html.escape(broker_title)}</h3>
-    {_render_table(["symbol", "qty", "market_value", "weight", "source"], broker_rows)}
+    {_render_table(["股票", "数量", "市值", "权重", "来源"], broker_rows)}
   </div>
 """
         dry_run_sections = ""
@@ -5030,7 +5080,7 @@ def _render_card(card: Dict[str, Any]) -> str:
         execution_plan_section = f"""
     <div>
       <h3>执行计划</h3>
-      {_render_table(["symbol", "action", "status", "style", "expected_cost_bps", "reason"], exec_rows)}
+      {_render_table(["股票", "动作", "状态", "方式", "预估成本(bps)", "原因"], exec_rows)}
     </div>
 """
         shadow_review_history_section = f"""
@@ -5174,19 +5224,60 @@ def _render_card(card: Dict[str, Any]) -> str:
   </div>
 """
     execution_badge = "NO EXECUTION" if mode == "research-only" else ("DRY RUN" if is_dry_run_view else "EXECUTION READY")
+    gateway_status_label = str(health.get("status", "OK") or "OK").strip() or "OK"
+    gateway_status_text = _simple_gateway_status_text(health)
+    simple_status_text = (
+        f"{'开市' if open_flag else '闭市'} | {execution_badge} | "
+        f"报告{'已更新' if report_fresh == 'fresh' else '待刷新'}"
+    )
+    simple_action_text = action_label or ("继续复盘" if is_dry_run_view else "继续观察")
+    simple_reason_text = (
+        action_detail
+        or str(execution_mode_recommendation.get("reason", "") or "").strip()
+        or str(report_data_warning or "").strip()
+        or mode_detail
+        or "-"
+    )
+    simple_next_step_text = _simple_next_step_text(
+        mode=mode,
+        is_dry_run_view=is_dry_run_view,
+        open_flag=open_flag,
+        report_fresh=report_fresh,
+        gateway_status_label=gateway_status_label,
+        action_label=action_label,
+        action_detail=action_detail,
+        recommendation_differs=recommendation_differs,
+        recommended_execution_mode_label=recommended_execution_mode_label,
+    )
+    simple_summary_section = f"""
+      <div class="simple-card-summary simple-only">
+        <h3>一眼看懂</h3>
+        {_render_table(["问题", "答案"], [
+            ["当前状态", simple_status_text],
+            ["现在该做什么", simple_action_text],
+            ["为什么", simple_reason_text],
+            ["IB Gateway", gateway_status_text],
+            ["下一步", simple_next_step_text],
+        ])}
+      </div>
+"""
 
     return f"""
 <section class="card" data-open="{str(open_flag).lower()}" data-mode="{html.escape(mode)}" data-actionable="{str(actionable).lower()}" data-dashboard-view="{html.escape(dashboard_view)}" data-market="{html.escape(str(card.get('market', '') or ''))}" data-portfolio-id="{html.escape(portfolio_id)}" data-recommended-mode="{html.escape(recommended_execution_mode or 'AUTO')}" data-execution-mode-change="{str(recommendation_differs).lower()}">
   <div class="card-head">
     <div>
       <h2>{html.escape(card['market'])} / {html.escape(card['watchlist'])}</h2>
+      <div class="advanced-only">
       <div class="meta">mode={html.escape(mode)} | account_mode={html.escape(str(card.get('account_mode', '') or '-'))} | open={open_flag} | priority={card['priority_order']} | {html.escape(card['priority_reason'])}</div>
+      </div>
       <div class="meta"><span class="badge badge-mode">{html.escape(mode)}</span> <span class="badge badge-exec">{html.escape(execution_badge)}</span> <span>{html.escape(mode_detail)}</span></div>
+      <div class="meta"><span class="badge badge-action">{html.escape(action_label or '观察')}</span> <span>{html.escape(action_detail or '-')}</span></div>
+      {simple_summary_section}
+      <div class="advanced-only">
       <div class="meta">portfolio_id={html.escape(str(card.get('portfolio_id', '') or '-'))}</div>
       <div class="meta">runtime_scope={html.escape(str(card.get('runtime_scope', '') or '-'))} | account_id={html.escape(str(card.get('account_id', '') or '-'))}</div>
       <div class="meta">report_day={html.escape(str(report_day))} | slot={html.escape(str(report_slot))} | freshness={html.escape(str(report_fresh))}</div>
       <div class="meta">report_schedule={html.escape(report_schedule or '-')} | dir={html.escape(card['report_dir'])}</div>
-      <div class="meta"><span class="badge badge-action">{html.escape(action_label or '观察')}</span> <span>{html.escape(action_detail or '-')}</span></div>
       <div class="meta"><strong>推荐 Top10 摘要</strong> {html.escape(candidate_summary or '-')}</div>
       <div class="meta"><strong>Shadow ML</strong> {html.escape(shadow_label)}</div>
       <div class="meta"><strong>数据质量</strong> {html.escape(data_quality_label)}</div>
@@ -5197,39 +5288,48 @@ def _render_card(card: Dict[str, Any]) -> str:
       <div class="meta"><strong>风险备注</strong> {html.escape(risk_notes or '-')}</div>
       <div class="meta"><strong>行业/主题分布</strong> {html.escape(sector_theme_distribution)}</div>
       <div class="meta"><strong>动作分布</strong> {html.escape(action_distribution)}</div>
+      </div>
     </div>
     <div class="stats">
+      {''.join(simple_stats_rows)}
+      <div class="advanced-only">
       {''.join(stats_rows)}
       <div><strong>Opp</strong><span>entry={opp.get('entry_now_count', 0)} / near={opp.get('near_entry_count', 0)} / wait={opp.get('wait_count', 0)}</span></div>
       <div><strong>Guard</strong><span>stop={guard.get('stop_count', 0)} / tp={guard.get('take_profit_count', 0)}</span></div>
       <div><strong>Analysis</strong><span>active={analysis_active_count} / recent_events={analysis_event_count}</span></div>
-      <div><strong>IBKR Health</strong><span>{html.escape(str(health.get('status', 'OK') or 'OK'))}</span></div>
-      <div><strong>IBKR Health Detail</strong><span>{html.escape(str(health.get('status_detail', '-') or '-'))}</span></div>
+      <div><strong>IB Gateway</strong><span>{html.escape(str(health.get('status', 'OK') or 'OK'))}</span></div>
+      <div><strong>Gateway Detail</strong><span>{html.escape(str(health.get('status_detail', '-') or '-'))}</span></div>
+      </div>
     </div>
   </div>
 
   {control_panel}
 
+  <div class="advanced-only">
   {performance_section}
+  </div>
 
   {holdings_grid}
+  <div class="advanced-only">
   {dry_run_sections}
+  </div>
 
   <div class="grid">
     <div>
       <h3>当前建议</h3>
-      {_render_table(["symbol", "action", "entry_style", "regime", "notes"], plan_rows)}
+      {_render_table(["股票", "动作", "入场方式", "市场状态", "说明"], plan_rows)}
     </div>
     {execution_plan_section}
   </div>
 
-  {shadow_review_history_section}
-  {strategy_upgrade_section}
-
   <div>
     <h3>研究结论摘要</h3>
-    {_render_table(["summary"], [[line] for line in market_summary_lines] if market_summary_lines else [])}
+    {_render_table(["摘要"], [[line] for line in market_summary_lines] if market_summary_lines else [])}
   </div>
+
+  <div class="advanced-only">
+  {shadow_review_history_section}
+  {strategy_upgrade_section}
 
   <div>
     <h3>推荐池 Top10</h3>
@@ -5250,6 +5350,7 @@ def _render_card(card: Dict[str, Any]) -> str:
       <h3>最近分析变迁</h3>
       {_render_table(["ts", "symbol", "event", "from", "to"], analysis_event_rows)}
     </div>
+  </div>
   </div>
 </section>
 """
@@ -5640,7 +5741,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
       <div class="meta">{html.escape(str(ops_overview.get('summary_text', '尚无运维摘要') or '尚无运维摘要'))}</div>
       <div class="stats">
         <div><strong>Preflight</strong><span>P{int(ops_overview.get('preflight_pass_count', 0) or 0)} / W{int(ops_overview.get('preflight_warn_count', 0) or 0)} / F{int(ops_overview.get('preflight_fail_count', 0) or 0)}</span></div>
-        <div><strong>IBKR Ports</strong><span>{int(ops_overview.get('ibkr_port_warning_count', 0) or 0)} warnings</span></div>
+        <div><strong>Gateway Ports</strong><span>{int(ops_overview.get('ibkr_port_warning_count', 0) or 0)} warnings</span></div>
         <div><strong>Stale Reports</strong><span>{int(ops_overview.get('stale_report_count', 0) or 0)}</span></div>
         <div><strong>Degraded Health</strong><span>{int(ops_overview.get('degraded_health_count', 0) or 0)}</span></div>
         <div><strong>Mode Mismatch</strong><span>{int(ops_overview.get('execution_mode_mismatch_count', 0) or 0)}</span></div>
@@ -6869,12 +6970,18 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     }}
     * {{ box-sizing: border-box; }}
     body {{ margin: 0; font-family: Georgia, "Times New Roman", serif; background: linear-gradient(180deg, #f7f2e8 0%, #ebe4d8 100%); color: var(--ink); }}
+    body[data-detail-mode="simple"] .advanced-only {{ display: none !important; }}
+    body[data-detail-mode="advanced"] .simple-only {{ display: none !important; }}
     .wrap {{ max-width: 1500px; margin: 0 auto; padding: 28px 20px 40px; }}
     h1 {{ margin: 0 0 8px; font-size: 32px; }}
     .sub {{ color: var(--muted); margin-bottom: 20px; }}
+    .mode-hint {{ color: var(--muted); margin: -8px 0 18px; }}
     .toolbar {{ display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 18px; }}
+    .toolbar[data-toolbar="detail-mode"] {{ margin-bottom: 8px; }}
     .toolbar button {{ border: 1px solid var(--line); background: #fffaf2; color: var(--ink); border-radius: 999px; padding: 8px 14px; cursor: pointer; }}
     .toolbar button.active {{ background: var(--accent); color: white; border-color: var(--accent); }}
+    .simple-card-summary {{ margin: 14px 0 8px; }}
+    .simple-card-summary h3 {{ margin: 0 0 10px; font-size: 20px; }}
     .control-toolbar {{ display: flex; flex-wrap: wrap; gap: 10px; margin: 10px 0 4px; }}
     .control-toolbar button {{ border: 1px solid var(--line); background: #fffaf2; color: var(--ink); border-radius: 999px; padding: 8px 14px; cursor: pointer; }}
     .control-toolbar button.active {{ background: var(--accent); color: white; border-color: var(--accent); }}
@@ -6917,11 +7024,16 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     }}
   </style>
 </head>
-<body>
+<body data-detail-mode="simple">
   <div class="wrap">
-    <h1>Market Dashboard</h1>
-    <div class="sub">生成时间：{html.escape(str(payload.get("generated_at", "")))} | 60 秒自动刷新</div>
-    <div class="toolbar">
+    <h1>IB Gateway 量化交易 Dashboard</h1>
+    <div class="sub">生成时间：{html.escape(str(payload.get("generated_at", "")))} | 60 秒自动刷新 | 默认进入简单模式</div>
+    <div class="toolbar" data-toolbar="detail-mode">
+      <button class="active" data-detail-mode-button="simple">简单模式</button>
+      <button data-detail-mode-button="advanced">专业模式</button>
+    </div>
+    <div class="mode-hint">简单模式只保留连接状态、当前动作、持仓和执行重点；Shadow、阈值、校准和复盘细节放在专业模式里。</div>
+    <div class="toolbar" data-toolbar="filter">
       <button class="active" data-filter="trade">交易</button>
       <button data-filter="dry-run">Dry Run</button>
       <button data-filter="all">全部</button>
@@ -6939,7 +7051,6 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     {ibkr_history_probe_card}
     {execution_mode_summary_card}
     {execution_mode_banner}
-    {feedback_threshold_trial_alert_card}
     <section class="card overview">
       <h2>今日最该关注的动作 / 研究</h2>
       <div class="focus-grid">
@@ -6947,6 +7058,12 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
       </div>
     </section>
     {weekly_card}
+    <section class="card overview">
+      <h2>市场总览</h2>
+      {_render_table(["市场", "股票池", "模式", "是否开市", "优先级", "建议动作", "说明", "账户权益", "账户现金", "Gateway", "可立即入场", "继续等待", "执行中订单"], overview_rows)}
+    </section>
+    <div class="advanced-only">
+    {feedback_threshold_trial_alert_card}
     {weekly_group_card}
     {orphan_group_card}
     {review_overview_card}
@@ -6977,13 +7094,10 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     {execution_hotspot_overview_card}
     {execution_cost_overview_card}
     <section class="card overview">
-      <h2>IBKR 健康状态</h2>
+      <h2>IB Gateway 健康状态</h2>
       {_render_table(["market", "watchlist", "status", "detail", "delayed", "perm", "breaks", "acct_limit", "latest_event", "latest_ts"], health_rows)}
     </section>
-    <section class="card overview">
-      <h2>市场总览</h2>
-      {_render_table(["market", "watchlist", "mode", "open", "priority", "recommended_action", "detail", "account_equity", "account_cash", "ibkr_health", "entry_now", "wait", "exec_orders"], overview_rows)}
-    </section>
+    </div>
     {trade_cards_html or '<div class="empty">当前没有可展示的交易页面报告。</div>'}
     </div>
     <div data-view="dry-run" style="display:none;">
@@ -6991,6 +7105,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     {market_data_health_card}
     {ibkr_history_probe_card}
     {dry_run_overview_card}
+    <div class="advanced-only">
     {dry_run_attribution_card}
     {labeling_ready_overview_card}
     {feedback_calibration_overview_card}
@@ -7010,12 +7125,14 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     {dry_run_risk_alert_overview_card}
     {dry_run_risk_history_overview_card}
     {risk_feedback_overview_card}
+    </div>
     {dry_run_cards_html or '<div class="empty">当前没有可展示的 dry-run 页面数据。</div>'}
     </div>
     {stock_list_card}
   </div>
   <script>
-    const filterButtons = Array.from(document.querySelectorAll('.toolbar button'));
+    const filterButtons = Array.from(document.querySelectorAll('.toolbar[data-toolbar="filter"] button'));
+    const detailModeButtons = Array.from(document.querySelectorAll('.toolbar[data-toolbar="detail-mode"] button'));
     const tradeCards = Array.from(document.querySelectorAll('.card[data-open][data-dashboard-view="trade"]'));
     const tradeSections = Array.from(document.querySelectorAll('[data-view="trade"]'));
     const dryRunSections = Array.from(document.querySelectorAll('[data-view="dry-run"]'));
@@ -7042,6 +7159,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     const executionModeBannerRows = Array.from(document.querySelectorAll('.execution-mode-banner-row'));
     const controlUrl = controlRoot ? (controlRoot.dataset.controlUrl || '') : '';
     const executionModeMarketFilterStorageKey = 'dashboard.executionModeMarketFilter';
+    const detailModeStorageKey = 'dashboard.detailMode';
     const executionModeHashViewKey = 'view';
     const executionModeHashMarketKey = 'alert_market';
     const executionModeLabelMap = {{
@@ -7050,7 +7168,33 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
       PAUSED: '暂停自动执行',
     }};
     let currentFilterKind = 'trade';
+    let currentDetailMode = 'simple';
     let executionModeMarketFilter = '';
+    const persistDetailMode = () => {{
+      try {{
+        if (!window.localStorage) return;
+        window.localStorage.setItem(detailModeStorageKey, currentDetailMode);
+      }} catch (error) {{
+        // 本地存储失败时只跳过记忆能力，不影响 dashboard 正常使用。
+      }}
+    }};
+    const loadDetailMode = () => {{
+      try {{
+        if (!window.localStorage) return 'simple';
+        const saved = window.localStorage.getItem(detailModeStorageKey) || 'simple';
+        return saved === 'advanced' ? 'advanced' : 'simple';
+      }} catch (error) {{
+        return 'simple';
+      }}
+    }};
+    const applyDetailMode = (mode) => {{
+      currentDetailMode = mode === 'advanced' ? 'advanced' : 'simple';
+      document.body.dataset.detailMode = currentDetailMode;
+      detailModeButtons.forEach((btn) => {{
+        btn.classList.toggle('active', (btn.dataset.detailModeButton || '') === currentDetailMode);
+      }});
+      persistDetailMode();
+    }};
     const persistExecutionModeMarketFilter = () => {{
       try {{
         if (!window.localStorage) return;
@@ -7295,6 +7439,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
       return data;
     }};
     filterButtons.forEach((btn) => btn.addEventListener('click', () => applyFilter(btn.dataset.filter)));
+    detailModeButtons.forEach((btn) => btn.addEventListener('click', () => applyDetailMode(btn.dataset.detailModeButton)));
     controlActions.forEach((btn) => btn.addEventListener('click', async () => {{
       btn.disabled = true;
       try {{
@@ -7407,6 +7552,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
       applyFilter(currentFilterKind);
     }});
     restoreDashboardState(true);
+    applyDetailMode(loadDetailMode());
     applyFilter(currentFilterKind);
     if (controlRoot) {{
       fetchControlState();

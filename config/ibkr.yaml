@@ -1,6 +1,6 @@
 mode: paper
 host: "127.0.0.1"
-port: 4002            # IB Gateway paper default :contentReference[oaicite:5]{index=5}
+port: 4002            # IB Gateway paper default
 # 4001: live
 client_id: 101
 account_id: "UXXXXXXX"  # 改成你的

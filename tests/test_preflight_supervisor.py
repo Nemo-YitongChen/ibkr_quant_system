@@ -99,6 +99,34 @@ class PreflightSupervisorTests(unittest.TestCase):
             self.assertEqual(port_rows[0]["name"], "ibkr_port:127.0.0.1:4002")
             self.assertEqual(port_rows[0]["status"], "PASS")
 
+    @patch("src.tools.preflight_supervisor._probe_port")
+    def test_run_preflight_gateway_fallback_only_checks_gateway_ports(self, mock_probe_port):
+        mock_probe_port.return_value = False
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            cfg_path = base / "supervisor.yaml"
+            runtime_root = base / "runtime_data" / "paper_test"
+            runtime_root.mkdir(parents=True, exist_ok=True)
+            (runtime_root / "audit.db").write_text("", encoding="utf-8")
+            out_dir = base / "reports_preflight"
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'summary_out_dir: "reports_supervisor"',
+                        'dashboard_db: "audit.db"',
+                        'markets: []',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            payload = run_preflight(str(cfg_path), runtime_root=str(runtime_root), out_dir=str(out_dir))
+            port_rows = [row for row in payload["checks"] if str(row.get("name", "")).startswith("ibkr_port:")]
+            self.assertEqual([row["name"] for row in port_rows], [
+                "ibkr_port:127.0.0.1:4001",
+                "ibkr_port:127.0.0.1:4002",
+            ])
+
 
 if __name__ == "__main__":
     unittest.main()

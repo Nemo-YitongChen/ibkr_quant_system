@@ -4062,7 +4062,7 @@ class SupervisorCliTests(unittest.TestCase):
                         "warn_count": 2,
                         "fail_count": 1,
                         "checks": [
-                            {"name": "ibkr_port:7497", "status": "WARN", "detail": "127.0.0.1:7497 not_listening"},
+                            {"name": "ibkr_port:4002", "status": "WARN", "detail": "127.0.0.1:4002 not_listening"},
                             {"name": "dashboard_db", "status": "FAIL", "detail": "audit db missing"},
                         ],
                     },
@@ -4163,6 +4163,10 @@ class SupervisorCliTests(unittest.TestCase):
             self.assertIn('data-mode-value="AUTO"', html_text)
             self.assertIn('data-mode-value="REVIEW_ONLY"', html_text)
             self.assertIn('data-mode-value="PAUSED"', html_text)
+            self.assertIn('data-detail-mode="simple"', html_text)
+            self.assertIn('data-detail-mode-button="simple"', html_text)
+            self.assertIn('data-detail-mode-button="advanced"', html_text)
+            self.assertIn("一眼看懂", html_text)
             self.assertIn('class="execution-mode-current"', html_text)
             self.assertIn('class="execution-mode-change"', html_text)
             self.assertIn("只保留人工审核", html_text)
@@ -6294,6 +6298,67 @@ class SupervisorCliTests(unittest.TestCase):
             html_text = (summary_dir / "dashboard.html").read_text(encoding="utf-8")
             self.assertIn("待排查", html_text)
             self.assertIn("IBKR 历史行情不可用", html_text)
+
+    def test_dashboard_preflight_warn_banner_uses_ib_gateway_wording(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            cfg_path = base / "supervisor.yaml"
+            summary_dir = base / "reports_supervisor"
+            preflight_dir = base / "reports_preflight"
+            report_root = base / "reports_investment"
+            watchlist_dir = report_root / "watchlist"
+            watchlist_dir.mkdir(parents=True, exist_ok=True)
+            preflight_dir.mkdir(parents=True, exist_ok=True)
+            summary_dir.mkdir(parents=True, exist_ok=True)
+            (preflight_dir / "supervisor_preflight_summary.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at": "2026-03-30T10:00:00",
+                        "pass_count": 6,
+                        "warn_count": 1,
+                        "fail_count": 0,
+                        "checks": [
+                            {"name": "ibkr_port:4002", "status": "WARN", "detail": "127.0.0.1:4002 not_listening"},
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            for name in (
+                "investment_paper_summary.json",
+                "investment_execution_summary.json",
+                "investment_guard_summary.json",
+                "investment_opportunity_summary.json",
+            ):
+                (watchlist_dir / name).write_text("{}", encoding="utf-8")
+            (watchlist_dir / "investment_candidates.csv").write_text("symbol,score,action\nAAPL,0.8,HOLD\n", encoding="utf-8")
+            (watchlist_dir / "investment_plan.csv").write_text("symbol,action,entry_style,notes\nAAPL,HOLD,HOLD_CORE,test\n", encoding="utf-8")
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        f'summary_out_dir: "{summary_dir}"',
+                        f'dashboard_preflight_dir: "{preflight_dir}"',
+                        "poll_sec: 30",
+                        "markets:",
+                        '  - name: "us"',
+                        '    market: "US"',
+                        "    enabled: true",
+                        "    reports:",
+                        '      - kind: "investment"',
+                        f'        out_dir: "{report_root}"',
+                        '        watchlist_yaml: "config/watchlist.yaml"',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            payload = build_dashboard(str(cfg_path), str(summary_dir))
+            self.assertIn("IB Gateway", payload["ops_overview"]["preflight_banner_action"])
+            write_dashboard(payload, str(summary_dir))
+            html_text = (summary_dir / "dashboard.html").read_text(encoding="utf-8")
+            self.assertIn("IB Gateway", html_text)
 
 
 if __name__ == "__main__":

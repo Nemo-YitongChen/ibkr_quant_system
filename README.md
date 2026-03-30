@@ -1,10 +1,12 @@
 # ibkr_quant_system
 
-基于 IBKR 的投资研究、paper 执行、live 监督系统。当前主线已经收敛到“研究报告 -> paper 组合 -> execution / guard -> 周复盘 -> supervisor 自动调度”这条闭环，而不是短线实验脚本集合。
+基于 IB Gateway 的 IBKR 投资研究、paper 执行、live 监督系统。当前主线已经收敛到“研究报告 -> paper 组合 -> execution / guard -> 周复盘 -> supervisor 自动调度”这条闭环，而不是短线实验脚本集合。
+
+当前仅支持 `IB Gateway`，不再把 `TWS` 作为推荐或兼容入口。
 
 ## 项目目标
 
-- 稳定连接 `IBKR`，完成取数、报告、paper 执行、broker 对账和审计留痕
+- 稳定连接 `IB Gateway`，完成取数、报告、paper 执行、broker 对账和审计留痕
 - 让 `paper` 环境可以持续运行，并和 `live` 保持清晰隔离
 - 保持策略层、执行层、券商适配层分离，避免把交易规则绑死在 broker 细节里
 
@@ -23,10 +25,10 @@ cp .env.example .env.local
 基础要求：
 
 - Python `3.11`
-- 本地 `TWS` 或 `IB Gateway`
+- 本地 `IB Gateway`
 - 需要研究层增强时，填写 `.env.local` 里的 API key
 
-环境变量模板在 [.env.example](/Volumes/Data%20and%20Info/AI%20Assisted%20Projects/My%20Website/ibkr_quant_system/.env.example)。
+环境变量模板在 [`./.env.example`](./.env.example)。
 
 ## 配置入口
 
@@ -128,13 +130,13 @@ ibkr-quant-reconcile --market US --db audit.db --portfolio_id US:watchlist --out
 
 ## 文档
 
-- [runnable_code_summary.md](/Volumes/Data%20and%20Info/AI%20Assisted%20Projects/My%20Website/ibkr_quant_system/docs/runnable_code_summary.md)
+- [`docs/runnable_code_summary.md`](./docs/runnable_code_summary.md)
   - 入口脚本总览和输出说明
-- [supervisor_runbook.md](/Volumes/Data%20and%20Info/AI%20Assisted%20Projects/My%20Website/ibkr_quant_system/docs/supervisor_runbook.md)
+- [`docs/supervisor_runbook.md`](./docs/supervisor_runbook.md)
   - `paper / live` 日常启动、排障和 dashboard 控制
-- [project_status_roadmap.md](/Volumes/Data%20and%20Info/AI%20Assisted%20Projects/My%20Website/ibkr_quant_system/docs/project_status_roadmap.md)
+- [`docs/project_status_roadmap.md`](./docs/project_status_roadmap.md)
   - 项目目标、当前进度、架构判断和下一阶段规划
-- [architecture_overview.md](/Volumes/Data%20and%20Info/AI%20Assisted%20Projects/My%20Website/ibkr_quant_system/docs/architecture_overview.md)
+- [`docs/architecture_overview.md`](./docs/architecture_overview.md)
   - 系统分层、运行路径和市场范围
-- [production_governance.md](/Volumes/Data%20and%20Info/AI%20Assisted%20Projects/My%20Website/ibkr_quant_system/docs/production_governance.md)
+- [`docs/production_governance.md`](./docs/production_governance.md)
   - 运行模式、安全门、变更治理和 CI 基线

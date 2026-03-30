@@ -54,3 +54,13 @@ def test_main_loads_env_before_delegating_to_runtime(monkeypatch) -> None:
     assert captured["market_code"] == "HK-RESOLVED"
     assert captured["ibkr_config_arg"] == "config/ibkr.yaml"
     assert captured["startup_check_only"] is True
+
+
+def test_readme_uses_repo_relative_links_and_gateway_wording() -> None:
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert "](/Volumes" not in readme
+    assert "](/Users" not in readme
+    assert "IB Gateway" in readme
+    assert "当前仅支持 `IB Gateway`" in readme
+    assert "本地 `TWS`" not in readme
