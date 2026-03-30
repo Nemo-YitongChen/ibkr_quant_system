@@ -33,6 +33,10 @@ EXECUTION_MODE_LABELS: Dict[str, str] = {
 }
 
 
+EXECUTION_MODE_LABELS_EN: Dict[str, str] = {"AUTO": "Auto Execute", "REVIEW_ONLY": "Review Only", "PAUSED": "Pause Auto Execution"}
+DASHBOARD_TRANSLATIONS_EN: Dict[str, str] = {"IB Gateway 量化交易 Dashboard": "IB Gateway Quant Trading Dashboard", "简单模式": "Simple Mode", "专业模式": "Advanced Mode", "交易": "Trade", "全部": "All", "只看开市": "Open Markets Only", "只看自动提交": "Auto Submit Only", "只看有动作": "Actionable Only", "股票列表": "Stock List", "Preflight 关键提示": "Key Preflight Warnings", "运维总览": "Operations Overview", "当前没有需要优先处理的运维告警。": "No operational alerts need immediate action.", "Dashboard 控制": "Dashboard Control", "立即跑一轮": "Run Once Now", "立即跑 Preflight": "Run Preflight Now", "立即跑 Weekly Review": "Run Weekly Review Now", "刷新 Dashboard": "Refresh Dashboard", "交易运行状态": "Trading Runtime Status", "执行模式告警计数": "Execution Mode Alerts", "× 清除": "Clear", "Dry Run 页面说明": "Dry Run Overview", "Dry Run 总览": "Dry Run Overview", "Dry Run 周度代理归因": "Dry Run Weekly Attribution", "今日最该关注的动作 / 研究": "Most Important Actions / Research Today", "当前没有高优先级动作。": "No high-priority actions right now.", "市场总览": "Market Overview", "IB Gateway 健康状态": "IB Gateway Health", "当前没有可展示的交易页面报告。": "No trade dashboard reports are available right now.", "当前没有可展示的 dry-run 页面数据。": "No dry-run dashboard data is available right now.", "本周执行质量": "Weekly Execution Quality", "本周执行质量（当前市场）": "Weekly Execution Quality (Current Market)", "本周执行质量（分市场）": "Weekly Execution Quality (By Market)", "历史执行残留（当前未纳入市场卡片）": "Historical Execution Leftovers (Not in Current Market Cards)", "人工审核队列": "Manual Review Queue", "Shadow Review 历史重点": "Shadow Review Highlights", "策略升级建议": "Strategy Upgrade Suggestions", "周度风险复盘": "Weekly Risk Review", "风险轨迹告警": "Risk Trend Alerts", "执行模式建议": "Execution Mode Suggestions", "市场数据健康总览": "Market Data Health Overview", "IBKR 历史接入诊断": "IBKR History Access Diagnostics", "近期风险轨迹": "Recent Risk Trail", "结果校准": "Outcome Calibration", "校准自动化": "Calibration Automation", "接近自动应用的校准": "Calibration Near Auto Apply", "即将成熟的 Outcome 样本": "Outcome Samples Near Maturity", "结果校准输入缺口": "Calibration Input Gaps", "本周自动风险反馈": "Weekly Automated Risk Feedback", "本周自动执行反馈": "Weekly Automated Execution Feedback", "第三阶段：自动执行校准进度": "Phase 3: Execution Calibration Progress", "执行热点（symbol + session）": "Execution Hotspots (symbol + session)", "计划成本 vs 实际执行成本": "Planned vs Actual Execution Cost", "一眼看懂": "Quick Read", "问题": "Question", "答案": "Answer", "当前状态": "Current Status", "现在该做什么": "What To Do Now", "为什么": "Why", "下一步": "Next Step", "当前建议": "Current Recommendations", "研究结论摘要": "Research Summary", "执行计划": "Execution Plan", "本地模拟调仓": "Local Sim Rebalance", "本地模拟账本状态": "Local Sim Ledger Status", "Dry Run 如何形成闭环": "How Dry Run Closes the Loop", "快照回标汇总": "Snapshot Outcome Summary", "股票": "Symbol", "数量": "Qty", "市值": "Market Value", "权重": "Weight", "状态": "Status", "来源": "Source", "动作": "Action", "价格": "Price", "交易金额": "Trade Value", "原因": "Reason", "入场方式": "Entry Style", "市场状态": "Market Regime", "说明": "Notes", "摘要": "Summary", "模拟权益": "Sim Equity", "模拟现金": "Sim Cash", "目标持仓比例": "Target Invested", "调仓状态": "Rebalance Status", "账户权益": "Account Equity", "账户现金": "Account Cash", "计划投入资金": "Target Capital", "数据状态": "Data Quality", "风险状态": "Risk Status", "需要处理": "Needs Attention", "保持观察": "Keep Watching", "观察": "Observe", "当前没有启用中的 dry-run 页面数据；如果要和 trade 同时跑，请在对应 report 打开 `force_local_paper_ledger`。": "No active dry-run page data is available. To run it alongside trade, enable `force_local_paper_ledger` in the target report.", "当前还没有可展示的周度代理归因数据。": "No weekly attribution data is available yet.", "当前还没有可展示的 execution 周度数据。": "No weekly execution data is available yet.", "当前没有可展示的人工审核数据。": "No manual review data is available right now.", "当前没有 shadow review 历史记录。": "No shadow review history is available right now.", "当前没有周度 shadow review 建议。": "No weekly shadow review suggestions are available right now.", "当前没有组合风险复盘数据。": "No portfolio risk review data is available right now.", "当前没有可展示的 trade 风险趋势告警。": "No trade-side risk trend alerts are available right now.", "当前没有需要提示的执行模式建议。": "No execution mode suggestions need attention right now.", "当前没有可展示的市场数据健康摘要。": "No market data health summary is available right now.", "当前还没有历史接入诊断结果；运行 probe 后这里会显示权限/合约/空历史的抽样结论。": "No history access diagnostics are available yet. After running the probe, sampled permission, contract, and empty-history results will appear here.", "当前没有可展示的 trade 风险轨迹。": "No trade-side risk trail is available right now.", "当前没有可展示的 dry-run 风险轨迹。": "No dry-run risk trail is available right now.", "当前还没有足够的 outcome 回标样本来校准 weekly feedback。": "There are not enough labeled outcomes yet to calibrate weekly feedback.", "当前还没有可展示的校准自动化结论。": "No calibration automation results are available right now.", "当前没有接近进入自动应用的校准项。": "No calibration items are close to auto-apply right now.", "当前没有可预测成熟时间的 labeling 缺口。": "There are no labeling gaps with a predictable maturity time right now.", "当前没有新的自动风险反馈；本周沿用基础 paper 风险预算。": "There is no new automated risk feedback this week; the base paper risk budget remains in effect.", "当前没有新的执行参数反馈；本周沿用基础 execution 配置。": "There is no new execution parameter feedback this week; the base execution config remains in effect.", "当前没有明显的执行热点。": "There are no obvious execution hotspots right now.", "当前没有可展示的计划/实际执行成本对比数据。": "No planned-vs-actual execution cost comparison data is available right now.", "当前市场只输出研究结果，不会提交交易。": "This market is research-only and will not submit trades.", "先刷新最新报告，确认这一轮数据已经生成完成。": "Refresh the latest report before taking action.", "先启动 IB Gateway，并确认 paper/live 目标端口可连接。": "Start IB Gateway and confirm the paper/live ports are reachable.", "继续看本地模拟账本和回标结果，再决定是否调整阈值。": "Continue reviewing the local simulated ledger and labeled outcomes before adjusting thresholds.", "等待下一轮自动刷新，重点看“当前建议”和执行计划。": "Wait for the next refresh and focus on Current Recommendations and the Execution Plan.", "闭市阶段优先看周报、风险反馈和下一轮计划。": "After market close, focus on the weekly review, risk feedback, and the next plan."}
+DASHBOARD_FRAGMENT_TRANSLATIONS_EN: Dict[str, str] = {"生成时间：": "Generated at: ", "60 秒自动刷新": "auto refresh every 60s", "默认进入简单模式": "default view: simple mode", "当前告警市场筛选：": "Current alert market filter: ", "开市": "Market Open", "闭市": "Market Closed", "报告已更新": "Report Fresh", "待刷新": "Needs Refresh", "继续复盘": "Continue Review", "继续观察": "Keep Watching", "按“": "Handle the portfolio with \"", "”处理当前组合。": "\" for this portfolio.", "先把执行模式切到“": "Switch execution mode to \"", "”。": "\".", "自动执行": "Auto Execute", "只保留人工审核": "Review Only", "暂停自动执行": "Pause Auto Execution", "自动应用": "Auto Apply", "建议确认": "Confirm Manually"}
+
 def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(description="Generate a static dashboard from supervisor and report outputs.")
     ap.add_argument("--config", default="config/supervisor.yaml", help="Path to supervisor config.")
@@ -4329,11 +4333,21 @@ def _simple_next_step_text(
 
 def _render_table(headers: List[str], rows: List[List[str]]) -> str:
     if not rows:
-        return '<div class="empty">无数据</div>'
-    thead = "".join(f"<th>{html.escape(h)}</th>" for h in headers)
+        return '<div class="empty" data-i18n-zh="无数据">无数据</div>'
+    thead = "".join(
+        f'<th data-i18n-zh="{html.escape(str(h))}">{html.escape(str(h))}</th>'
+        for h in headers
+    )
     tbody = []
     for row in rows:
-        tbody.append("<tr>" + "".join(f"<td>{html.escape(str(cell))}</td>" for cell in row) + "</tr>")
+        tbody.append(
+            "<tr>"
+            + "".join(
+                f'<td data-i18n-zh="{html.escape(str(cell))}">{html.escape(str(cell))}</td>'
+                for cell in row
+            )
+            + "</tr>"
+        )
     return f"<table><thead><tr>{thead}</tr></thead><tbody>{''.join(tbody)}</tbody></table>"
 
 
@@ -5757,12 +5771,12 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
       <h2>Dashboard 控制</h2>
       <div class="meta" id="control-status">{html.escape(control_status_text)}</div>
       <div class="control-toolbar">
-        <button type="button" class="control-action" data-api-action="run_once">立即跑一轮</button>
-        <button type="button" class="control-action" data-api-action="run_preflight">立即跑 Preflight</button>
-        <button type="button" class="control-action" data-api-action="run_weekly_review">立即跑 Weekly Review</button>
-        <button type="button" class="control-action" data-api-action="refresh_dashboard">刷新 Dashboard</button>
+        <button type="button" class="control-action" data-api-action="run_once" data-i18n-zh="立即跑一轮">立即跑一轮</button>
+        <button type="button" class="control-action" data-api-action="run_preflight" data-i18n-zh="立即跑 Preflight">立即跑 Preflight</button>
+        <button type="button" class="control-action" data-api-action="run_weekly_review" data-i18n-zh="立即跑 Weekly Review">立即跑 Weekly Review</button>
+        <button type="button" class="control-action" data-api-action="refresh_dashboard" data-i18n-zh="刷新 Dashboard">刷新 Dashboard</button>
       </div>
-      <div class="meta">这些按钮调用本机 supervisor control service；组合级开关会写入当前 summary 目录的 `dashboard_control_state.json`，并在下次启动 `python -m src.app.supervisor` 时自动恢复。</div>
+      <div class="meta" data-i18n-zh="这些按钮调用本机 supervisor control service；组合级开关会写入当前 summary 目录的 `dashboard_control_state.json`，并在下次启动 `python -m src.app.supervisor` 时自动恢复。">这些按钮调用本机 supervisor control service；组合级开关会写入当前 summary 目录的 `dashboard_control_state.json`，并在下次启动 `python -m src.app.supervisor` 时自动恢复。</div>
     </section>
     """
         if control_enabled
@@ -5799,12 +5813,12 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
         <div><strong>Paused</strong><span id="execution-mode-summary-paused">{int(execution_mode_summary.get("paused_count", 0) or 0)}</span></div>
       </div>
       <div class="control-toolbar">
-        <button type="button" class="execution-mode-market-filter active" data-market-filter="">全部</button>
+        <button type="button" class="execution-mode-market-filter active" data-market-filter="" data-i18n-zh="全部">全部</button>
         {execution_mode_summary_market_buttons}
       </div>
       <div class="meta">
         <span id="execution-mode-market-filter-label">当前告警市场筛选：全部</span>
-        <button type="button" id="execution-mode-market-filter-clear" style="display:none; margin-left:8px;">× 清除</button>
+        <button type="button" id="execution-mode-market-filter-clear" data-i18n-zh="× 清除" style="display:none; margin-left:8px;">× 清除</button>
       </div>
       <table>
         <thead>
@@ -7024,23 +7038,27 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     }}
   </style>
 </head>
-<body data-detail-mode="simple">
+<body data-detail-mode="simple" data-language="zh">
   <div class="wrap">
-    <h1>IB Gateway 量化交易 Dashboard</h1>
-    <div class="sub">生成时间：{html.escape(str(payload.get("generated_at", "")))} | 60 秒自动刷新 | 默认进入简单模式</div>
-    <div class="toolbar" data-toolbar="detail-mode">
-      <button class="active" data-detail-mode-button="simple">简单模式</button>
-      <button data-detail-mode-button="advanced">专业模式</button>
+    <h1 data-i18n-zh="IB Gateway 量化交易 Dashboard">IB Gateway 量化交易 Dashboard</h1>
+    <div class="sub" id="dashboard-subtitle" data-generated-at="{html.escape(str(payload.get("generated_at", "")))}">生成时间：{html.escape(str(payload.get("generated_at", "")))} | 60 秒自动刷新 | 默认进入简单模式</div>
+    <div class="toolbar" data-toolbar="language">
+      <button class="active" data-language-button="zh">中文</button>
+      <button data-language-button="en">English</button>
     </div>
-    <div class="mode-hint">简单模式只保留连接状态、当前动作、持仓和执行重点；Shadow、阈值、校准和复盘细节放在专业模式里。</div>
+    <div class="toolbar" data-toolbar="detail-mode">
+      <button class="active" data-detail-mode-button="simple" data-i18n-zh="简单模式">简单模式</button>
+      <button data-detail-mode-button="advanced" data-i18n-zh="专业模式">专业模式</button>
+    </div>
+    <div class="mode-hint" data-i18n-zh="简单模式只保留连接状态、当前动作、持仓和执行重点；Shadow、阈值、校准和复盘细节放在专业模式里。">简单模式只保留连接状态、当前动作、持仓和执行重点；Shadow、阈值、校准和复盘细节放在专业模式里。</div>
     <div class="toolbar" data-toolbar="filter">
-      <button class="active" data-filter="trade">交易</button>
+      <button class="active" data-filter="trade" data-i18n-zh="交易">交易</button>
       <button data-filter="dry-run">Dry Run</button>
-      <button data-filter="all">全部</button>
-      <button data-filter="open">只看开市</button>
-      <button data-filter="auto-submit">只看自动提交</button>
-      <button data-filter="actionable">只看有动作</button>
-      <button data-filter="stock-list">股票列表</button>
+      <button data-filter="all" data-i18n-zh="全部">全部</button>
+      <button data-filter="open" data-i18n-zh="只看开市">只看开市</button>
+      <button data-filter="auto-submit" data-i18n-zh="只看自动提交">只看自动提交</button>
+      <button data-filter="actionable" data-i18n-zh="只看有动作">只看有动作</button>
+      <button data-filter="stock-list" data-i18n-zh="股票列表">股票列表</button>
     </div>
     {control_panel}
     <div data-view="trade">
@@ -7133,6 +7151,8 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
   <script>
     const filterButtons = Array.from(document.querySelectorAll('.toolbar[data-toolbar="filter"] button'));
     const detailModeButtons = Array.from(document.querySelectorAll('.toolbar[data-toolbar="detail-mode"] button'));
+    const languageButtons = Array.from(document.querySelectorAll('.toolbar[data-toolbar="language"] button'));
+    const dashboardSubtitle = document.getElementById('dashboard-subtitle');
     const tradeCards = Array.from(document.querySelectorAll('.card[data-open][data-dashboard-view="trade"]'));
     const tradeSections = Array.from(document.querySelectorAll('[data-view="trade"]'));
     const dryRunSections = Array.from(document.querySelectorAll('[data-view="dry-run"]'));
@@ -7160,16 +7180,100 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     const controlUrl = controlRoot ? (controlRoot.dataset.controlUrl || '') : '';
     const executionModeMarketFilterStorageKey = 'dashboard.executionModeMarketFilter';
     const detailModeStorageKey = 'dashboard.detailMode';
+    const languageStorageKey = 'dashboard.language';
     const executionModeHashViewKey = 'view';
     const executionModeHashMarketKey = 'alert_market';
-    const executionModeLabelMap = {{
-      AUTO: '自动执行',
-      REVIEW_ONLY: '只保留人工审核',
-      PAUSED: '暂停自动执行',
+    const executionModeLabels = {{
+      zh: {json.dumps(EXECUTION_MODE_LABELS, ensure_ascii=False)},
+      en: {json.dumps(EXECUTION_MODE_LABELS_EN, ensure_ascii=False)},
     }};
+    const uiTranslationsEn = {json.dumps(DASHBOARD_TRANSLATIONS_EN, ensure_ascii=False)};
+    const uiFragmentTranslationsEn = {json.dumps(DASHBOARD_FRAGMENT_TRANSLATIONS_EN, ensure_ascii=False)};
     let currentFilterKind = 'trade';
     let currentDetailMode = 'simple';
+    let currentLanguage = 'zh';
     let executionModeMarketFilter = '';
+    let lastControlState = null;
+    const translateText = (text) => {{
+      const raw = String(text || '');
+      if (currentLanguage !== 'en') return raw;
+      if (Object.prototype.hasOwnProperty.call(uiTranslationsEn, raw)) {{
+        return uiTranslationsEn[raw];
+      }}
+      let translated = raw;
+      Object.entries(uiFragmentTranslationsEn).forEach(([source, target]) => {{
+        translated = translated.split(source).join(target);
+      }});
+      return translated;
+    }};
+    const registerStaticTranslations = () => {{
+      document.querySelectorAll('h1, h2, h3, .empty').forEach((node) => {{
+        if (node.dataset.i18nZh) return;
+        const text = String(node.textContent || '').trim();
+        if (text) node.dataset.i18nZh = text;
+      }});
+    }};
+    const renderDashboardSubtitle = () => {{
+      if (!dashboardSubtitle) return;
+      const generatedAt = dashboardSubtitle.dataset.generatedAt || '';
+      dashboardSubtitle.textContent = currentLanguage === 'en'
+        ? `Generated at: ${{generatedAt}} | auto refresh every 60s | default view: simple mode`
+        : `生成时间：${{generatedAt}} | 60 秒自动刷新 | 默认进入简单模式`;
+    }};
+    const executionModeLabel = (mode) => {{
+      const labels = executionModeLabels[currentLanguage] || executionModeLabels.zh;
+      return labels[mode] || mode;
+    }};
+    const renderLanguageSensitiveControls = () => {{
+      controlModes.forEach((btn) => {{
+        btn.textContent = executionModeLabel(btn.dataset.modeValue || 'AUTO');
+      }});
+      controlToggles.forEach((btn) => {{
+        const label = translateText(btn.dataset.label || '');
+        const value = btn.dataset.value === 'true';
+        btn.textContent = `${{label}}: ${{value ? 'ON' : 'OFF'}}`;
+      }});
+      controlWeeklyFeedbackButtons.forEach((btn) => {{
+        if (btn.dataset.i18nZh) {{
+          btn.textContent = translateText(btn.dataset.i18nZh);
+        }}
+      }});
+    }};
+    const persistLanguage = () => {{
+      try {{
+        if (!window.localStorage) return;
+        window.localStorage.setItem(languageStorageKey, currentLanguage);
+      }} catch (error) {{
+        // 本地存储失败时只跳过记忆能力，不影响 dashboard 正常使用。
+      }}
+    }};
+    const loadLanguage = () => {{
+      try {{
+        if (!window.localStorage) return 'zh';
+        const saved = window.localStorage.getItem(languageStorageKey) || 'zh';
+        return saved === 'en' ? 'en' : 'zh';
+      }} catch (error) {{
+        return 'zh';
+      }}
+    }};
+    const applyLanguage = (language) => {{
+      currentLanguage = language === 'en' ? 'en' : 'zh';
+      document.body.dataset.language = currentLanguage;
+      languageButtons.forEach((btn) => {{
+        btn.classList.toggle('active', (btn.dataset.languageButton || '') === currentLanguage);
+      }});
+      renderDashboardSubtitle();
+      document.querySelectorAll('[data-i18n-zh]').forEach((node) => {{
+        const zhText = node.dataset.i18nZh || '';
+        node.textContent = translateText(zhText);
+      }});
+      renderLanguageSensitiveControls();
+      updateExecutionModeMarketButtons();
+      if (lastControlState) {{
+        updateControlUi(lastControlState);
+      }}
+      persistLanguage();
+    }};
     const persistDetailMode = () => {{
       try {{
         if (!window.localStorage) return;
@@ -7252,8 +7356,9 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
         btn.classList.toggle('active', (btn.dataset.marketFilter || '') === executionModeMarketFilter);
       }});
       if (executionModeMarketFilterLabel) {{
-        // 这里直接展示当前告警筛选，避免刷新后看不出页面为什么只剩某个市场。
-        executionModeMarketFilterLabel.textContent = `当前告警市场筛选：${{executionModeMarketFilter || '全部'}}`;
+        executionModeMarketFilterLabel.textContent = currentLanguage === 'en'
+          ? `Current alert market filter: ${{executionModeMarketFilter || 'All'}}`
+          : `当前告警市场筛选：${{executionModeMarketFilter || '全部'}}`;
       }}
       if (executionModeMarketFilterClear) {{
         executionModeMarketFilterClear.style.display = executionModeMarketFilter ? '' : 'none';
@@ -7296,6 +7401,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     }};
     const updateControlUi = (state) => {{
       if (!state) return;
+      lastControlState = state;
       const service = state.service || {{}};
       const actions = state.actions || {{}};
       const portfolios = state.portfolios || {{}};
@@ -7316,7 +7422,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
         const value = !!row[btn.dataset.field];
         btn.dataset.value = value ? 'true' : 'false';
         btn.classList.toggle('active', value);
-        btn.textContent = `${{btn.dataset.label}}: ${{value ? 'ON' : 'OFF'}}`;
+        btn.textContent = `${{translateText(btn.dataset.label || '')}}: ${{value ? 'ON' : 'OFF'}}`;
       }});
       controlModes.forEach((btn) => {{
         const row = portfolios[btn.dataset.portfolioId] || {{}};
@@ -7325,6 +7431,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
         btn.disabled = busy;
         btn.classList.toggle('active', mode === btn.dataset.modeValue);
         btn.classList.toggle('recommended', recommendedMode === btn.dataset.modeValue && recommendedMode !== mode);
+        btn.textContent = executionModeLabel(btn.dataset.modeValue || 'AUTO');
       }});
       controlWeeklyFeedbackButtons.forEach((btn) => {{
         const row = portfolios[btn.dataset.portfolioId] || {{}};
@@ -7335,10 +7442,11 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
       executionModeCurrentLabels.forEach((node) => {{
         const row = portfolios[node.dataset.portfolioId] || {{}};
         const mode = row.execution_control_mode || 'AUTO';
-        node.textContent = executionModeLabelMap[mode] || mode;
+        node.textContent = executionModeLabel(mode);
       }});
       executionModeRecommendedLabels.forEach((node) => {{
-        node.textContent = node.dataset.recommendedLabel || '自动执行';
+        const recommendedMode = node.dataset.recommendedMode || '';
+        node.textContent = recommendedMode ? executionModeLabel(recommendedMode) : translateText(node.dataset.recommendedLabel || '自动执行');
       }});
       executionModeChangeLabels.forEach((node) => {{
         const row = portfolios[node.dataset.portfolioId] || {{}};
@@ -7352,7 +7460,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
         const recommendedMode = rowNode.dataset.recommendedMode || 'AUTO';
         const currentCell = rowNode.querySelector('[data-cell="current"]');
         if (currentCell) {{
-          currentCell.textContent = executionModeLabelMap[mode] || mode;
+          currentCell.textContent = executionModeLabel(mode);
         }}
         rowNode.style.display = recommendedMode !== mode ? '' : 'none';
       }});
@@ -7404,8 +7512,10 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
           }}
           if (executionModeSummaryText) {{
             executionModeSummaryText.textContent = mismatchCount
-              ? `${{mismatchCount}} 个组合建议切换：${{reviewOnlyCount}} 个建议 只保留人工审核，${{pausedCount}} 个建议 暂停自动执行`
-              : '当前执行模式与风险建议一致';
+              ? (currentLanguage === 'en'
+                  ? `${{mismatchCount}} portfolios should switch mode: ${{reviewOnlyCount}} to Review Only, ${{pausedCount}} to Pause Auto Execution`
+                  : `${{mismatchCount}} 个组合建议切换：${{reviewOnlyCount}} 个建议 只保留人工审核，${{pausedCount}} 个建议 暂停自动执行`)
+              : (currentLanguage === 'en' ? 'Current execution modes align with risk recommendations' : '当前执行模式与风险建议一致');
           }}
         }}
       }}
@@ -7440,6 +7550,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     }};
     filterButtons.forEach((btn) => btn.addEventListener('click', () => applyFilter(btn.dataset.filter)));
     detailModeButtons.forEach((btn) => btn.addEventListener('click', () => applyDetailMode(btn.dataset.detailModeButton)));
+    languageButtons.forEach((btn) => btn.addEventListener('click', () => applyLanguage(btn.dataset.languageButton)));
     controlActions.forEach((btn) => btn.addEventListener('click', async () => {{
       btn.disabled = true;
       try {{
@@ -7551,8 +7662,10 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
       restoreDashboardState(false);
       applyFilter(currentFilterKind);
     }});
+    registerStaticTranslations();
     restoreDashboardState(true);
     applyDetailMode(loadDetailMode());
+    applyLanguage(loadLanguage());
     applyFilter(currentFilterKind);
     if (controlRoot) {{
       fetchControlState();

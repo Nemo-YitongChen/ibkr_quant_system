@@ -4166,6 +4166,10 @@ class SupervisorCliTests(unittest.TestCase):
             self.assertIn('data-detail-mode="simple"', html_text)
             self.assertIn('data-detail-mode-button="simple"', html_text)
             self.assertIn('data-detail-mode-button="advanced"', html_text)
+            self.assertIn('data-language="zh"', html_text)
+            self.assertIn('data-language-button="zh"', html_text)
+            self.assertIn('data-language-button="en"', html_text)
+            self.assertIn('dashboard.language', html_text)
             self.assertIn("一眼看懂", html_text)
             self.assertIn('class="execution-mode-current"', html_text)
             self.assertIn('class="execution-mode-change"', html_text)
@@ -4902,7 +4906,7 @@ class SupervisorCliTests(unittest.TestCase):
             html_text = (summary_dir / "dashboard.html").read_text(encoding="utf-8")
             self.assertIn('data-filter="stock-list"', html_text)
             self.assertIn('id="stock-list"', html_text)
-            self.assertGreater(html_text.rfind('id="stock-list"'), html_text.rfind("市场总览"))
+            self.assertGreater(html_text.rfind('id="stock-list"'), html_text.find('<h2>市场总览</h2>'))
 
     def test_supervisor_scopes_relative_report_and_db_paths_by_mode_and_account(self):
         with tempfile.TemporaryDirectory() as tmp:
