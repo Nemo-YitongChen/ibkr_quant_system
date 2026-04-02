@@ -1589,6 +1589,10 @@ class SupervisorCliTests(unittest.TestCase):
             self.assertAlmostEqual(payload["execution_weekly"]["fill_rate_status"], 0.75, places=6)
             self.assertAlmostEqual(payload["execution_weekly"]["fill_rate_audit"], 0.50, places=6)
             self.assertAlmostEqual(payload["execution_weekly"]["fill_rate"], 0.50, places=6)
+            write_dashboard(payload, str(summary_dir))
+            html_text = (summary_dir / "dashboard.html").read_text(encoding="utf-8")
+            self.assertIn('data-simple-section="weekly-execution"', html_text)
+            self.assertIn("2026-W11", html_text)
 
     def test_dashboard_loads_execution_weekly_groups(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -2186,6 +2190,7 @@ class SupervisorCliTests(unittest.TestCase):
             write_dashboard(payload, str(summary_dir))
             html_text = (summary_dir / "dashboard.html").read_text(encoding="utf-8")
             self.assertIn("Dry Run 周度代理归因", html_text)
+            self.assertIn('data-simple-section="dry-run-attribution"', html_text)
             self.assertIn("周度代理归因（策略复盘）", html_text)
             self.assertIn("SELECTION", html_text)
             self.assertIn("收益主要由选股质量驱动", html_text)
@@ -3485,6 +3490,7 @@ class SupervisorCliTests(unittest.TestCase):
             write_dashboard(payload, str(summary_dir))
             html_text = (summary_dir / "dashboard.html").read_text(encoding="utf-8")
             self.assertIn("周度风险复盘", html_text)
+            self.assertIn('data-simple-section="risk-review-overview"', html_text)
             self.assertIn("CORRELATION", html_text)
             self.assertIn("流动性恶化", html_text)
             self.assertIn("组合拥挤度偏高", html_text)
@@ -3637,6 +3643,8 @@ class SupervisorCliTests(unittest.TestCase):
             write_dashboard(payload, str(summary_dir))
             html_text = (summary_dir / "dashboard.html").read_text(encoding="utf-8")
             self.assertIn("近期风险轨迹", html_text)
+            self.assertIn('data-simple-section="trade-risk-history"', html_text)
+            self.assertIn('data-simple-section="dry-run-risk-history"', html_text)
             self.assertIn("执行风险轨迹", html_text)
             self.assertIn("Dry Run 风险轨迹", html_text)
             self.assertIn("波动抬升", html_text)
@@ -3733,11 +3741,13 @@ class SupervisorCliTests(unittest.TestCase):
             write_dashboard(payload, str(summary_dir))
             html_text = (summary_dir / "dashboard.html").read_text(encoding="utf-8")
             self.assertIn("风险轨迹告警", html_text)
+            self.assertIn('data-simple-section="trade-risk-alert"', html_text)
             self.assertIn("风险趋势与告警", html_text)
             self.assertIn("执行模式建议", html_text)
             self.assertIn("执行模式告警计数", html_text)
-            self.assertIn("need_change", html_text)
-            self.assertIn("review_only", html_text)
+            self.assertIn("建议切换", html_text)
+            self.assertIn("建议人工审核", html_text)
+            self.assertIn("建议暂停", html_text)
             self.assertIn("US", html_text)
             self.assertIn('class="execution-mode-market-filter active"', html_text)
             self.assertIn('data-market-filter="US"', html_text)
@@ -3748,7 +3758,7 @@ class SupervisorCliTests(unittest.TestCase):
             self.assertIn('id="execution-mode-market-filter-label"', html_text)
             self.assertIn('id="execution-mode-market-filter-clear"', html_text)
             self.assertIn("当前告警市场筛选：全部", html_text)
-            self.assertIn("1 个组合建议切换：1 个建议 只保留人工审核，0 个建议 暂停自动执行", html_text)
+            self.assertIn("当前有 1 个组合建议切换：1 个建议人工审核，0 个建议暂停自动执行", html_text)
             self.assertIn("建议切换执行模式", html_text)
             self.assertIn('id="execution-mode-banner"', html_text)
             self.assertIn('id="execution-mode-summary"', html_text)
@@ -3905,6 +3915,14 @@ class SupervisorCliTests(unittest.TestCase):
             self.assertIn("runtime_scope:", runtime_status["summary_text"])
             self.assertNotIn("runtime:", runtime_status["summary_text"])
             self.assertIn("US:watchlist=paper-dry-run", runtime_status["market_mode_summary_text"])
+            write_dashboard(payload, str(summary_dir))
+            html_text = (summary_dir / "dashboard.html").read_text(encoding="utf-8")
+            self.assertIn('data-simple-section="runtime-status"', html_text)
+            self.assertIn("连接账户", html_text)
+            self.assertIn("账户模式", html_text)
+            self.assertIn("Paper 账户", html_text)
+            self.assertIn("Paper 模拟运行", html_text)
+            self.assertNotIn("market_modes=", html_text)
 
     def test_dashboard_prefers_ibkr_paper_snapshot_before_local_ledger_in_paper_mode(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -4034,13 +4052,19 @@ class SupervisorCliTests(unittest.TestCase):
             self.assertIn('data-view="trade"', html_text)
             self.assertIn('data-view="dry-run"', html_text)
             self.assertIn("Dry Run 页面说明", html_text)
+            self.assertIn('data-simple-section="dry-run-banner"', html_text)
+            self.assertIn("这里只做本地模拟，不会向 IBKR 下单。", html_text)
             self.assertIn("当前持仓 (IBKR Paper 快照)", html_text)
             self.assertIn("当前持仓 (本地模拟账本)", html_text)
+            self.assertIn("Paper 自动执行", html_text)
+            self.assertIn("本地模拟运行", html_text)
             dry_run_match = re.search(r'<section class="card"[^>]*data-dashboard-view="dry-run".*?</section>', html_text, re.S)
             self.assertIsNotNone(dry_run_match)
             dry_run_html = dry_run_match.group(0)
             self.assertIn("本地模拟账本状态", dry_run_html)
             self.assertIn("本地模拟调仓", dry_run_html)
+            self.assertIn('data-simple-section="paper-plan"', dry_run_html)
+            self.assertIn('data-simple-section="dry-run-overview"', html_text)
             self.assertNotIn("filled(status/audit)", dry_run_html)
             self.assertNotIn(">执行计划<", dry_run_html)
 
@@ -4177,6 +4201,13 @@ class SupervisorCliTests(unittest.TestCase):
             self.assertIn("暂停自动执行", html_text)
             self.assertIn('data-field="run_investment_execution"', html_text)
             self.assertIn('data-field="submit_investment_execution"', html_text)
+            self.assertIn('data-simple-section="preflight-banner"', html_text)
+            self.assertIn('data-simple-section="ops-overview"', html_text)
+            self.assertIn('data-simple-section="focus-actions"', html_text)
+            self.assertIn('data-simple-section="current-actions"', html_text)
+            self.assertIn('data-simple-section="execution-plan"', html_text)
+            self.assertIn('data-simple-section="market-overview"', html_text)
+            self.assertIn("IB Gateway 端口", html_text)
 
     def test_dashboard_loads_ibkr_history_probe_summary(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -4360,7 +4391,7 @@ class SupervisorCliTests(unittest.TestCase):
             write_dashboard(payload, str(summary_dir))
             html_text = (summary_dir / "dashboard.html").read_text(encoding="utf-8")
             self.assertIn("确认应用 Weekly Feedback", html_text)
-            self.assertIn("PENDING_CONFIRM", html_text)
+            self.assertIn("待确认", html_text)
             self.assertIn("LIVE_CONFIRM_REQUIRED", json.dumps(payload, ensure_ascii=False))
 
     def test_dashboard_execution_weekly_orphans_are_separated(self):
@@ -4569,6 +4600,9 @@ class SupervisorCliTests(unittest.TestCase):
             self.assertEqual(card["health_summary"]["delayed_count"], 1)
             self.assertEqual(card["health_summary"]["account_limit_count"], 1)
             self.assertEqual(payload["health_overview"][0]["status"], "DEGRADED")
+            write_dashboard(payload, str(summary_dir))
+            html_text = (summary_dir / "dashboard.html").read_text(encoding="utf-8")
+            self.assertIn("当前 1 个组合里，0 个连接正常，1 个降级，0 个受限。 异常计数：延迟 1 / 权限 0 / 中断 0 / 额度 1。", html_text)
 
     def test_dashboard_loads_analysis_chain_per_portfolio(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -4906,6 +4940,8 @@ class SupervisorCliTests(unittest.TestCase):
             html_text = (summary_dir / "dashboard.html").read_text(encoding="utf-8")
             self.assertIn('data-filter="stock-list"', html_text)
             self.assertIn('id="stock-list"', html_text)
+            self.assertIn('data-simple-section="stock-list-intro"', html_text)
+            self.assertIn("这里汇总当前需要跟踪的股票；基础观察池不会因切换账号或 live/paper 而消失。", html_text)
             self.assertGreater(html_text.rfind('id="stock-list"'), html_text.find('<h2>市场总览</h2>'))
 
     def test_supervisor_scopes_relative_report_and_db_paths_by_mode_and_account(self):
@@ -6026,7 +6062,7 @@ class SupervisorCliTests(unittest.TestCase):
             write_dashboard(payload, str(summary_dir))
             html_text = (summary_dir / "dashboard.html").read_text(encoding="utf-8")
             self.assertIn("research-only", html_text)
-            self.assertIn("NO EXECUTION", html_text)
+            self.assertIn("只做研究", html_text)
             self.assertIn("只研究推荐，不执行 broker paper/live 下单", html_text)
             self.assertIn("研究推荐", html_text)
             self.assertIn("推荐 Top10 摘要", html_text)
@@ -6034,6 +6070,12 @@ class SupervisorCliTests(unittest.TestCase):
             self.assertIn("行业/主题分布", html_text)
             self.assertIn("consumer:1", html_text)
             self.assertIn("研究结论摘要", html_text)
+            self.assertIn("当前建议:", html_text)
+            self.assertIn("重点标的:", html_text)
+            self.assertIn("执行方式:", html_text)
+            self.assertIn("补充说明:", html_text)
+            self.assertIn("Recommendation: ", html_text)
+            self.assertIn("Focus symbols: ", html_text)
             self.assertIn("市场画像:", html_text)
 
     def test_dashboard_loads_data_quality_summary_and_candidate_metrics(self):
@@ -6175,6 +6217,8 @@ class SupervisorCliTests(unittest.TestCase):
             self.assertIn("数据质量", html_text)
             self.assertIn("avg=0.83 / low=2 / src_cov=0.91 / miss=0.11", html_text)
             self.assertIn("市场数据健康总览", html_text)
+            self.assertIn('data-simple-section="market-data-health"', html_text)
+            self.assertIn("当前 1 个市场里，1 个 IBKR 正常，0 个研究 fallback，0 个混合，0 个需要排查。", html_text)
             self.assertIn("IBKR正常", html_text)
             self.assertIn("交易成本代理", html_text)
             self.assertIn("avg=18.4bps / high=1 / low_liq=0", html_text)
