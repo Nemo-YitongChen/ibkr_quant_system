@@ -1,18 +1,71 @@
 # ibkr_quant_system
 
-基于 IB Gateway 的 IBKR 投资研究、paper 执行、live 监督系统。当前主线已经收敛到“研究报告 -> paper 组合 -> execution / guard -> 周复盘 -> supervisor 自动调度”这条闭环，而不是短线实验脚本集合。
+`ibkr_quant_system` 是一个基于 `IB Gateway` 的 IBKR 量化交易工具，面向“研究 -> paper 组合 -> 执行 -> 风控 -> 复盘 -> dashboard 监督”这条完整闭环。
 
-当前仅支持 `IB Gateway`，不再把 `TWS` 作为推荐或兼容入口。
+当前项目的定位不是高频或多券商通用框架，而是一个以 `IB Gateway` 为唯一券商入口、支持中长期投资研究与执行管理的可维护基础盘。
 
 ## 项目目标
 
-- 稳定连接 `IB Gateway`，完成取数、报告、paper 执行、broker 对账和审计留痕
-- 让 `paper` 环境可以持续运行，并和 `live` 保持清晰隔离
-- 保持策略层、执行层、券商适配层分离，避免把交易规则绑死在 broker 细节里
+这个项目当前围绕三个目标建设：
 
-## 快速开始
+- 提供一套可持续运行的 `IB Gateway` 量化交易工作流，从研究、报告、paper 组合、执行、风控到复盘都能串起来。
+- 保持 `paper` 和 `live` 的运行边界清晰，优先保证 paper 验证可用，再逐步放开 live 使用。
+- 保持策略层、执行层、券商适配层分离，让后续新增策略、替换规则、扩展市场时不需要重写整套系统。
 
-推荐在仓库根目录使用可编辑安装，这也是当前 `pyproject.toml` 和 console scripts 的标准路径。
+## 当前支持范围
+
+- 仅支持 `IB Gateway`
+- 不再把 `TWS` 作为推荐或兼容入口
+- `HK` / `US` 是当前最成熟的市场
+- `ASX` / `XETRA` 已接入统一流程，但成熟度低于 `HK` / `US`
+- `CN` 当前保持 `research-only`，不进入自动执行链路
+
+## 当前功能
+
+### 1. 研究与报告
+
+- 从 watchlist 出发生成投资研究报告
+- 结合 `IBKR`、`yfinance`、`FMP`、`FRED`、`Finnhub` 做行情、基本面、宏观和新闻补充
+- 输出每个市场、每个组合的研究目录和报告结果
+
+### 2. Paper 组合与执行准备
+
+- 根据研究报告生成 paper 组合建议
+- 维护 paper ledger、组合状态和调仓建议
+- 提供 execution / opportunity / guard 三条配套工具链
+
+### 3. 执行、风控与审计
+
+- 对接 `IB Gateway` 获取账户、订单、成交和持仓信息
+- 支持 broker 对账、paper 同步、执行后审计
+- 记录信号、市场数据质量、风险事件和执行留痕
+
+### 4. 自动调度与 dashboard
+
+- 提供 `supervisor` 做定时调度和统一控制
+- 提供 dashboard 查看运行状态、研究结论、执行建议和关键告警
+- dashboard 支持 `简单 / 专业` 模式切换
+- dashboard 支持 `中文 / English` 切换
+
+### 5. 周复盘与运行治理
+
+- 提供周度复盘、经纪商对账、paper 与 broker 同步工具
+- 提供 preflight 检查，帮助在启动前确认环境、端口、配置和运行模式
+- 已补齐基础 CI、包入口和命令行脚本，便于其他人安装和接手
+
+## 安装要求
+
+基础要求：
+
+- Python `3.11`
+- 本地可用的 `IB Gateway`
+- 需要增强研究数据时，在 `.env.local` 中填写对应 API key
+
+当前环境变量模板见 [`./.env.example`](./.env.example)。
+
+## 安装方式
+
+在仓库根目录执行：
 
 ```bash
 python3.11 -m venv .venv
@@ -22,82 +75,57 @@ python -m pip install -e ".[dev]"
 cp .env.example .env.local
 ```
 
-基础要求：
+`.env.local` 中常见可选项包括：
 
-- Python `3.11`
-- 本地 `IB Gateway`
-- 需要研究层增强时，填写 `.env.local` 里的 API key
+- `FMP_API_KEY`
+- `FRED_API_KEY`
+- `TE_API_KEY`
+- `FINNHUB_API_KEY`
+- `FINNHUB_WEBHOOK_SECRET`
 
-环境变量模板在 [`./.env.example`](./.env.example)。
+## 配置文件
 
-## 配置入口
+主要入口配置：
 
-- `config/supervisor.yaml`
-  - `paper` 主配置
+- [`config/supervisor.yaml`](./config/supervisor.yaml)
+  - 默认 `paper` 主配置
   - 覆盖 `HK / US / ASX / XETRA / CN`
-  - `CN` 保持 `research-only`
-- `config/supervisor_live.yaml`
-  - `live` 一键配置
+  - 其中 `CN` 维持 `research-only`
+- [`config/supervisor_live.yaml`](./config/supervisor_live.yaml)
+  - `live` 配置入口
   - 覆盖 `HK / US / ASX / XETRA`
 
-当前数据源分工：
+如果只是首次上手，建议先只使用 `config/supervisor.yaml`。
 
-- `IBKR`：账户、执行、可用时优先提供历史行情
-- `yfinance`：免费日线 fallback、snapshot、news fallback
-- `FMP`：基本面补充
-- `FRED`：宏观补充
-- `Finnhub`：新闻、财报日历、推荐趋势
+## 如何使用
 
-## 推荐入口
-
-完成 `pip install -e ".[dev]"` 后，优先使用下面这些命令。旧的 `python -m src...` 路径仍然兼容。
-
-- `ibkr-quant-preflight`
-  - 对应 `python -m src.tools.preflight_supervisor`
-- `ibkr-quant-supervisor`
-  - 对应 `python -m src.app.supervisor`
-- `ibkr-quant-engine`
-  - 对应 `python -m src.main`
-- `ibkr-quant-report`
-  - 对应 `python -m src.tools.generate_investment_report`
-- `ibkr-quant-paper`
-  - 对应 `python -m src.tools.run_investment_paper`
-- `ibkr-quant-execution`
-  - 对应 `python -m src.tools.run_investment_execution`
-- `ibkr-quant-guard`
-  - 对应 `python -m src.tools.run_investment_guard`
-- `ibkr-quant-opportunity`
-  - 对应 `python -m src.tools.run_investment_opportunity`
-- `ibkr-quant-weekly-review`
-  - 对应 `python -m src.tools.review_investment_weekly`
-- `ibkr-quant-reconcile`
-  - 对应 `python -m src.tools.reconcile_investment_broker`
-- `ibkr-quant-sync-paper`
-  - 对应 `python -m src.tools.sync_investment_paper_from_broker`
-
-## 最小运行闭环
-
-### 1. 启动前检查
+### 1. 先做启动前检查
 
 ```bash
 ibkr-quant-preflight --config config/supervisor.yaml --runtime_root runtime_data/paper_investment_only_duq152001 --out_dir reports_preflight
 ```
 
-### 2. 自动调度
+这个命令会检查当前配置、运行目录、IB Gateway 端口和关键依赖是否可用。
+
+### 2. 启动 supervisor
+
+持续运行：
 
 ```bash
 ibkr-quant-supervisor --config config/supervisor.yaml
 ```
 
-只跑当前时刻应触发的一轮：
+只执行当前时刻应触发的一轮：
 
 ```bash
 ibkr-quant-supervisor --config config/supervisor.yaml --once
 ```
 
-### 3. 手动最小流程
+如果你想用 dashboard 作为主要入口，这通常是最直接的启动方式。
 
-HK 示例：
+### 3. 手动跑一条最小闭环
+
+以 `HK` 为例：
 
 ```bash
 ibkr-quant-engine --market HK --startup-check-only
@@ -109,7 +137,7 @@ ibkr-quant-weekly-review --market HK --db audit.db --out_dir reports_investment_
 ibkr-quant-reconcile --market HK --db audit.db --portfolio_id HK:resolved_hk_top100_bluechip --out_dir reports_investment_reconcile
 ```
 
-US 示例：
+以 `US` 为例：
 
 ```bash
 ibkr-quant-engine --market US --startup-check-only
@@ -121,14 +149,43 @@ ibkr-quant-weekly-review --market US --db audit.db --out_dir reports_investment_
 ibkr-quant-reconcile --market US --db audit.db --portfolio_id US:watchlist --out_dir reports_investment_reconcile
 ```
 
-## 安全提醒
+### 4. 常用命令入口
 
-- 默认先在 `paper` 环境验证，不要直接跳 `live`
-- `live` 启动前先跑 preflight，再看 dashboard 顶部的模式建议和关键 warning
-- `ibkr-quant-supervisor --once` 不是 dry-run，到了触发时点会真实执行
-- `resolved_*.yaml` watchlist 继续纳入版本控制；当前已避免机器绝对路径和无意义 `generated_at` 噪音
+安装完成后，推荐直接使用这些 console scripts：
 
-## 文档
+- `ibkr-quant-preflight`
+- `ibkr-quant-supervisor`
+- `ibkr-quant-engine`
+- `ibkr-quant-report`
+- `ibkr-quant-paper`
+- `ibkr-quant-execution`
+- `ibkr-quant-guard`
+- `ibkr-quant-opportunity`
+- `ibkr-quant-weekly-review`
+- `ibkr-quant-reconcile`
+- `ibkr-quant-sync-paper`
+
+旧的 `python -m src...` 调用方式仍然兼容，但新安装环境建议优先用上面的命令。
+
+## 推荐上手路径
+
+如果是第一次接手这个项目，建议按下面顺序熟悉：
+
+1. 先看 [`docs/project_status_roadmap.md`](./docs/project_status_roadmap.md)，了解项目目标、当前进度和市场范围。
+2. 再看 [`docs/architecture_overview.md`](./docs/architecture_overview.md)，理解系统分层和主要运行链路。
+3. 使用 `ibkr-quant-preflight` 检查本地环境。
+4. 使用 `ibkr-quant-supervisor --config config/supervisor.yaml --once` 跑一轮 paper。
+5. 打开 dashboard，先用简单模式查看当前运行状态，再根据需要切到专业模式。
+
+## 使用建议与安全边界
+
+- 默认先在 `paper` 环境验证，不建议直接跳到 `live`
+- `ibkr-quant-supervisor --once` 不是 dry-run，到触发时点会执行真实动作
+- `live` 启动前，先跑 preflight，再检查 dashboard 顶部的运行模式和关键告警
+- `resolved_*.yaml` watchlist 是运行输入的一部分，应继续纳入版本控制
+- 如果只是要研究和复盘，不需要启动自动执行链路
+
+## 相关文档
 
 - [`docs/runnable_code_summary.md`](./docs/runnable_code_summary.md)
   - 入口脚本总览和输出说明
