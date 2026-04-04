@@ -234,7 +234,7 @@ class EngineStrategy:
         if self.gate is not None and hasattr(self.gate, "can_trade_short"):
             can_short = bool(self.gate.can_trade_short())
 
-        total = fuse(short_sig=short_sig, long_sig=0.0, mid_scale=mid_scale, can_trade_short=True)
+        total = fuse(short_sig=short_sig, long_sig=0.0, mid_scale=mid_scale, can_trade_short=can_short)
 
         # -------- Phase2: pick entry channel (Pure-Short or Total) --------
         channel = "NONE"

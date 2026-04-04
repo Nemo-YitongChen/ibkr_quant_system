@@ -80,7 +80,9 @@ class SignalExecutor:
         runtime_mode = str(getattr(self.cfg, "runtime_mode", "") or "").strip().lower()
         allowed_sources = {str(x or "").upper() for x in list(getattr(self.cfg, "paper_allowed_execution_sources", []) or [])}
         sig_source = str(sig.audit_source or "").upper()
-        source_exec_allowed = not (runtime_mode == "paper" and allowed_sources and sig_source not in allowed_sources)
+        live_requires_realtime_source = runtime_mode == "live" and sig_source != "REALTIME"
+        paper_source_blocked = runtime_mode == "paper" and allowed_sources and sig_source not in allowed_sources
+        source_exec_allowed = not live_requires_realtime_source and not paper_source_blocked
 
         if bool(getattr(self.cfg, "enforce_pretrade_risk_gate", True)) and sig.risk_snapshot is not None and not bool(sig.risk_snapshot.allowed):
             self._record_execution_event(

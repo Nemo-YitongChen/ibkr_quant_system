@@ -107,6 +107,18 @@ class TradingEngine:
         now = datetime.now(timezone.utc)
         return (now - end_time).total_seconds() > stale_after_sec
 
+    @staticmethod
+    def _is_nonrecoverable_realtime_error(error: Exception) -> bool:
+        message = str(error or '').lower()
+        nonrecoverable_markers = (
+            '420',
+            'permission',
+            'not subscribed',
+            'market data subscription',
+            'realtime market data is not subscribed',
+        )
+        return any(marker in message for marker in nonrecoverable_markers)
+
     def start(self) -> None:
         # ib_insync timeout
         try:
@@ -154,13 +166,21 @@ class TradingEngine:
         )
         try:
             agg.start()
+            self._aggs[symbol] = agg
             log.info(f"[{symbol}] realtime aggregator started")
         except Exception as e:
-            # If no realtime permissions (e.g., Error 420), fall back to historical audit only
-            self._rt_disabled[symbol] = str(e)
-            log.warning(f"[{symbol}] realtime disabled -> historical fallback only: {e}")
+            if self._is_nonrecoverable_realtime_error(e):
+                # If realtime permissions are missing, latch into historical-only mode.
+                self._rt_disabled[symbol] = str(e)
+                log.warning(f"[{symbol}] realtime disabled -> historical fallback only: {e}")
+            else:
+                log.warning(f"[{symbol}] realtime aggregator start failed; will retry next cycle: {e}")
+                try:
+                    if hasattr(agg, 'stop'):
+                        agg.stop()
+                except Exception:
+                    pass
 
-        self._aggs[symbol] = agg
         self._states.setdefault(symbol, SymbolState())
 
 

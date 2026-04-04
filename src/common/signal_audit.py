@@ -82,7 +82,7 @@ class SignalAuditWriter:
                 ),
                 "channel": str(context.channel or ""),
                 "can_trade_short": 1 if context.can_trade_short else 0,
-                "risk_gate": "OK" if context.can_trade_short else "BLOCKED",
+                "risk_gate": "OK" if bool(risk_snapshot.allowed) else "BLOCKED",
                 "atr_stop": float(risk_snapshot.atr_stop),
                 "slippage_bps": float(risk_snapshot.slippage_bps),
                 "gap_addon_pct": float(risk_snapshot.gap_addon_pct),
