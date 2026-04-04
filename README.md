@@ -1,356 +1,201 @@
 # ibkr_quant_system
 
-## Docs
+`ibkr_quant_system` 是一个基于 `IB Gateway` 的 IBKR 量化交易工具，面向“研究 -> paper 组合 -> 执行 -> 风控 -> 复盘 -> dashboard 监督”这条完整闭环。
 
-- `docs/runnable_code_summary.md`
-  - 汇总项目里可直接运行的入口脚本
-  - 说明每个入口的功能、输入、输出和典型用途
-- `docs/supervisor_runbook.md`
-  - 汇总 `paper / live` 的日常启动、preflight 和 dashboard 控制模式
+当前项目的定位不是高频或多券商通用框架，而是一个以 `IB Gateway` 为唯一券商入口、支持中长期投资研究与执行管理的可维护基础盘。
 
-## Data Sources
+当前仅支持 `IB Gateway`，不再把 `TWS` 作为推荐或兼容入口。
 
-当前投资研究层的数据源分工：
+## 项目目标
 
-- `IBKR`
-  - broker 持仓、账户、执行
-  - 可用时优先提供历史行情
-- `yfinance`
-  - 免费日线 fallback
-  - 轻量 market snapshot
-  - 轻量 market news fallback
-- `FMP`
-  - 基本面主补充源
-  - `PE / 利润率 / 增长 / ROE / 行业`
-- `FRED`
-  - 宏观主源
-  - 当前已接利率、失业率、通胀
-- `Finnhub`
-  - 新闻、财报日历、推荐趋势主补充源
-  - 当前项目支持 `FINNHUB_API_KEY` 和 `FINNHUB_WEBHOOK_SECRET`
+这个项目当前围绕三个目标建设：
 
-本地环境变量：
+- 提供一套可持续运行的 `IB Gateway` 量化交易工作流，从研究、报告、paper 组合、执行、风控到复盘都能串起来。
+- 保持 `paper` 和 `live` 的运行边界清晰，优先保证 paper 验证可用，再逐步放开 live 使用。
+- 保持策略层、执行层、券商适配层分离，让后续新增策略、替换规则、扩展市场时不需要重写整套系统。
+
+## 当前支持范围
+
+- 仅支持 `IB Gateway`
+- 不再把 `TWS` 作为推荐或兼容入口
+- `HK` / `US` 是当前最成熟的市场
+- `ASX` / `XETRA` 已接入统一流程，但成熟度低于 `HK` / `US`
+- `CN` 当前保持 `research-only`，不进入自动执行链路
+
+## 当前功能
+
+### 1. 研究与报告
+
+- 从 watchlist 出发生成投资研究报告
+- 结合 `IBKR`、`yfinance`、`FMP`、`FRED`、`Finnhub` 做行情、基本面、宏观和新闻补充
+- 输出每个市场、每个组合的研究目录和报告结果
+
+### 2. Paper 组合与执行准备
+
+- 根据研究报告生成 paper 组合建议
+- 维护 paper ledger、组合状态和调仓建议
+- 提供 execution / opportunity / guard 三条配套工具链
+
+### 3. 执行、风控与审计
+
+- 对接 `IB Gateway` 获取账户、订单、成交和持仓信息
+- 支持 broker 对账、paper 同步、执行后审计
+- 记录信号、市场数据质量、风险事件和执行留痕
+
+### 4. 自动调度与 dashboard
+
+- 提供 `supervisor` 做定时调度和统一控制
+- 提供 dashboard 查看运行状态、研究结论、执行建议和关键告警
+- dashboard 支持 `简单 / 专业` 模式切换
+- dashboard 支持 `中文 / English` 切换
+
+### 5. 周复盘与运行治理
+
+- 提供周度复盘、经纪商对账、paper 与 broker 同步工具
+- 提供 preflight 检查，帮助在启动前确认环境、端口、配置和运行模式
+- 已补齐基础 CI、包入口和命令行脚本，便于其他人安装和接手
+
+## 安装要求
+
+基础要求：
+
+- Python `3.11`
+- 本地可用的 `IB Gateway`
+- 需要增强研究数据时，在 `.env.local` 中填写对应 API key
+
+当前环境变量模板见 [`./.env.example`](./.env.example)。
+
+## 安装方式
+
+在仓库根目录执行：
 
 ```bash
-FMP_API_KEY=
-FRED_API_KEY=
-TE_API_KEY=
-FINNHUB_API_KEY=
-FINNHUB_WEBHOOK_SECRET=
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev]"
+cp .env.example .env.local
 ```
 
-## Current Path
+`.env.local` 中常见可选项包括：
 
-项目当前主路径是中长期投资，不是短线交易。
+- `FMP_API_KEY`
+- `FRED_API_KEY`
+- `TE_API_KEY`
+- `FINNHUB_API_KEY`
+- `FINNHUB_WEBHOOK_SECRET`
 
-现在已支持：
+## 配置文件
 
-- `US`
-- `HK`
-- `ASX`
-- `XETRA`
-- `CN`
+主要入口配置：
 
-当前推荐的运行方式：
-
-- `config/supervisor.yaml`
-  - `paper` 主配置
+- [`config/supervisor.yaml`](./config/supervisor.yaml)
+  - 默认 `paper` 主配置
   - 覆盖 `HK / US / ASX / XETRA / CN`
-  - `CN` 保持 `research-only`
-- `config/supervisor_live.yaml`
-  - `live` 一键配置
+  - 其中 `CN` 维持 `research-only`
+- [`config/supervisor_live.yaml`](./config/supervisor_live.yaml)
+  - `live` 配置入口
   - 覆盖 `HK / US / ASX / XETRA`
 
-最推荐先跑的命令：
+如果只是首次上手，建议先只使用 `config/supervisor.yaml`。
+
+## 如何使用
+
+### 1. 先做启动前检查
 
 ```bash
-.venv/bin/python -m src.tools.preflight_supervisor --config config/supervisor.yaml --runtime_root runtime_data/paper_investment_only_duq152001 --out_dir reports_preflight
-.venv/bin/python -m src.app.supervisor --config config/supervisor.yaml
-.venv/bin/python -m src.app.supervisor --config config/supervisor_live.yaml
+ibkr-quant-preflight --config config/supervisor.yaml --runtime_root runtime_data/paper_investment_only_duq152001 --out_dir reports_preflight
 ```
 
-最常用命令：
+这个命令会检查当前配置、运行目录、IB Gateway 端口和关键依赖是否可用。
+
+### 2. 启动 supervisor
+
+持续运行：
 
 ```bash
-python -m src.tools.generate_investment_report --market HK --watchlist_yaml config/watchlists/resolved_hk_top100_bluechip.yaml --out_dir reports_investment_hk
-python -m src.tools.run_investment_paper --market HK --report_dir reports_investment_hk/resolved_hk_top100_bluechip --portfolio_id HK:resolved_hk_top100_bluechip --force
-python -m src.tools.run_investment_execution --market HK --report_dir reports_investment_hk/resolved_hk_top100_bluechip --portfolio_id HK:resolved_hk_top100_bluechip
-python -m src.tools.run_investment_guard --market HK --report_dir reports_investment_hk/resolved_hk_top100_bluechip --portfolio_id HK:resolved_hk_top100_bluechip
-python -m src.tools.run_investment_opportunity --market HK --report_dir reports_investment_hk/resolved_hk_top100_bluechip --portfolio_id HK:resolved_hk_top100_bluechip
-python -m src.tools.review_investment_weekly --market HK --db audit.db --out_dir reports_investment_weekly --portfolio_id HK:resolved_hk_top100_bluechip --days 7
-python -m src.tools.review_investment_execution --market HK --db audit.db --out_dir reports_investment_execution --portfolio_id HK:resolved_hk_top100_bluechip --days 14
-python -m src.tools.review_baseline_regression --market HK --portfolio_id HK:resolved_hk_top100_bluechip --report_dir reports_investment_hk/resolved_hk_top100_bluechip --out_dir reports_baseline_hk --baseline_name hk_current
-python -m src.tools.reconcile_investment_broker --market HK --db audit.db --portfolio_id HK:resolved_hk_top100_bluechip --out_dir reports_investment_reconcile
-python -m src.tools.sync_investment_paper_from_broker --market HK --db audit.db --portfolio_id HK:resolved_hk_top100_bluechip --out_dir reports_investment_sync
-python -m src.tools.generate_investment_report --market US --watchlist_yaml config/watchlist.yaml --out_dir reports_investment_us
-python -m src.tools.run_investment_paper --market US --report_dir reports_investment_us/watchlist --portfolio_id US:watchlist --force
-python -m src.tools.run_investment_execution --market US --report_dir reports_investment_us/watchlist --portfolio_id US:watchlist
-python -m src.tools.run_investment_guard --market US --report_dir reports_investment_us/watchlist --portfolio_id US:watchlist
-python -m src.tools.run_investment_opportunity --market US --report_dir reports_investment_us/watchlist --portfolio_id US:watchlist
-python -m src.tools.review_investment_weekly --market US --db audit.db --out_dir reports_investment_weekly --portfolio_id US:watchlist --days 7
-python -m src.tools.review_investment_execution --market US --db audit.db --out_dir reports_investment_execution --portfolio_id US:watchlist --days 14
-python -m src.tools.review_baseline_regression --market US --portfolio_id US:watchlist --report_dir reports_investment_us/watchlist --out_dir reports_baseline_us --baseline_name us_current
-python -m src.tools.reconcile_investment_broker --market US --db audit.db --portfolio_id US:watchlist --out_dir reports_investment_reconcile
-python -m src.tools.sync_investment_paper_from_broker --market US --db audit.db --portfolio_id US:watchlist --out_dir reports_investment_sync
-python -m src.tools.generate_investment_report --market XETRA --watchlist_yaml config/watchlists/xetra_top_quality.yaml --out_dir reports_investment_xetra
-python -m src.tools.run_investment_paper --market XETRA --report_dir reports_investment_xetra/xetra_top_quality --portfolio_id XETRA:xetra_top_quality --force
-python -m src.tools.run_investment_execution --market XETRA --report_dir reports_investment_xetra/xetra_top_quality --portfolio_id XETRA:xetra_top_quality
-python -m src.tools.run_investment_guard --market XETRA --report_dir reports_investment_xetra/xetra_top_quality --portfolio_id XETRA:xetra_top_quality
-python -m src.tools.run_investment_opportunity --market XETRA --report_dir reports_investment_xetra/xetra_top_quality --portfolio_id XETRA:xetra_top_quality
-python -m src.tools.review_baseline_regression --market XETRA --portfolio_id XETRA:xetra_top_quality --report_dir reports_investment_xetra/xetra_top_quality --out_dir reports_baseline_xetra --baseline_name xetra_current
-python -m src.app.supervisor
+ibkr-quant-supervisor --config config/supervisor.yaml
 ```
 
-`src.app.supervisor` 是常驻轮询进程，不是一次性命令。执行后会一直运行，直到你手动停止。
-
-启动方式：
+只执行当前时刻应触发的一轮：
 
 ```bash
-python -m src.app.supervisor
+ibkr-quant-supervisor --config config/supervisor.yaml --once
 ```
 
-单次执行当前时刻应触发的任务并退出：
+如果你想用 dashboard 作为主要入口，这通常是最直接的启动方式。
+
+### 3. 手动跑一条最小闭环
+
+以 `HK` 为例：
 
 ```bash
-python -m src.app.supervisor --once
+ibkr-quant-engine --market HK --startup-check-only
+ibkr-quant-report --market HK --watchlist_yaml config/watchlists/resolved_hk_top100_bluechip.yaml --out_dir reports_investment_hk
+ibkr-quant-paper --market HK --report_dir reports_investment_hk/resolved_hk_top100_bluechip --portfolio_id HK:resolved_hk_top100_bluechip --force
+ibkr-quant-execution --market HK --report_dir reports_investment_hk/resolved_hk_top100_bluechip --portfolio_id HK:resolved_hk_top100_bluechip
+ibkr-quant-guard --market HK --report_dir reports_investment_hk/resolved_hk_top100_bluechip --portfolio_id HK:resolved_hk_top100_bluechip
+ibkr-quant-weekly-review --market HK --db audit.db --out_dir reports_investment_weekly --portfolio_id HK:resolved_hk_top100_bluechip --days 7
+ibkr-quant-reconcile --market HK --db audit.db --portfolio_id HK:resolved_hk_top100_bluechip --out_dir reports_investment_reconcile
 ```
 
-注意：
-
-- `--once` 不是 dry-run
-- 如果当前时间已经过了某个市场的计划时间，它会真实执行那一轮任务
-
-停止方式：
-
-- 当前终端前台运行时：`Ctrl+C`
-- 如果你放到后台或由进程管理器托管：用对应的 stop/kill 命令结束
-
-如果只想在启动前做轻量检查：
+以 `US` 为例：
 
 ```bash
-.venv/bin/python -m src.tools.preflight_supervisor --config config/supervisor.yaml --runtime_root runtime_data/paper_investment_only_duq152001 --out_dir reports_preflight
+ibkr-quant-engine --market US --startup-check-only
+ibkr-quant-report --market US --watchlist_yaml config/watchlist.yaml --out_dir reports_investment_us
+ibkr-quant-paper --market US --report_dir reports_investment_us/watchlist --portfolio_id US:watchlist --force
+ibkr-quant-execution --market US --report_dir reports_investment_us/watchlist --portfolio_id US:watchlist
+ibkr-quant-guard --market US --report_dir reports_investment_us/watchlist --portfolio_id US:watchlist
+ibkr-quant-weekly-review --market US --db audit.db --out_dir reports_investment_weekly --portfolio_id US:watchlist --days 7
+ibkr-quant-reconcile --market US --db audit.db --portfolio_id US:watchlist --out_dir reports_investment_reconcile
 ```
 
-## Minimal Workflow
+### 4. 常用命令入口
 
-HK 最小流程：
+安装完成后，推荐直接使用这些 console scripts：
 
-```bash
-python -m src.main --market HK --startup-check-only
-python -m src.tools.generate_investment_report --market HK --watchlist_yaml config/watchlists/resolved_hk_top100_bluechip.yaml --out_dir reports_investment_hk
-python -m src.tools.run_investment_paper --market HK --report_dir reports_investment_hk/resolved_hk_top100_bluechip --portfolio_id HK:resolved_hk_top100_bluechip --force
-python -m src.tools.run_investment_execution --market HK --report_dir reports_investment_hk/resolved_hk_top100_bluechip --portfolio_id HK:resolved_hk_top100_bluechip
-python -m src.tools.run_investment_guard --market HK --report_dir reports_investment_hk/resolved_hk_top100_bluechip --portfolio_id HK:resolved_hk_top100_bluechip
-python -m src.tools.review_investment_weekly --market HK --db audit.db --out_dir reports_investment_weekly --portfolio_id HK:resolved_hk_top100_bluechip --days 7
-python -m src.tools.review_investment_execution --market HK --db audit.db --out_dir reports_investment_execution --portfolio_id HK:resolved_hk_top100_bluechip --days 14
-python -m src.tools.reconcile_investment_broker --market HK --db audit.db --portfolio_id HK:resolved_hk_top100_bluechip --out_dir reports_investment_reconcile
-```
+- `ibkr-quant-preflight`
+- `ibkr-quant-supervisor`
+- `ibkr-quant-engine`
+- `ibkr-quant-report`
+- `ibkr-quant-paper`
+- `ibkr-quant-execution`
+- `ibkr-quant-guard`
+- `ibkr-quant-opportunity`
+- `ibkr-quant-weekly-review`
+- `ibkr-quant-reconcile`
+- `ibkr-quant-sync-paper`
 
-US 最小流程：
+旧的 `python -m src...` 调用方式仍然兼容，但新安装环境建议优先用上面的命令。
 
-```bash
-python -m src.main --market US --startup-check-only
-python -m src.tools.generate_investment_report --market US --watchlist_yaml config/watchlist.yaml --out_dir reports_investment_us
-python -m src.tools.run_investment_paper --market US --report_dir reports_investment_us/watchlist --portfolio_id US:watchlist --force
-python -m src.tools.run_investment_execution --market US --report_dir reports_investment_us/watchlist --portfolio_id US:watchlist
-python -m src.tools.run_investment_guard --market US --report_dir reports_investment_us/watchlist --portfolio_id US:watchlist
-python -m src.tools.review_investment_weekly --market US --db audit.db --out_dir reports_investment_weekly --portfolio_id US:watchlist --days 7
-python -m src.tools.review_investment_execution --market US --db audit.db --out_dir reports_investment_execution --portfolio_id US:watchlist --days 14
-python -m src.tools.reconcile_investment_broker --market US --db audit.db --portfolio_id US:watchlist --out_dir reports_investment_reconcile
-```
+## 推荐上手路径
 
-## Refactor Notes
+如果是第一次接手这个项目，建议按下面顺序熟悉：
 
-当前重构基线已经补上：
+1. 先看 [`docs/project_status_roadmap.md`](./docs/project_status_roadmap.md)，了解项目目标、当前进度和市场范围。
+2. 再看 [`docs/architecture_overview.md`](./docs/architecture_overview.md)，理解系统分层和主要运行链路。
+3. 使用 `ibkr-quant-preflight` 检查本地环境。
+4. 使用 `ibkr-quant-supervisor --config config/supervisor.yaml --once` 跑一轮 paper。
+5. 打开 dashboard，先用简单模式查看当前运行状态，再根据需要切到专业模式。
 
-- `src/tools/review_baseline_regression.py`
-  - 固定保存投资报告、paper、execution、opportunity 的样例快照
-  - 可和旧 baseline 做字段级对比
+## 使用建议与安全边界
 
-当前结构化对象已经落地：
+- 默认先在 `paper` 环境验证，不建议直接跳到 `live`
+- `ibkr-quant-supervisor --once` 不是 dry-run，到触发时点会执行真实动作
+- `live` 启动前，先跑 preflight，再检查 dashboard 顶部的运行模式和关键告警
+- `resolved_*.yaml` watchlist 是运行输入的一部分，应继续纳入版本控制
+- 如果只是要研究和复盘，不需要启动自动执行链路
 
-- `src/events/models.py`
-  - `MarketEvent`
-  - `SignalDecision`
-  - `RiskDecision`
-  - `ExecutionIntent`
-- `src/regime/state.py`
-  - `RegimeStateV2`
-- `src/data/adapters.py`
-  - `MarketDataAdapter`
+## 相关文档
 
-这些对象会被逐步用于 report、live、paper、execution 的统一解释。
-
-## Supervisor Schedule
-
-`src.app.supervisor` 现在按“市场本地时区”解释每个市场的时间窗口，不需要再手动把开闭市时间换算成 Sydney 时间。
-
-调度补充：
-
-- supervisor 现在支持任务超时控制，默认：
-  - watchlist `180s`
-  - report `1200s`
-  - investment paper `300s`
-  - investment execution `300s`
-  - investment guard `240s`
-  - investment opportunity `240s`
-- `HK / US / ASX / XETRA` 当前都按同交易日执行配置运行，不再依赖 `execution_day_offset`
-- `paper` 默认会自动跑 `weekly review`，并把执行/风险反馈回写到 scoped auto feedback 配置
-- dashboard 的“本周执行质量”现在优先读取 `reports_investment_weekly/weekly_execution_summary.csv`
-- `review_investment_execution` 仍保留，但更适合手动深挖执行明细，不再是 dashboard 的主来源
-- dashboard control service 支持 `AUTO / REVIEW_ONLY / PAUSED`
-- dashboard 顶部现在有 `运维总览` 和 `立即跑 Preflight`，会汇总 preflight、报告新鲜度、组合健康度和模式偏差
-- 如果 preflight 有关键 warning/fail，trade 页面顶部会直接出现 `Preflight 关键提示`
-- 当顶部出现执行模式建议时，优先切到建议模式，再看周报和 preflight 报告
-
-什么时候执行 `supervisor`：
-
-- 如果你要让这些任务自动按时间表跑，就在每天开始前启动一次 `python -m src.app.supervisor`
-- 它会一直轮询，跨过上述时间点后自动执行
-- 如果你只是想手动跑某一步，不要启动 supervisor，直接执行对应的单条命令
-- 如果你只想检查“现在这一刻按时间表会不会触发任务”，用 `python -m src.app.supervisor --once`
-
-## Short Safety Inputs
-
-短空执行安全门依赖两类可编辑输入文件：
-
-- `config/reference/short_borrow_fee_us.csv`
-- `config/reference/short_borrow_fee_hk.csv`
-- `config/reference/short_safety_rules_us.csv`
-- `config/reference/short_safety_rules_hk.csv`
-
-这些文件现在可以由 `src.tools.sync_short_safety_from_ibkr` 自动填充。`config/supervisor.yaml` 已默认在 report 前和 live 前触发同步，实时行情优先，取不到时会回退到 delayed-frozen。
-
-如果你有真实的 borrow fee / SSR 远端源，可以在 `config/risk_us.yaml` 或 `config/risk_hk.yaml` 的 `short_data_sources` 里配置，sync 脚本会先拉 IBKR 实时 shortable / spread，再把远端源里的 borrow fee、SSR、locate、uptick 信息合并进去。
-
-当前默认配置里已经接了两条实源通路：
-
-- `config/risk_us.yaml`
-  - `iborrowdesk_borrow`: 补 US borrow fee / locate
-  - `yahoo_quote_spread`: 补 US spread
-- `config/risk_hk.yaml`
-  - `yahoo_quote_spread`: 补 HK spread
-
-另外 HK 默认不再要求 `SSR` 状态，因为 US 的 Rule 201 约束不适用于 HK 市场。
-
-### Borrow Fee CSV
-
-列名：
-
-- `symbol`
-- `borrow_fee_bps`
-- `source`
-
-示例：
-
-```csv
-symbol,borrow_fee_bps,source
-AAPL,18,desk
-TSLA,95,prime
-```
-
-如果 IBKR Socket API 无法直接提供借券费，自动同步会保留该 symbol 的行，但 `borrow_fee_bps` 为空，并在 `note` 里写明原因。运行时会把它视为 `borrow_data_unknown`，不会误判为可安全做空。
-
-### Short Safety Rules CSV
-
-列名：
-
-- `symbol`
-- `locate_status`
-- `ssr_status`
-- `spread_bps`
-- `has_uptick_data`
-- `source`
-
-示例：
-
-```csv
-symbol,locate_status,ssr_status,spread_bps,has_uptick_data,source
-AAPL,AVAILABLE,OFF,4.5,true,desk
-TSLA,AVAILABLE,ON,16.0,true,desk
-```
-
-支持值约定：
-
-- `locate_status`: `AVAILABLE` / `LOCATED` / `UNAVAILABLE` / `BLOCKED` / `UNKNOWN`
-- `ssr_status`: `OFF` / `ON` / `ACTIVE` / `SSR` / `UNKNOWN`
-- `has_uptick_data`: `true` / `false`
-
-如果 locate、SSR、spread、borrow 数据缺失，当前默认策略是 `unknown => block`，不会自动放行短空执行。
-
-## Auto Sync
-
-手动执行一次同步：
-
-```bash
-python -m src.tools.sync_short_safety_from_ibkr --market US
-python -m src.tools.sync_short_safety_from_ibkr --market HK
-```
-
-可选参数：
-
-- `--market_data_type 1`：实时行情优先
-- `--fallback_market_data_type 4`：实时不可用时回退到 delayed-frozen
-- `--watchlist_yaml ...` / `--symbols ...`：缩小同步范围
-- `--max_symbols ...` / `--batch_size ...`：控制批量请求规模
-
-自动同步输出：
-
-- 借券文件会尽量写入 `symbol/source/note`
-- 短空安全文件会写入 `locate_status`、`spread_bps`、`shortable_shares`、`shortable_level`
-- `ssr_status` 和 `has_uptick_data` 如果券商接口当前拿不到，会保持 `UNKNOWN` / 空值，由安全门继续阻断
-
-### Remote Source Config
-
-`short_data_sources` 支持的最小字段：
-
-- `enabled`
-- `name`
-- `url`
-- `format`: `csv` 或 `json`
-- `symbol_key`
-- `borrow_fee_key`
-- `borrow_fee_unit`: `bps` / `pct` / `decimal`
-- `ssr_key`
-- `locate_key`
-- `has_uptick_key`
-- `spread_bps_key`
-- `note_key`
-
-可选认证字段：
-
-- `headers`
-- `headers_from_env`
-- `params`
-- `params_from_env`
-- `username_env`
-- `password_env`
-
-如果源是 CSV，默认分隔符是逗号；如果是 JSON，可以用 `root_key` 指到记录数组。
-
-### Built-In Providers
-
-除了通用 `csv/json` 源，当前还支持内建 provider：
-
-- `provider: iborrowdesk`
-  - 默认 URL: `https://iborrowdesk.com/api/ticker/{symbol}`
-  - 输出 `borrow_fee_bps`，并尽量从可用股数推断 `locate_status`
-- `provider: yahoo_quote`
-  - 默认 URL: `https://query1.finance.yahoo.com/v7/finance/quote`
-  - 通过 `bid/ask` 计算 `spread_bps`
-
-`yahoo_quote` 在 US 会自动把 `BRK.B` 这类内部 symbol 转成 `BRK-B` 查询，再映射回系统符号。
-
-## Paper KPI
-
-`src.tools.paper_kpi_report` 现在支持 `--since`，可以只看某个时间点之后的新样本：
-
-```bash
-python -m src.tools.paper_kpi_report --db audit.db --out_dir reports/paper_kpi --since 2026-03-04T00:00:00+00:00
-```
-
-当 `--since` 存在时，会覆盖 `--days` 的时间窗。
-
-### US SSR
-
-`config/risk_us.yaml` 默认启用了 `short_safety.ssr_rule201`。当没有外部 SSR feed 时，同步脚本会用 IBKR 的实时价格和昨收盘推导 Rule 201 触发状态，并把触发日写到 `config/reference/short_ssr_state_us.json`。这会把 US 市场里一部分原本长期 `UNKNOWN` 的 SSR 状态收敛成 `ON/OFF`。
+- [`docs/runnable_code_summary.md`](./docs/runnable_code_summary.md)
+  - 入口脚本总览和输出说明
+- [`docs/supervisor_runbook.md`](./docs/supervisor_runbook.md)
+  - `paper / live` 日常启动、排障和 dashboard 控制
+- [`docs/project_status_roadmap.md`](./docs/project_status_roadmap.md)
+  - 项目目标、当前进度、架构判断和下一阶段规划
+- [`docs/architecture_overview.md`](./docs/architecture_overview.md)
+  - 系统分层、运行路径和市场范围
+- [`docs/production_governance.md`](./docs/production_governance.md)
+  - 运行模式、安全门、变更治理和 CI 基线

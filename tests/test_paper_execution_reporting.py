@@ -460,6 +460,64 @@ class PaperExecutionReportingTests(unittest.TestCase):
             rows = storage._conn().execute("select kind from risk_events order by id asc").fetchall()
             self.assertEqual(rows[1][0], "PRETRADE_RISK_BLOCK")
 
+    def test_live_mode_blocks_historical_source_execution(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "audit.db"
+            storage = Storage(str(db_path))
+            orders = _FakeOrders(storage)
+            strategy = EngineStrategy(
+                orders=orders,
+                gate=None,
+                cfg=StrategyConfig(runtime_mode="live"),
+            )
+            runner = _FakeRunner(watched=[])
+            allowed_snapshot = PreTradeRiskSnapshot(
+                symbol="AAPL",
+                action="BUY",
+                entry_price=100.0,
+                atr_stop=1.0,
+                slippage_bps=5.0,
+                gap_addon_pct=0.002,
+                liquidity_haircut=0.0,
+                slippage_addon_price=0.05,
+                gap_addon_price=0.2,
+                liquidity_addon_price=0.0,
+                short_addon_price=0.0,
+                stop_distance=1.25,
+                take_profit_distance=2.25,
+                stop_price=98.75,
+                take_profit_price=102.25,
+                event_risk="NONE",
+                event_risk_reason="",
+                short_borrow_fee_bps=0.0,
+                short_borrow_source="",
+                allowed=True,
+                block_reasons=[],
+                atr_pct=0.01,
+                avg_bar_volume=10000.0,
+                risk_per_share=1.25,
+                expected_fill_price=100.05,
+            )
+            sig = TradeSignal(
+                should_trade=True,
+                action="BUY",
+                qty=1.0,
+                entry_price=100.0,
+                total_sig=0.7,
+                short_sig=0.6,
+                mid_scale=0.7,
+                reason="test",
+                channel="PURE_SHORT",
+                audit_tag="ALWAYS_ON",
+                audit_source="HIST",
+                risk_snapshot=allowed_snapshot,
+            )
+            strategy.execute("AAPL", sig, runner)
+
+            self.assertEqual(len(orders.placed), 0)
+            rows = [row[0] for row in storage._conn().execute("select kind from risk_events order by id asc").fetchall()]
+            self.assertEqual(rows, ["SOURCE_EXEC_BLOCK"])
+
     def test_engine_strategy_skips_shadow_sample_for_non_executable_hist_source(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "audit.db"

@@ -224,7 +224,7 @@ def _build_port_checks(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
     checks: List[Dict[str, Any]] = []
     endpoints = _configured_ibkr_endpoints(cfg)
     if not endpoints:
-        endpoints = [{"host": "127.0.0.1", "port": port, "market": "", "ibkr_config_path": ""} for port in (4001, 4002, 7496, 7497)]
+        endpoints = [{"host": "127.0.0.1", "port": port, "market": "", "ibkr_config_path": ""} for port in (4001, 4002)]
     for endpoint in endpoints:
         host = str(endpoint.get("host", "127.0.0.1") or "127.0.0.1").strip() or "127.0.0.1"
         port = int(endpoint.get("port", 4002) or 4002)

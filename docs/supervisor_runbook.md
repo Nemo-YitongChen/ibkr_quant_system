@@ -2,12 +2,20 @@
 
 这份 runbook 用于日常启动、排障和切换 `paper / live`。
 
+推荐先在仓库根执行：
+
+```bash
+python -m pip install -e ".[dev]"
+```
+
+安装后优先使用 `ibkr-quant-preflight` 和 `ibkr-quant-supervisor`。原有 `python -m src...` 路径仍然兼容。
+
 ## 1. 先跑 preflight
 
 Paper scope 示例：
 
 ```bash
-.venv/bin/python -m src.tools.preflight_supervisor \
+ibkr-quant-preflight \
   --config config/supervisor.yaml \
   --runtime_root runtime_data/paper_investment_only_duq152001 \
   --out_dir reports_preflight
@@ -16,7 +24,7 @@ Paper scope 示例：
 Live scope 示例：
 
 ```bash
-.venv/bin/python -m src.tools.preflight_supervisor \
+ibkr-quant-preflight \
   --config config/supervisor_live.yaml \
   --runtime_root runtime_data/live_investment_only_<account_id> \
   --out_dir reports_preflight_live
@@ -39,19 +47,19 @@ Live scope 示例：
 Paper：
 
 ```bash
-.venv/bin/python -m src.app.supervisor --config config/supervisor.yaml
+ibkr-quant-supervisor --config config/supervisor.yaml
 ```
 
 Live：
 
 ```bash
-.venv/bin/python -m src.app.supervisor --config config/supervisor_live.yaml
+ibkr-quant-supervisor --config config/supervisor_live.yaml
 ```
 
 只跑当前时刻应触发的一轮：
 
 ```bash
-.venv/bin/python -m src.app.supervisor --config config/supervisor.yaml --once
+ibkr-quant-supervisor --config config/supervisor.yaml --once
 ```
 
 ## 3. Dashboard 控制模式

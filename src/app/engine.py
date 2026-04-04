@@ -71,6 +71,8 @@ class TradingEngine:
         cfg: EngineConfig,
         md: Optional[Any] = None,
         regime_adaptor: Optional[Any] = None,
+        executor: Optional[Any] = None,
+        storage: Optional[Any] = None,
         **_ignored: Any,  # be tolerant to unknown kwargs to keep iteration stable
     ) -> None:
         self.ib = ib
@@ -80,6 +82,8 @@ class TradingEngine:
         self.cfg = cfg
         self.md = md  # optional (can be None)
         self.regime_adaptor = regime_adaptor
+        self.executor = executor
+        self.storage = storage
 
         self._states: Dict[str, SymbolState] = {}
         self._aggs: Dict[str, RealTime5mAggregator] = {}
@@ -102,6 +106,18 @@ class TradingEngine:
     def _is_stale_bar(end_time: datetime, stale_after_sec: int = 1800) -> bool:
         now = datetime.now(timezone.utc)
         return (now - end_time).total_seconds() > stale_after_sec
+
+    @staticmethod
+    def _is_nonrecoverable_realtime_error(error: Exception) -> bool:
+        message = str(error or '').lower()
+        nonrecoverable_markers = (
+            '420',
+            'permission',
+            'not subscribed',
+            'market data subscription',
+            'realtime market data is not subscribed',
+        )
+        return any(marker in message for marker in nonrecoverable_markers)
 
     def start(self) -> None:
         # ib_insync timeout
@@ -150,13 +166,21 @@ class TradingEngine:
         )
         try:
             agg.start()
+            self._aggs[symbol] = agg
             log.info(f"[{symbol}] realtime aggregator started")
         except Exception as e:
-            # If no realtime permissions (e.g., Error 420), fall back to historical audit only
-            self._rt_disabled[symbol] = str(e)
-            log.warning(f"[{symbol}] realtime disabled -> historical fallback only: {e}")
+            if self._is_nonrecoverable_realtime_error(e):
+                # If realtime permissions are missing, latch into historical-only mode.
+                self._rt_disabled[symbol] = str(e)
+                log.warning(f"[{symbol}] realtime disabled -> historical fallback only: {e}")
+            else:
+                log.warning(f"[{symbol}] realtime aggregator start failed; will retry next cycle: {e}")
+                try:
+                    if hasattr(agg, 'stop'):
+                        agg.stop()
+                except Exception:
+                    pass
 
-        self._aggs[symbol] = agg
         self._states.setdefault(symbol, SymbolState())
 
 
@@ -299,9 +323,26 @@ class TradingEngine:
 
         # If your sig object contains details, keep your existing logging style outside.
         if getattr(sig, "should_trade", False):
-            self.strategy.execute(symbol, sig, self.runner)
+            executor = self.executor
+            if executor is not None and hasattr(executor, "execute"):
+                executor.execute(symbol, sig, self.runner)
+            else:
+                self.strategy.execute(symbol, sig, self.runner)
         else:
             log.info(f"[{tag}] No trade {symbol}: {sig}")
+
+
+    def _resolve_storage(self) -> Optional[Any]:
+        if self.storage is not None:
+            return self.storage
+        strategy_storage = getattr(self.strategy, "storage", None)
+        if strategy_storage is not None:
+            return strategy_storage
+        audit_writer = getattr(self.strategy, "audit_writer", None)
+        audit_storage = getattr(audit_writer, "storage", None)
+        if audit_storage is not None:
+            return audit_storage
+        return getattr(getattr(self.strategy, "orders", None), "storage", None)
 
 
     def _update_quality(self, symbol: str, end_epoch: int, is_duplicate: bool) -> None:
@@ -327,7 +368,7 @@ class TradingEngine:
 
         # write through to sqlite (non-blocking)
         try:
-            storage = getattr(getattr(self.strategy, "orders", None), "storage", None)
+            storage = self._resolve_storage()
             if storage is not None and hasattr(storage, "upsert_md_quality"):
                 storage.upsert_md_quality(
                     day=q["day"],
@@ -355,7 +396,7 @@ class TradingEngine:
                 if self.regime_adaptor is not None and self.md is not None:
                     adapted = self.regime_adaptor.refresh_if_due(
                         self.md,
-                        storage=getattr(getattr(self.strategy, "orders", None), "storage", None),
+                        storage=self._resolve_storage(),
                     )
                     try:
                         self.strategy.cfg.mid = adapted

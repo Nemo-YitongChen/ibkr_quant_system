@@ -33,6 +33,249 @@ EXECUTION_MODE_LABELS: Dict[str, str] = {
 }
 
 
+EXECUTION_MODE_LABELS_EN: Dict[str, str] = {"AUTO": "Auto Execute", "REVIEW_ONLY": "Review Only", "PAUSED": "Pause Auto Execution"}
+DASHBOARD_TRANSLATIONS_EN: Dict[str, str] = {"IB Gateway 量化交易 Dashboard": "IB Gateway Quant Trading Dashboard", "简单模式": "Simple Mode", "专业模式": "Advanced Mode", "交易": "Trade", "全部": "All", "只看开市": "Open Markets Only", "只看自动提交": "Auto Submit Only", "只看有动作": "Actionable Only", "股票列表": "Stock List", "Preflight 关键提示": "Key Preflight Warnings", "运维总览": "Operations Overview", "当前没有需要优先处理的运维告警。": "No operational alerts need immediate action.", "Dashboard 控制": "Dashboard Control", "立即跑一轮": "Run Once Now", "立即跑 Preflight": "Run Preflight Now", "立即跑 Weekly Review": "Run Weekly Review Now", "刷新 Dashboard": "Refresh Dashboard", "交易运行状态": "Trading Runtime Status", "执行模式告警计数": "Execution Mode Alerts", "× 清除": "Clear", "Dry Run 页面说明": "Dry Run Overview", "Dry Run 总览": "Dry Run Overview", "Dry Run 周度代理归因": "Dry Run Weekly Attribution", "今日最该关注的动作 / 研究": "Most Important Actions / Research Today", "当前没有高优先级动作。": "No high-priority actions right now.", "市场总览": "Market Overview", "IB Gateway 健康状态": "IB Gateway Health", "当前没有可展示的交易页面报告。": "No trade dashboard reports are available right now.", "当前没有可展示的 dry-run 页面数据。": "No dry-run dashboard data is available right now.", "本周执行质量": "Weekly Execution Quality", "本周执行质量（当前市场）": "Weekly Execution Quality (Current Market)", "本周执行质量（分市场）": "Weekly Execution Quality (By Market)", "历史执行残留（当前未纳入市场卡片）": "Historical Execution Leftovers (Not in Current Market Cards)", "人工审核队列": "Manual Review Queue", "Shadow Review 历史重点": "Shadow Review Highlights", "策略升级建议": "Strategy Upgrade Suggestions", "周度风险复盘": "Weekly Risk Review", "风险轨迹告警": "Risk Trend Alerts", "执行模式建议": "Execution Mode Suggestions", "市场数据健康总览": "Market Data Health Overview", "IBKR 历史接入诊断": "IBKR History Access Diagnostics", "近期风险轨迹": "Recent Risk Trail", "结果校准": "Outcome Calibration", "校准自动化": "Calibration Automation", "接近自动应用的校准": "Calibration Near Auto Apply", "即将成熟的 Outcome 样本": "Outcome Samples Near Maturity", "结果校准输入缺口": "Calibration Input Gaps", "本周自动风险反馈": "Weekly Automated Risk Feedback", "本周自动执行反馈": "Weekly Automated Execution Feedback", "第三阶段：自动执行校准进度": "Phase 3: Execution Calibration Progress", "执行热点（symbol + session）": "Execution Hotspots (symbol + session)", "计划成本 vs 实际执行成本": "Planned vs Actual Execution Cost", "一眼看懂": "Quick Read", "问题": "Question", "答案": "Answer", "当前状态": "Current Status", "现在该做什么": "What To Do Now", "为什么": "Why", "下一步": "Next Step", "当前建议": "Current Recommendations", "重点标的": "Focus Symbols", "数据提醒": "Data Note", "执行方式": "Execution Mode", "补充说明": "Extra Context", "暂无额外提醒": "No extra warning", "研究推荐": "Research Focus", "观察推荐池": "Watchlist Focus", "防守动作": "Defensive Action", "可执行调仓": "Ready To Rebalance", "可关注进场": "Entry Worth Watching", "接近进场": "Near Entry", "研究结论摘要": "Research Summary", "执行计划": "Execution Plan", "本地模拟调仓": "Local Sim Rebalance", "本地模拟账本状态": "Local Sim Ledger Status", "Dry Run 如何形成闭环": "How Dry Run Closes the Loop", "快照回标汇总": "Snapshot Outcome Summary", "股票": "Symbol", "数量": "Qty", "市值": "Market Value", "权重": "Weight", "状态": "Status", "来源": "Source", "动作": "Action", "价格": "Price", "交易金额": "Trade Value", "原因": "Reason", "入场方式": "Entry Style", "市场状态": "Market Regime", "说明": "Notes", "摘要": "Summary", "模拟权益": "Sim Equity", "模拟现金": "Sim Cash", "目标持仓比例": "Target Invested", "调仓状态": "Rebalance Status", "账户权益": "Account Equity", "账户现金": "Account Cash", "计划投入资金": "Target Capital", "数据状态": "Data Quality", "风险状态": "Risk Status", "周次": "Week", "已提交": "Submitted", "成交(status/audit)": "Filled (status/audit)", "阻断/错误": "Blocked/Error", "净收益": "Net PnL", "需要处理": "Needs Attention", "保持观察": "Keep Watching", "观察": "Observe", "当前没有启用中的 dry-run 页面数据；如果要和 trade 同时跑，请在对应 report 打开 `force_local_paper_ledger`。": "No active dry-run page data is available. To run it alongside trade, enable `force_local_paper_ledger` in the target report.", "当前还没有可展示的周度代理归因数据。": "No weekly attribution data is available yet.", "当前还没有可展示的 execution 周度数据。": "No weekly execution data is available yet.", "当前没有可展示的人工审核数据。": "No manual review data is available right now.", "当前没有 shadow review 历史记录。": "No shadow review history is available right now.", "当前没有周度 shadow review 建议。": "No weekly shadow review suggestions are available right now.", "当前没有组合风险复盘数据。": "No portfolio risk review data is available right now.", "当前没有可展示的 trade 风险趋势告警。": "No trade-side risk trend alerts are available right now.", "当前没有需要提示的执行模式建议。": "No execution mode suggestions need attention right now.", "当前没有可展示的市场数据健康摘要。": "No market data health summary is available right now.", "当前还没有历史接入诊断结果；运行 probe 后这里会显示权限/合约/空历史的抽样结论。": "No history access diagnostics are available yet. After running the probe, sampled permission, contract, and empty-history results will appear here.", "当前没有可展示的 trade 风险轨迹。": "No trade-side risk trail is available right now.", "当前没有可展示的 dry-run 风险轨迹。": "No dry-run risk trail is available right now.", "当前还没有足够的 outcome 回标样本来校准 weekly feedback。": "There are not enough labeled outcomes yet to calibrate weekly feedback.", "当前还没有可展示的校准自动化结论。": "No calibration automation results are available right now.", "当前没有接近进入自动应用的校准项。": "No calibration items are close to auto-apply right now.", "当前没有可预测成熟时间的 labeling 缺口。": "There are no labeling gaps with a predictable maturity time right now.", "当前没有新的自动风险反馈；本周沿用基础 paper 风险预算。": "There is no new automated risk feedback this week; the base paper risk budget remains in effect.", "当前没有新的执行参数反馈；本周沿用基础 execution 配置。": "There is no new execution parameter feedback this week; the base execution config remains in effect.", "当前没有明显的执行热点。": "There are no obvious execution hotspots right now.", "当前没有可展示的计划/实际执行成本对比数据。": "No planned-vs-actual execution cost comparison data is available right now.", "当前市场只输出研究结果，不会提交交易。": "This market is research-only and will not submit trades.", "先刷新最新报告，确认这一轮数据已经生成完成。": "Refresh the latest report before taking action.", "先启动 IB Gateway，并确认 paper/live 目标端口可连接。": "Start IB Gateway and confirm the paper/live ports are reachable.", "继续看本地模拟账本和回标结果，再决定是否调整阈值。": "Continue reviewing the local simulated ledger and labeled outcomes before adjusting thresholds.", "等待下一轮自动刷新，重点看“当前建议”和执行计划。": "Wait for the next refresh and focus on Current Recommendations and the Execution Plan.", "闭市阶段优先看周报、风险反馈和下一轮计划。": "After market close, focus on the weekly review, risk feedback, and the next plan."}
+DASHBOARD_FRAGMENT_TRANSLATIONS_EN: Dict[str, str] = {"生成时间：": "Generated at: ", "60 秒自动刷新": "auto refresh every 60s", "默认进入简单模式": "default view: simple mode", "当前告警市场筛选：": "Current alert market filter: ", "开市": "Market Open", "闭市": "Market Closed", "报告已更新": "Report Fresh", "待刷新": "Needs Refresh", "继续复盘": "Continue Review", "继续观察": "Keep Watching", "按“": "Handle the portfolio with \"", "”处理当前组合。": "\" for this portfolio.", "先把执行模式切到“": "Switch execution mode to \"", "”。": "\".", "自动执行": "Auto Execute", "只保留人工审核": "Review Only", "暂停自动执行": "Pause Auto Execution", "自动应用": "Auto Apply", "建议确认": "Confirm Manually", "当前建议: ": "Recommendation: ", "重点标的: ": "Focus symbols: ", "数据提醒: ": "Data note: ", "执行方式: ": "Execution mode: ", "补充说明: ": "Extra context: "}
+
+
+DASHBOARD_MODE_DISPLAY_LABELS: Dict[str, str] = {
+    "research-only": "只研究不下单",
+    "paper-auto-submit": "Paper 自动执行",
+    "paper-dry-run": "Paper 模拟运行",
+    "paper-read-only": "Paper 只读查看",
+    "live-auto-submit": "Live 自动执行",
+    "live-read-only": "Live 只读查看",
+    "dry-run": "本地模拟运行",
+}
+
+DASHBOARD_TRANSLATIONS_EN.update({
+    "开市中": "Market Open",
+    "已闭市": "Market Closed",
+    "只研究不下单": "Research Only",
+    "Paper 自动执行": "Paper Auto Execute",
+    "Paper 模拟运行": "Paper Dry Run",
+    "Paper 只读查看": "Paper Read Only",
+    "Live 自动执行": "Live Auto Execute",
+    "Live 只读查看": "Live Read Only",
+    "本地模拟运行": "Local Dry Run",
+    "报告待刷新": "Report Needs Refresh",
+    "只研究推荐，不执行 broker paper/live 下单": "Research recommendations only; no broker paper/live orders.",
+    "paper 自动提交已开启": "Paper auto submit is enabled.",
+    "paper dry-run，仅生成计划与审计": "Paper dry run; plans and audit only.",
+    "paper 只读模式，仅显示真实账户数据与分析": "Paper read-only mode; show real-account data and analysis only.",
+    "live 自动提交已开启": "Live auto submit is enabled.",
+    "live 只读模式，仅显示真实账户数据与分析": "Live read-only mode; show real-account data and analysis only.",
+    "本地模拟账本 + 快照回标，用于无下单闭环、阈值复盘与策略升级。": "Local simulated ledger plus snapshot labeling for closed-loop review without order submission, threshold review, and strategy upgrades.",
+})
+
+DASHBOARD_FRAGMENT_TRANSLATIONS_EN.update({
+    "开市中": "Market Open",
+    "已闭市": "Market Closed",
+    "报告待刷新": "Report Needs Refresh",
+})
+
+
+def _dashboard_mode_display_label(mode: str) -> str:
+    raw = str(mode or "").strip()
+    return DASHBOARD_MODE_DISPLAY_LABELS.get(raw, raw or "-")
+
+
+def _dashboard_market_state_label(is_open: bool) -> str:
+    return "开市中" if bool(is_open) else "已闭市"
+
+
+def _dashboard_report_freshness_label(report_fresh: str) -> str:
+    return "报告已更新" if str(report_fresh or "") == "fresh" else "报告待刷新"
+
+
+def _dashboard_account_mode_label(account_mode: str) -> str:
+    raw = str(account_mode or "").strip().lower()
+    if raw == "paper":
+        return "Paper 账户"
+    if raw == "live":
+        return "Live 账户"
+    if raw == "mixed":
+        return "混合模式"
+    return raw or "未识别"
+
+DASHBOARD_TRANSLATIONS_EN.update({
+    "只做研究": "Research Only",
+    "模拟闭环": "Simulation Loop",
+    "可执行": "Ready to Execute",
+    "控制服务": "Control Service",
+    "地址": "Endpoint",
+    "最近操作": "Last Action",
+    "最近错误": "Last Error",
+    "当前执行模式": "Current Execution Mode",
+    "建议执行模式": "Recommended Execution Mode",
+    "是否需要切换": "Needs Mode Change",
+    "需要切换": "Needs Change",
+    "已一致": "Aligned",
+    "反馈校准": "Feedback Calibration",
+    "周度反馈": "Weekly Feedback",
+    "阈值同步": "Threshold Sync",
+    "待确认": "Pending Confirmation",
+    "已确认": "Confirmed",
+    "暂无": "N/A",
+    "待处理": "Pending",
+    "已同步": "Synced",
+    "已开启": "Enabled",
+    "已关闭": "Disabled",
+    "已执行": "Executed",
+    "未执行": "Not Executed",
+    "需要调仓": "Rebalance Needed",
+    "保持持有": "Keep Holding",
+    "运行中": "Running",
+    "已配置": "Configured",
+    "未启用": "Disabled",
+    "无法连接": "Unreachable",
+    "未知": "Unknown",
+})
+
+DASHBOARD_FRAGMENT_TRANSLATIONS_EN.update({
+    "控制服务：": "Control Service: ",
+    "地址：": "Endpoint: ",
+    "最近操作：": "Last Action: ",
+    "最近错误：": "Last Error: ",
+    "当前执行模式：": "Current Execution Mode: ",
+    "建议执行模式：": "Recommended Execution Mode: ",
+    "是否需要切换：": "Needs Mode Change: ",
+    "反馈校准：": "Feedback Calibration: ",
+    "周度反馈：": "Weekly Feedback: ",
+    "阈值同步：": "Threshold Sync: ",
+})
+
+DASHBOARD_TRANSLATIONS_EN.update({
+    "主要问题": "Main Issue",
+    "项目": "Item",
+    "IB Gateway 端口": "IB Gateway Ports",
+    "报告待刷新": "Reports Needing Refresh",
+    "组合健康": "Portfolio Health",
+    "执行模式偏差": "Execution Mode Mismatch",
+    "已就绪": "Ready",
+    "有告警": "Warnings",
+    "有滞后": "Stale",
+    "有降级": "Degraded",
+    "有偏差": "Mismatch",
+    "IBKR正常": "IBKR Healthy",
+    "研究Fallback": "Research Fallback",
+    "混合": "Mixed",
+    "待排查": "Needs Review",
+    "有缺失": "Missing Data",
+    "无数据": "No Data",
+    "权限待补": "Permission Needed",
+    "Preflight 存在失败项，当前不建议自动执行": "Preflight has failing checks; do not auto-execute now.",
+    "IBKR 连接未就绪，当前不建议自动执行": "IBKR connection is not ready; do not auto-execute now.",
+    "Preflight 存在待确认项": "Preflight has warnings that need confirmation.",
+    "先处理 FAIL 项，再恢复 AUTO。": "Fix the FAIL checks before restoring AUTO.",
+    "先复核 warning，再决定是否继续自动执行。": "Review the warnings before deciding whether to keep auto execution on.",
+    "先看不是 0 的项目；细节留在专业模式。": "Check any item that is not 0 first; details stay in advanced mode.",
+    "这些按钮会直接触发本机控制服务。": "These buttons call the local control service directly.",
+    "连接账户": "Connected Account",
+    "账户模式": "Account Mode",
+    "覆盖市场": "Markets Covered",
+    "运行方式": "Runtime Mode",
+    "股票池": "Watchlist",
+    "运行范围": "Runtime Scope",
+    "Paper 账户": "Paper Account",
+    "Live 账户": "Live Account",
+    "混合模式": "Mixed Mode",
+    "未识别": "Unknown",
+    "先看账户模式和运行方式；如果模式混杂，再去看下面各市场卡片。": "Check account mode and runtime mode first; if the modes are mixed, then inspect the market cards below.",
+    "建议切换": "Needs Change",
+    "建议人工审核": "Manual Review",
+    "建议暂停": "Pause Recommended",
+    "这里只做本地模拟，不会向 IBKR 下单。": "This section is local simulation only and will not send orders to IBKR.",
+    "重点看模拟账本、调仓计划和 5/20/60 日回标。": "Focus on the simulated ledger, rebalance plan, and 5/20/60-day labels.",
+    "这里展示的是本地模拟账本与快照回标，不会向 IBKR 提交订单。它和 trade 共用同一份股票池、候选股与计划数据，目的是验证资金利用率、调仓节奏、阈值和打分是否需要升级。": "This section shows the local simulated ledger and snapshot labels, and it will not submit orders to IBKR. It shares the same watchlist, candidates, and plan data as trade to validate capital usage, rebalance cadence, thresholds, and scoring.",
+    "如果这里有 5/20/60 日回标数据，就能直接判断哪些信号长期有效、哪些执行门太松或太紧；闭市后更适合跑 post-report、baseline 和 snapshot labeling，而不是反复做盘中机会扫描。": "If 5/20/60-day labels are available here, you can directly judge which signals stay effective and which execution gates are too loose or too tight. After market close, this is better for post-report, baseline, and snapshot labeling than repeating intraday scans.",
+    "这里汇总当前需要跟踪的股票；基础观察池不会因切换账号或 live/paper 而消失。": "This section lists the symbols to track now; the base watchlist does not disappear when switching accounts or live/paper.",
+    "通用分析列表会跨 repo 与各个 runtime scope 合并，不会因切换账号或 live/paper 而缩减；当前账户的 paper/broker holding 只会作为补充信息加入。": "The general analysis list is merged across repos and runtime scopes, so it does not shrink when switching accounts or live/paper. Current paper or broker holdings are added only as supplemental context.",
+})
+
+DASHBOARD_FRAGMENT_TRANSLATIONS_EN.update({
+    "已就绪": "Ready",
+    "有告警": "Warnings",
+    "有滞后": "Stale",
+    "有降级": "Degraded",
+    "有偏差": "Mismatch",
+})
+
+CONTROL_ACTION_STATUS_LABELS: Dict[str, str] = {
+    "run_once": "跑一轮",
+    "run_preflight": "跑 Preflight",
+    "run_weekly_review": "跑 Weekly Review",
+    "refresh_dashboard": "刷新 Dashboard",
+}
+CONTROL_ACTION_STATUS_LABELS_EN: Dict[str, str] = {
+    "run_once": "Run Once Now",
+    "run_preflight": "Run Preflight Now",
+    "run_weekly_review": "Run Weekly Review Now",
+    "refresh_dashboard": "Refresh Dashboard",
+}
+CONTROL_SERVICE_STATE_LABELS: Dict[str, str] = {
+    "running": "运行中",
+    "configured": "已配置",
+    "disabled": "未启用",
+    "unreachable": "无法连接",
+    "unknown": "未知",
+}
+CONTROL_SERVICE_STATE_LABELS_EN: Dict[str, str] = {
+    "running": "Running",
+    "configured": "Configured",
+    "disabled": "Disabled",
+    "unreachable": "Unreachable",
+    "unknown": "Unknown",
+}
+
+
+def _dashboard_execution_badge_label(mode: str, is_dry_run_view: bool) -> str:
+    if mode == "research-only":
+        return "只做研究"
+    if is_dry_run_view:
+        return "模拟闭环"
+    return "可执行"
+
+
+def _dashboard_toggle_status_label(value: bool) -> str:
+    return "已开启" if bool(value) else "已关闭"
+
+
+def _dashboard_execution_mode_change_label(differs: bool) -> str:
+    return "需要切换" if bool(differs) else "已一致"
+
+
+def _dashboard_control_action_label(action: str) -> str:
+    raw = str(action or "").strip()
+    return CONTROL_ACTION_STATUS_LABELS.get(raw, raw or "-")
+
+
+def _dashboard_control_service_state_label(status: str) -> str:
+    raw = str(status or "").strip().lower()
+    return CONTROL_SERVICE_STATE_LABELS.get(raw, raw or "-")
+
+
+def _dashboard_control_status_text(service_status: str, url: str, last_action: str, last_error: str) -> str:
+    return (
+        f"控制服务：{_dashboard_control_service_state_label(service_status)} | "
+        f"地址：{url or '-'} | "
+        f"最近操作：{_dashboard_control_action_label(last_action)} | "
+        f"最近错误：{str(last_error or '-')}"
+    )
+
+
+def _dashboard_weekly_feedback_status_label(pending: bool, confirmed_ts: str) -> str:
+    if bool(pending):
+        return "待确认"
+    if str(confirmed_ts or "").strip():
+        return f"已确认 @ {str(confirmed_ts or '')[:19]}"
+    return "暂无"
+
+
+def _dashboard_threshold_sync_status_label(pending: bool) -> str:
+    return "待处理" if bool(pending) else "已同步"
+
+
 def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(description="Generate a static dashboard from supervisor and report outputs.")
     ap.add_argument("--config", default="config/supervisor.yaml", help="Path to supervisor config.")
@@ -585,6 +828,15 @@ def _mode_detail(item: Dict[str, Any], runtime_scope) -> str:
     return f"{runtime_mode} 只读模式，仅显示真实账户数据与分析"
 
 
+def _runtime_mode_summary_label(item: Dict[str, Any], runtime_scope) -> str:
+    runtime_mode = str(getattr(runtime_scope, "mode", "") or "paper").strip().lower() or "paper"
+    if bool(item.get("research_only", False)):
+        return "research-only"
+    if runtime_mode == "paper":
+        return "paper-dry-run"
+    return f"{runtime_mode}-read-only"
+
+
 def _trade_view_enabled(item: Dict[str, Any], runtime_scope) -> bool:
     if bool(item.get("research_only", False)):
         return True
@@ -759,6 +1011,70 @@ def _load_report_data_warning(report_dir: Path) -> str:
         if text.startswith("数据提醒:"):
             return text.removeprefix("数据提醒:").strip()
     return ""
+
+
+def _short_summary_text(text: str, *, max_len: int = 88) -> str:
+    compact = " ".join(str(text or "").split())
+    if not compact:
+        return ""
+    if len(compact) <= max(8, int(max_len)):
+        return compact
+    return compact[: max(8, int(max_len)) - 1].rstrip(" ,;:，；：/|") + "…"
+
+
+def _simple_research_summary_lines(
+    *,
+    recommended_action: str,
+    recommended_detail: str,
+    candidate_summary: str,
+    report_data_warning: str,
+    market_summary_lines: List[str],
+    mode: str,
+    mode_detail: str,
+) -> List[str]:
+    lines: List[str] = []
+    seen: set[str] = set()
+
+    def add_line(label: str, value: str, *, max_len: int = 88) -> None:
+        content = _short_summary_text(value, max_len=max_len)
+        if not content:
+            return
+        line = f"{label}: {content}"
+        if line in seen:
+            return
+        seen.add(line)
+        lines.append(line)
+
+    recommendation_bits = [str(recommended_action or "").strip(), str(recommended_detail or "").strip()]
+    recommendation_value = "；".join(bit for bit in recommendation_bits if bit)
+    add_line("当前建议", recommendation_value, max_len=92)
+    if str(candidate_summary or "").strip() and str(candidate_summary or "").strip() != "-":
+        add_line("重点标的", str(candidate_summary or "").strip(), max_len=96)
+    if str(report_data_warning or "").strip():
+        add_line("数据提醒", str(report_data_warning or "").strip(), max_len=96)
+    elif str(mode or "").strip() == "research-only":
+        add_line("执行方式", "当前市场只输出研究结果，不会提交交易。", max_len=96)
+    else:
+        add_line("执行方式", str(mode_detail or "").strip(), max_len=96)
+
+    for raw in list(market_summary_lines or []):
+        text = str(raw or "").strip()
+        if not text:
+            continue
+        label = "补充说明"
+        value = text
+        if ":" in text:
+            prefix, rest = text.split(":", 1)
+            prefix = prefix.strip()
+            if prefix == "数据提醒":
+                label = "数据提醒"
+            elif prefix in {"市场画像", "市场备注", "执行提示", "风险提示"}:
+                label = "补充说明"
+            value = rest.strip() if rest.strip() else text
+        add_line(label, value, max_len=96)
+        if len(lines) >= 4:
+            break
+    return lines[:4]
 
 
 def _market_research_only_yfinance(market_code: str) -> bool:
@@ -1128,7 +1444,6 @@ def _load_recent_feedback_automation_history_rows(
 def _load_health_summary(db_path: Path, *, portfolio_id: str, hours: int = 24) -> Dict[str, Any]:
     if not db_path.exists():
         return {}
-    cutoff_dt = datetime.utcnow() - timedelta(hours=max(1, int(hours)))
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     try:
@@ -1150,15 +1465,8 @@ def _load_health_summary(db_path: Path, *, portfolio_id: str, hours: int = 24) -
     finally:
         conn.close()
 
-    delayed_count = 0
-    permission_count = 0
-    connectivity_breaks = 0
-    connectivity_restores = 0
-    account_limit_count = 0
-    snapshot_fallback_count = 0
-    latest_event_ts = ""
-    latest_event_label = ""
-    latest_event_detail = ""
+    parsed_rows = []
+    latest_ts_obj = None
     for raw in rows:
         row = dict(raw)
         ts_raw = str(row.get("ts") or "")
@@ -1168,8 +1476,27 @@ def _load_health_summary(db_path: Path, *, portfolio_id: str, hours: int = 24) -
                 ts_obj = ts_obj.astimezone(timezone.utc).replace(tzinfo=None)
         except Exception:
             ts_obj = None
-        if ts_obj is not None and ts_obj < cutoff_dt:
-            continue
+        if latest_ts_obj is None and ts_obj is not None:
+            latest_ts_obj = ts_obj
+        parsed_rows.append((row, ts_obj))
+
+    reference_dt = latest_ts_obj or datetime.utcnow()
+    cutoff_dt = reference_dt - timedelta(hours=max(1, int(hours)))
+    scoped_rows = [(row, ts_obj) for row, ts_obj in parsed_rows if ts_obj is None or ts_obj >= cutoff_dt]
+    if not scoped_rows and parsed_rows:
+        scoped_rows = list(parsed_rows)
+
+    delayed_count = 0
+    permission_count = 0
+    connectivity_breaks = 0
+    connectivity_restores = 0
+    account_limit_count = 0
+    snapshot_fallback_count = 0
+    latest_event_ts = ""
+    latest_event_label = ""
+    latest_event_detail = ""
+    for row, _ts_obj in scoped_rows:
+        ts_raw = str(row.get("ts") or "")
         kind = str(row.get("kind") or "").upper().strip()
         code = int(float(row.get("value") or 0.0)) if str(row.get("value", "")).strip() else 0
         detail = str(row.get("details") or "")
@@ -1862,10 +2189,20 @@ def _build_paper_risk_feedback(card: Dict[str, Any], cfg: Dict[str, Any]) -> Dic
     overlay_path = _risk_feedback_overlay_path(cfg, card)
     feedback_confidence = _feedback_confidence_value(feedback_row)
     feedback_confidence_label = str(feedback_row.get("feedback_confidence_label", "") or ("HIGH" if feedback_confidence >= 0.75 else "MEDIUM" if feedback_confidence >= 0.45 else "LOW"))
-    calibration_apply_mode = str(automation_row.get("calibration_apply_mode", "") or "")
+    calibration_apply_mode = str(automation_row.get("calibration_apply_mode", "") or "").strip().upper()
     calibration_apply_mode_label = str(automation_row.get("calibration_apply_mode_label", "") or "")
     calibration_basis_label = str(automation_row.get("calibration_basis_label", "") or "")
     automation_reason = str(automation_row.get("automation_reason", "") or "")
+    resolved_calibration_apply_mode = calibration_apply_mode
+    if feedback_present and not resolved_calibration_apply_mode:
+        if auto_apply_enabled:
+            resolved_calibration_apply_mode = "AUTO_APPLY"
+            if not calibration_apply_mode_label:
+                calibration_apply_mode_label = "自动应用"
+        else:
+            resolved_calibration_apply_mode = "SUGGEST_ONLY"
+            if not calibration_apply_mode_label:
+                calibration_apply_mode_label = "建议确认"
 
     effective_values = dict(base_values)
     effective_source = "base"
@@ -1873,7 +2210,7 @@ def _build_paper_risk_feedback(card: Dict[str, Any], cfg: Dict[str, Any]) -> Dic
     apply_mode = "BASE_ONLY"
     apply_mode_label = "沿用基础配置"
 
-    if feedback_present and calibration_apply_mode == "AUTO_APPLY" and auto_apply_enabled:
+    if feedback_present and resolved_calibration_apply_mode == "AUTO_APPLY" and auto_apply_enabled:
         overlay_cfg = _safe_load_yaml_path(overlay_path)
         overlay_paper = dict(overlay_cfg.get("paper", {}) or {})
         if overlay_paper:
@@ -1938,12 +2275,12 @@ def _build_paper_risk_feedback(card: Dict[str, Any], cfg: Dict[str, Any]) -> Dic
             effective_source_label = "dashboard 预估"
         apply_mode = "AUTO_APPLY"
         apply_mode_label = "自动生效"
-    elif feedback_present and calibration_apply_mode == "SUGGEST_ONLY":
+    elif feedback_present and resolved_calibration_apply_mode == "SUGGEST_ONLY":
         apply_mode = "SUGGEST_ONLY"
         apply_mode_label = "仅建议未自动生效"
         effective_source = "base"
         effective_source_label = "基础配置（未自动改）"
-    elif feedback_present and calibration_apply_mode == "HOLD":
+    elif feedback_present and resolved_calibration_apply_mode == "HOLD":
         apply_mode = "BASE_ONLY"
         apply_mode_label = "沿用基础配置"
         effective_source = "base"
@@ -1961,7 +2298,7 @@ def _build_paper_risk_feedback(card: Dict[str, Any], cfg: Dict[str, Any]) -> Dic
         "auto_apply_enabled": auto_apply_enabled,
         "apply_mode": apply_mode,
         "apply_mode_label": apply_mode_label,
-        "calibration_apply_mode": calibration_apply_mode,
+        "calibration_apply_mode": resolved_calibration_apply_mode,
         "calibration_apply_mode_label": calibration_apply_mode_label,
         "calibration_basis_label": calibration_basis_label,
         "automation_reason": automation_reason,
@@ -2333,6 +2670,7 @@ def _build_report_card(
         "account_id": str(getattr(runtime_scope, "account_id", "") or ""),
         "account_mode": str(getattr(runtime_scope, "mode", "") or ""),
         "mode": _mode_label(item, runtime_scope),
+        "runtime_mode_summary": _runtime_mode_summary_label(item, runtime_scope),
         "mode_detail": _mode_detail(item, runtime_scope),
         "report_dir": display_report_dir,
         "paper_config_path": str(paper_config_path),
@@ -3597,9 +3935,9 @@ def _build_execution_mode_recommendation_summary(rows: List[Dict[str, Any]]) -> 
         "paused_count": int(pause_count),
         "market_rows": market_rows,
         "summary_text": (
-            f"{int(mismatch_count)} 个组合建议切换："
-            f"{int(review_only_count)} 个建议 {EXECUTION_MODE_LABELS['REVIEW_ONLY']}，"
-            f"{int(pause_count)} 个建议 {EXECUTION_MODE_LABELS['PAUSED']}"
+            f"当前有 {int(mismatch_count)} 个组合建议切换："
+            f"{int(review_only_count)} 个建议人工审核，"
+            f"{int(pause_count)} 个建议暂停自动执行"
             if mismatch_count > 0
             else "当前执行模式与风险建议一致"
         ),
@@ -4026,7 +4364,7 @@ def _build_runtime_status(cards: List[Dict[str, Any]]) -> Dict[str, Any]:
         {
             "market": str(card.get("market", "") or "").strip(),
             "watchlist": str(card.get("watchlist", "") or "").strip(),
-            "mode": str(card.get("mode", "") or "").strip() or "-",
+            "mode": str(card.get("runtime_mode_summary", card.get("mode", "")) or "").strip() or "-",
         }
         for card in sorted(
             cards,
@@ -4120,7 +4458,7 @@ def _build_ops_overview(
         elif port_warning_rows:
             preflight_banner_level = "WARN"
             preflight_banner_title = "IBKR 连接未就绪，当前不建议自动执行"
-            preflight_banner_action = "先启动 TWS/Gateway，并确认目标端口处于监听状态。"
+            preflight_banner_action = "先启动 IB Gateway，并确认目标端口处于监听状态。"
         else:
             preflight_banner_level = "WARN"
             preflight_banner_title = "Preflight 存在待确认项"
@@ -4261,13 +4599,58 @@ def _merge_execution_weekly_groups(
     return display_rows, orphan_rows
 
 
+def _simple_gateway_status_text(health: Dict[str, Any]) -> str:
+    status = str(health.get("status", "OK") or "OK").strip() or "OK"
+    detail = str(health.get("status_detail", "") or "").strip()
+    return f"{status} | {detail}" if detail else status
+
+
+def _simple_next_step_text(
+    *,
+    mode: str,
+    is_dry_run_view: bool,
+    open_flag: bool,
+    report_fresh: str,
+    gateway_status_label: str,
+    action_label: str,
+    action_detail: str,
+    recommendation_differs: bool,
+    recommended_execution_mode_label: str,
+) -> str:
+    if mode == "research-only":
+        return "当前市场只输出研究结果，不会提交交易。"
+    if report_fresh != "fresh":
+        return "先刷新最新报告，确认这一轮数据已经生成完成。"
+    if gateway_status_label not in {"OK", "IBKR正常"}:
+        return "先启动 IB Gateway，并确认 paper/live 目标端口可连接。"
+    if recommendation_differs and recommended_execution_mode_label and recommended_execution_mode_label != "-":
+        return f"先把执行模式切到“{recommended_execution_mode_label}”。"
+    if action_label and action_label != "观察":
+        return action_detail or f"按“{action_label}”处理当前组合。"
+    if is_dry_run_view:
+        return "继续看本地模拟账本和回标结果，再决定是否调整阈值。"
+    if open_flag:
+        return "等待下一轮自动刷新，重点看“当前建议”和执行计划。"
+    return "闭市阶段优先看周报、风险反馈和下一轮计划。"
+
+
 def _render_table(headers: List[str], rows: List[List[str]]) -> str:
     if not rows:
-        return '<div class="empty">无数据</div>'
-    thead = "".join(f"<th>{html.escape(h)}</th>" for h in headers)
+        return '<div class="empty" data-i18n-zh="无数据">无数据</div>'
+    thead = "".join(
+        f'<th data-i18n-zh="{html.escape(str(h))}">{html.escape(str(h))}</th>'
+        for h in headers
+    )
     tbody = []
     for row in rows:
-        tbody.append("<tr>" + "".join(f"<td>{html.escape(str(cell))}</td>" for cell in row) + "</tr>")
+        tbody.append(
+            "<tr>"
+            + "".join(
+                f'<td data-i18n-zh="{html.escape(str(cell))}">{html.escape(str(cell))}</td>'
+                for cell in row
+            )
+            + "</tr>"
+        )
     return f"<table><thead><tr>{thead}</tr></thead><tbody>{''.join(tbody)}</tbody></table>"
 
 
@@ -4280,6 +4663,8 @@ def _render_card(card: Dict[str, Any]) -> str:
     report_status = dict(card.get("report_status", {}) or {})
     weekly = dict(card.get("execution_weekly_row", {}) or {})
     control = dict(card.get("dashboard_control", {}) or {})
+    control_status = str(control.get("status", "") or "")
+    control_actions = dict(control.get("actions", {}) or {})
     control_portfolio = dict(control.get("portfolio", {}) or {})
 
     holdings_rows = [
@@ -4367,8 +4752,10 @@ def _render_card(card: Dict[str, Any]) -> str:
     action_label = str(card.get("recommended_action", "") or "")
     action_detail = str(card.get("recommended_detail", "") or "")
     mode = str(card.get("mode", "") or "")
+    mode_display_label = _dashboard_mode_display_label(mode)
     mode_detail = str(card.get("mode_detail", "") or "")
     candidate_summary = _top_candidates_summary(list(card.get("candidates", []) or []), limit=10)
+    report_data_warning = str(card.get("report_data_warning", "") or "")
     data_quality = dict(card.get("data_quality_summary", {}) or {})
     cost_summary = dict(card.get("cost_summary", {}) or {})
     shadow_payload = dict(card.get("shadow_model_summary", {}) or {})
@@ -4408,6 +4795,37 @@ def _render_card(card: Dict[str, Any]) -> str:
     )
     risk_notes = " | ".join(str(x).strip() for x in list(risk_summary.get("risk_notes", []) or []) if str(x).strip())
     market_summary_lines = list(card.get("market_summary_lines", []) or [])
+    simple_research_summary_lines = _simple_research_summary_lines(
+        recommended_action=action_label,
+        recommended_detail=action_detail,
+        candidate_summary=candidate_summary,
+        report_data_warning=report_data_warning,
+        market_summary_lines=market_summary_lines,
+        mode=mode,
+        mode_detail=mode_detail,
+    )
+    simple_plan_rows = [
+        [
+            str(row[0] or "-"),
+            str(row[1] or "-"),
+            _short_summary_text(
+                " / ".join(
+                    str(part or "").strip()
+                    for part in row[2:5]
+                    if str(part or "").strip() and str(part or "").strip() != "-"
+                )
+                or "-",
+                max_len=72,
+            ),
+        ]
+        for row in plan_rows[:2]
+    ]
+    if not simple_plan_rows:
+        simple_plan_rows = [[
+            "-",
+            action_label or "-",
+            _short_summary_text(action_detail or mode_detail or "-", max_len=72) or "-",
+        ]]
     action_distribution = str(card.get("action_distribution", "") or "-")
     sector_theme_distribution = str(card.get("sector_theme_distribution", "") or "-")
     open_flag = bool(card.get("exchange_open", False))
@@ -4747,7 +5165,7 @@ def _render_card(card: Dict[str, Any]) -> str:
     execution_mode_recommendation_rows = [[
         str(execution_mode_recommendation.get("current_mode_label", "") or "-"),
         str(execution_mode_recommendation.get("recommended_mode_label", "") or "-"),
-        "YES" if bool(execution_mode_recommendation.get("differs_from_current", False)) else "NO",
+        _dashboard_execution_mode_change_label(bool(execution_mode_recommendation.get("differs_from_current", False))),
         str(int(execution_mode_recommendation.get("consecutive_alert_count", 0) or 0)),
         str(int(execution_mode_recommendation.get("consecutive_watch_count", 0) or 0)),
         str(execution_mode_recommendation.get("reason", "") or "-"),
@@ -4761,8 +5179,8 @@ def _render_card(card: Dict[str, Any]) -> str:
         [
             str(paper.get("ts", "") or "")[:19] or "-",
             str(paper.get("run_id", "") or "-"),
-            "YES" if bool(paper.get("executed", False)) else "NO",
-            "DUE" if bool(paper.get("rebalance_due", False)) else "HOLD",
+            "已执行" if bool(paper.get("executed", False)) else "未执行",
+            "需要调仓" if bool(paper.get("rebalance_due", False)) else "保持持有",
             str(len(list(card.get("paper_trades", []) or []))),
             _fmt_money(paper_trade_value),
             _fmt_pct(paper.get("target_invested_weight")),
@@ -4804,7 +5222,7 @@ def _render_card(card: Dict[str, Any]) -> str:
             f'data-portfolio-id="{html.escape(portfolio_id)}" '
             f'data-field="{html.escape(field)}" '
             f'data-label="{html.escape(label)}" '
-            f'data-value="{str(value).lower()}">{html.escape(label)}: {"ON" if value else "OFF"}</button>'
+            f'data-value="{str(value).lower()}">{html.escape(label)}: {_dashboard_toggle_status_label(value)}</button>'
         )
     mode_buttons: List[str] = []
     if control_enabled and (not is_dry_run_view):
@@ -4826,12 +5244,12 @@ def _render_card(card: Dict[str, Any]) -> str:
     control_panel = (
         f"""
   <div class="card-control">
-    <div class="meta">dashboard_control={html.escape(control_status or 'configured')} | endpoint={html.escape(control_url or '-')}</div>
-    <div class="meta">execution_control_mode=<span class="execution-mode-current" data-portfolio-id="{html.escape(portfolio_id)}">{html.escape(execution_control_mode_label)}</span></div>
-    <div class="meta">execution_mode_recommendation=<span class="execution-mode-recommended" data-portfolio-id="{html.escape(portfolio_id)}" data-recommended-mode="{html.escape(recommended_execution_mode)}" data-recommended-label="{html.escape(recommended_execution_mode_label)}">{html.escape(recommended_execution_mode_label)}</span> | change=<span class="execution-mode-change" data-portfolio-id="{html.escape(portfolio_id)}" data-recommended-mode="{html.escape(recommended_execution_mode)}">{'YES' if recommendation_differs else 'NO'}</span></div>
+    <div class="meta" data-i18n-zh="{html.escape(_dashboard_control_status_text(control_status or 'configured', control_url or '-', control_actions.get('last_action', '-') or '-', control_actions.get('last_error', '-') or '-'))}">{html.escape(_dashboard_control_status_text(control_status or 'configured', control_url or '-', control_actions.get('last_action', '-') or '-', control_actions.get('last_error', '-') or '-'))}</div>
+    <div class="meta"><span data-i18n-zh="当前执行模式">当前执行模式</span>：<span class="execution-mode-current" data-portfolio-id="{html.escape(portfolio_id)}">{html.escape(execution_control_mode_label)}</span></div>
+    <div class="meta"><span data-i18n-zh="建议执行模式">建议执行模式</span>：<span class="execution-mode-recommended" data-portfolio-id="{html.escape(portfolio_id)}" data-recommended-mode="{html.escape(recommended_execution_mode)}" data-recommended-label="{html.escape(recommended_execution_mode_label)}">{html.escape(recommended_execution_mode_label)}</span> | <span data-i18n-zh="是否需要切换">是否需要切换</span>：<span class="execution-mode-change" data-portfolio-id="{html.escape(portfolio_id)}" data-recommended-mode="{html.escape(recommended_execution_mode)}">{_dashboard_execution_mode_change_label(recommendation_differs)}</span></div>
     <div class="meta">{html.escape(str(execution_mode_recommendation.get('reason', '') or '当前没有需要切换执行模式的额外提示。'))}</div>
-    <div class="meta">feedback_calibration={html.escape(feedback_automation_label)}</div>
-    <div class="meta">weekly_feedback_confirm={'PENDING_CONFIRM' if weekly_feedback_pending_live_confirm else ('CONFIRMED @ ' + weekly_feedback_confirmed_ts[:19] if weekly_feedback_confirmed_ts else 'N/A')} | threshold_suggestion_sync={'PENDING' if weekly_feedback_pending_live_confirm else 'SYNCED'}</div>
+    <div class="meta"><span data-i18n-zh="反馈校准">反馈校准</span>：{html.escape(feedback_automation_label)}</div>
+    <div class="meta"><span data-i18n-zh="周度反馈">周度反馈</span>：<span class="weekly-feedback-status" data-portfolio-id="{html.escape(portfolio_id)}">{html.escape(_dashboard_weekly_feedback_status_label(weekly_feedback_pending_live_confirm, weekly_feedback_confirmed_ts))}</span> | <span data-i18n-zh="阈值同步">阈值同步</span>：<span class="threshold-sync-status" data-portfolio-id="{html.escape(portfolio_id)}">{html.escape(_dashboard_threshold_sync_status_label(weekly_feedback_pending_live_confirm))}</span></div>
     <div class="control-toolbar">
       {''.join(mode_buttons)}
     </div>
@@ -4856,10 +5274,17 @@ def _render_card(card: Dict[str, Any]) -> str:
             f"<div><strong>Cost Proxy</strong><span>{html.escape(cost_label)}</span></div>",
             f"<div><strong>Risk Overlay</strong><span>{html.escape(risk_label)}</span></div>",
         ]
+        simple_stats_rows = [
+            f"<div class='simple-only'><strong>模拟权益</strong><span>{_fmt_money(paper.get('equity_after'))}</span></div>",
+            f"<div class='simple-only'><strong>模拟现金</strong><span>{_fmt_money(paper.get('cash_after'))}</span></div>",
+            f"<div class='simple-only'><strong>目标持仓比例</strong><span>{_fmt_pct(paper.get('target_invested_weight'))}</span></div>",
+            f"<div class='simple-only'><strong>调仓状态</strong><span>{'需要处理' if bool(paper.get('rebalance_due', False)) else '保持观察'}</span></div>",
+            f"<div class='simple-only'><strong>IB Gateway</strong><span>{html.escape(str(health.get('status', 'OK') or 'OK'))}</span></div>",
+        ]
         holdings_grid = f"""
   <div>
     <h3>{html.escape(holdings_title)}</h3>
-    {_render_table(["symbol", "qty", "market_value", "weight", "status"], holdings_rows)}
+    {_render_table(["股票", "数量", "市值", "权重", "状态"], holdings_rows)}
   </div>
 """
         dry_run_rows = [
@@ -4901,10 +5326,31 @@ def _render_card(card: Dict[str, Any]) -> str:
     {_render_table(["ts", "run_id", "rebalanced", "rebalance_due", "simulated_trades", "turnover", "target_invested", "target_net"], dry_run_state_rows)}
   </div>
 """
+        simple_paper_trade_rows = [
+            [
+                str(row[0] or "-"),
+                str(row[1] or "-"),
+                _short_summary_text(
+                    " / ".join(
+                        str(part or "").strip()
+                        for part in [row[2], row[3], row[5]]
+                        if str(part or "").strip() and str(part or "").strip() != "-"
+                    )
+                    or "-",
+                    max_len=72,
+                ),
+            ]
+            for row in paper_trade_rows[:2]
+        ]
         execution_plan_section = f"""
     <div>
       <h3>本地模拟调仓</h3>
-      {_render_table(["symbol", "action", "qty", "price", "trade_value", "reason"], paper_trade_rows)}
+      <div class="simple-only" data-simple-section="paper-plan">
+      {_render_table(["股票", "动作", "说明"], simple_paper_trade_rows if simple_paper_trade_rows else [["-", "-", "-"]])}
+      </div>
+      <div class="advanced-only">
+      {_render_table(["股票", "动作", "数量", "价格", "交易金额", "原因"], paper_trade_rows)}
+      </div>
     </div>
 """
         shadow_review_history_section = ""
@@ -4969,10 +5415,18 @@ def _render_card(card: Dict[str, Any]) -> str:
             f"<div><strong>计划 vs 实际成本</strong><span>{html.escape(weekly_cost_compare_label)}</span></div>",
             f"<div><strong>Execution Feedback</strong><span>{html.escape(execution_feedback_label)}</span></div>",
         ]
+        simple_stats_rows = [
+            f"<div class='simple-only'><strong>账户权益</strong><span>{_fmt_money(execution.get('broker_equity') or guard.get('broker_equity'))}</span></div>",
+            f"<div class='simple-only'><strong>账户现金</strong><span>{_fmt_money(execution.get('broker_cash') or guard.get('broker_cash'))}</span></div>",
+            f"<div class='simple-only'><strong>计划投入资金</strong><span>{_fmt_money(execution.get('target_capital'))}</span></div>",
+            f"<div class='simple-only'><strong>数据状态</strong><span>{html.escape(data_quality_label)}</span></div>",
+            f"<div class='simple-only'><strong>风险状态</strong><span>{html.escape(risk_label)}</span></div>",
+            f"<div class='simple-only'><strong>IB Gateway</strong><span>{html.escape(str(health.get('status', 'OK') or 'OK'))}</span></div>",
+        ]
         holdings_grid = f"""
   <div>
     <h3>{html.escape(broker_title)}</h3>
-    {_render_table(["symbol", "qty", "market_value", "weight", "source"], broker_rows)}
+    {_render_table(["股票", "数量", "市值", "权重", "来源"], broker_rows)}
   </div>
 """
         dry_run_sections = ""
@@ -4996,10 +5450,31 @@ def _render_card(card: Dict[str, Any]) -> str:
     )}
   </div>
 """
+        simple_execution_rows = [
+            [
+                str(row[0] or "-"),
+                str(row[1] or "-"),
+                _short_summary_text(
+                    " / ".join(
+                        str(part or "").strip()
+                        for part in [row[2], row[3], row[5]]
+                        if str(part or "").strip() and str(part or "").strip() != "-"
+                    )
+                    or "-",
+                    max_len=72,
+                ),
+            ]
+            for row in exec_rows[:2]
+        ]
         execution_plan_section = f"""
     <div>
       <h3>执行计划</h3>
-      {_render_table(["symbol", "action", "status", "style", "expected_cost_bps", "reason"], exec_rows)}
+      <div class="simple-only" data-simple-section="execution-plan">
+      {_render_table(["股票", "动作", "说明"], simple_execution_rows if simple_execution_rows else [["-", "-", "-"]])}
+      </div>
+      <div class="advanced-only">
+      {_render_table(["股票", "动作", "状态", "方式", "预估成本(bps)", "原因"], exec_rows)}
+      </div>
     </div>
 """
         shadow_review_history_section = f"""
@@ -5142,20 +5617,61 @@ def _render_card(card: Dict[str, Any]) -> str:
     {_render_table(["symbol", "sessions", "session_count", "cost_add_bps", "slippage_add_bps", "execution_penalty", "reason"], execution_penalty_rows)}
   </div>
 """
-    execution_badge = "NO EXECUTION" if mode == "research-only" else ("DRY RUN" if is_dry_run_view else "EXECUTION READY")
+    execution_badge = _dashboard_execution_badge_label(mode, is_dry_run_view)
+    gateway_status_label = str(health.get("status", "OK") or "OK").strip() or "OK"
+    gateway_status_text = _simple_gateway_status_text(health)
+    simple_status_text = (
+        f"{_dashboard_market_state_label(open_flag)} | {execution_badge} | "
+        f"{_dashboard_report_freshness_label(report_fresh)}"
+    )
+    simple_action_text = action_label or ("继续复盘" if is_dry_run_view else "继续观察")
+    simple_reason_text = (
+        action_detail
+        or str(execution_mode_recommendation.get("reason", "") or "").strip()
+        or str(report_data_warning or "").strip()
+        or mode_detail
+        or "-"
+    )
+    simple_next_step_text = _simple_next_step_text(
+        mode=mode,
+        is_dry_run_view=is_dry_run_view,
+        open_flag=open_flag,
+        report_fresh=report_fresh,
+        gateway_status_label=gateway_status_label,
+        action_label=action_label,
+        action_detail=action_detail,
+        recommendation_differs=recommendation_differs,
+        recommended_execution_mode_label=recommended_execution_mode_label,
+    )
+    simple_summary_section = f"""
+      <div class="simple-card-summary simple-only">
+        <h3>一眼看懂</h3>
+        {_render_table(["问题", "答案"], [
+            ["当前状态", simple_status_text],
+            ["现在该做什么", simple_action_text],
+            ["为什么", simple_reason_text],
+            ["IB Gateway", gateway_status_text],
+            ["下一步", simple_next_step_text],
+        ])}
+      </div>
+"""
 
     return f"""
 <section class="card" data-open="{str(open_flag).lower()}" data-mode="{html.escape(mode)}" data-actionable="{str(actionable).lower()}" data-dashboard-view="{html.escape(dashboard_view)}" data-market="{html.escape(str(card.get('market', '') or ''))}" data-portfolio-id="{html.escape(portfolio_id)}" data-recommended-mode="{html.escape(recommended_execution_mode or 'AUTO')}" data-execution-mode-change="{str(recommendation_differs).lower()}">
   <div class="card-head">
     <div>
       <h2>{html.escape(card['market'])} / {html.escape(card['watchlist'])}</h2>
+      <div class="advanced-only">
       <div class="meta">mode={html.escape(mode)} | account_mode={html.escape(str(card.get('account_mode', '') or '-'))} | open={open_flag} | priority={card['priority_order']} | {html.escape(card['priority_reason'])}</div>
-      <div class="meta"><span class="badge badge-mode">{html.escape(mode)}</span> <span class="badge badge-exec">{html.escape(execution_badge)}</span> <span>{html.escape(mode_detail)}</span></div>
+      </div>
+      <div class="meta"><span class="badge badge-mode" data-i18n-zh="{html.escape(mode_display_label)}">{html.escape(mode_display_label)}</span> <span class="badge badge-exec" data-i18n-zh="{html.escape(execution_badge)}">{html.escape(execution_badge)}</span> <span data-i18n-zh="{html.escape(mode_detail)}">{html.escape(mode_detail)}</span></div>
+      <div class="meta"><span class="badge badge-action">{html.escape(action_label or '观察')}</span> <span>{html.escape(action_detail or '-')}</span></div>
+      {simple_summary_section}
+      <div class="advanced-only">
       <div class="meta">portfolio_id={html.escape(str(card.get('portfolio_id', '') or '-'))}</div>
       <div class="meta">runtime_scope={html.escape(str(card.get('runtime_scope', '') or '-'))} | account_id={html.escape(str(card.get('account_id', '') or '-'))}</div>
       <div class="meta">report_day={html.escape(str(report_day))} | slot={html.escape(str(report_slot))} | freshness={html.escape(str(report_fresh))}</div>
       <div class="meta">report_schedule={html.escape(report_schedule or '-')} | dir={html.escape(card['report_dir'])}</div>
-      <div class="meta"><span class="badge badge-action">{html.escape(action_label or '观察')}</span> <span>{html.escape(action_detail or '-')}</span></div>
       <div class="meta"><strong>推荐 Top10 摘要</strong> {html.escape(candidate_summary or '-')}</div>
       <div class="meta"><strong>Shadow ML</strong> {html.escape(shadow_label)}</div>
       <div class="meta"><strong>数据质量</strong> {html.escape(data_quality_label)}</div>
@@ -5166,39 +5682,58 @@ def _render_card(card: Dict[str, Any]) -> str:
       <div class="meta"><strong>风险备注</strong> {html.escape(risk_notes or '-')}</div>
       <div class="meta"><strong>行业/主题分布</strong> {html.escape(sector_theme_distribution)}</div>
       <div class="meta"><strong>动作分布</strong> {html.escape(action_distribution)}</div>
+      </div>
     </div>
     <div class="stats">
+      {''.join(simple_stats_rows)}
+      <div class="advanced-only">
       {''.join(stats_rows)}
       <div><strong>Opp</strong><span>entry={opp.get('entry_now_count', 0)} / near={opp.get('near_entry_count', 0)} / wait={opp.get('wait_count', 0)}</span></div>
       <div><strong>Guard</strong><span>stop={guard.get('stop_count', 0)} / tp={guard.get('take_profit_count', 0)}</span></div>
       <div><strong>Analysis</strong><span>active={analysis_active_count} / recent_events={analysis_event_count}</span></div>
-      <div><strong>IBKR Health</strong><span>{html.escape(str(health.get('status', 'OK') or 'OK'))}</span></div>
-      <div><strong>IBKR Health Detail</strong><span>{html.escape(str(health.get('status_detail', '-') or '-'))}</span></div>
+      <div><strong>IB Gateway</strong><span>{html.escape(str(health.get('status', 'OK') or 'OK'))}</span></div>
+      <div><strong>Gateway Detail</strong><span>{html.escape(str(health.get('status_detail', '-') or '-'))}</span></div>
+      </div>
     </div>
   </div>
 
   {control_panel}
 
+  <div class="advanced-only">
   {performance_section}
+  </div>
 
   {holdings_grid}
+  <div class="advanced-only">
   {dry_run_sections}
+  </div>
 
   <div class="grid">
     <div>
       <h3>当前建议</h3>
-      {_render_table(["symbol", "action", "entry_style", "regime", "notes"], plan_rows)}
+      <div class="simple-only" data-simple-section="current-actions">
+      {_render_table(["股票", "动作", "说明"], simple_plan_rows)}
+      </div>
+      <div class="advanced-only">
+      {_render_table(["股票", "动作", "入场方式", "市场状态", "说明"], plan_rows)}
+      </div>
     </div>
     {execution_plan_section}
   </div>
 
-  {shadow_review_history_section}
-  {strategy_upgrade_section}
-
   <div>
     <h3>研究结论摘要</h3>
-    {_render_table(["summary"], [[line] for line in market_summary_lines] if market_summary_lines else [])}
+    <div class="simple-only">
+    {_render_table(["摘要"], [[line] for line in simple_research_summary_lines] if simple_research_summary_lines else [])}
+    </div>
+    <div class="advanced-only">
+    {_render_table(["摘要"], [[line] for line in market_summary_lines] if market_summary_lines else [])}
+    </div>
   </div>
+
+  <div class="advanced-only">
+  {shadow_review_history_section}
+  {strategy_upgrade_section}
 
   <div>
     <h3>推荐池 Top10</h3>
@@ -5219,6 +5754,7 @@ def _render_card(card: Dict[str, Any]) -> str:
       <h3>最近分析变迁</h3>
       {_render_table(["ts", "symbol", "event", "from", "to"], analysis_event_rows)}
     </div>
+  </div>
   </div>
 </section>
 """
@@ -5439,6 +5975,173 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
     return payload
 
 
+def _simple_market_data_health_text(rows: List[Dict[str, Any]]) -> str:
+    if not rows:
+        return "当前没有可展示的市场数据健康摘要。"
+    ok_count = sum(1 for row in rows if str(row.get("status_label", "") or "") == "IBKR正常")
+    research_fallback_count = sum(1 for row in rows if str(row.get("status_label", "") or "") == "研究Fallback")
+    mixed_count = sum(1 for row in rows if str(row.get("status_label", "") or "") == "混合")
+    attention_count = sum(1 for row in rows if str(row.get("status_label", "") or "") in {"待排查", "有缺失", "无数据"})
+    summary = (
+        f"当前 {len(rows)} 个市场里，{ok_count} 个 IBKR 正常，{research_fallback_count} 个研究 fallback，"
+        f"{mixed_count} 个混合，{attention_count} 个需要排查。"
+    )
+    top_row = next(
+        (
+            row
+            for row in rows
+            if str(row.get("status_label", "") or "") in {"待排查", "混合", "有缺失", "无数据", "研究Fallback"}
+        ),
+        None,
+    )
+    if top_row:
+        summary += f" 优先看 {str(top_row.get('market', '-') or '-')}：{str(top_row.get('status_label', '-') or '-')}。"
+    return summary
+
+
+def _simple_gateway_health_text(rows: List[Dict[str, Any]]) -> str:
+    if not rows:
+        return "当前还没有可展示的 IB Gateway 健康状态。"
+    ok_count = sum(1 for row in rows if str(row.get("status", "") or "") == "OK")
+    degraded_count = sum(1 for row in rows if str(row.get("status", "") or "") == "DEGRADED")
+    limited_count = sum(1 for row in rows if str(row.get("status", "") or "") == "LIMITED")
+    delayed_count = sum(int(row.get("delayed_count", 0) or 0) for row in rows)
+    permission_count = sum(int(row.get("permission_count", 0) or 0) for row in rows)
+    connectivity_breaks = sum(int(row.get("connectivity_breaks", 0) or 0) for row in rows)
+    account_limit_count = sum(int(row.get("account_limit_count", 0) or 0) for row in rows)
+    summary = (
+        f"当前 {len(rows)} 个组合里，{ok_count} 个连接正常，{degraded_count} 个降级，{limited_count} 个受限。"
+    )
+    if delayed_count or permission_count or connectivity_breaks or account_limit_count:
+        summary += (
+            f" 异常计数：延迟 {delayed_count} / 权限 {permission_count} / "
+            f"中断 {connectivity_breaks} / 额度 {account_limit_count}。"
+        )
+    else:
+        summary += " 当前没有明显的延迟、权限或连接异常。"
+    return summary
+
+
+def _simple_preflight_banner_rows(ops_overview: Dict[str, Any]) -> List[List[str]]:
+    title = str(ops_overview.get("preflight_banner_title", "") or "").strip()
+    if not title:
+        return []
+    reason = _short_summary_text(str(ops_overview.get("preflight_banner_reason", "") or "-"), max_len=96)
+    action = str(ops_overview.get("preflight_banner_action", "") or "-")
+    return [
+        ["当前状态", title],
+        ["主要问题", reason],
+        ["现在该做什么", action],
+    ]
+
+
+def _simple_ops_overview_rows(ops_overview: Dict[str, Any]) -> List[List[str]]:
+    def _count_status(count: int, label: str) -> str:
+        return f"{label} | {count}" if int(count or 0) > 0 else "已就绪 | 0"
+
+    return [
+        [
+            "Preflight",
+            f"P{int(ops_overview.get('preflight_pass_count', 0) or 0)} / "
+            f"W{int(ops_overview.get('preflight_warn_count', 0) or 0)} / "
+            f"F{int(ops_overview.get('preflight_fail_count', 0) or 0)}",
+        ],
+        [
+            "IB Gateway 端口",
+            _count_status(int(ops_overview.get("ibkr_port_warning_count", 0) or 0), "有告警"),
+        ],
+        [
+            "报告待刷新",
+            _count_status(int(ops_overview.get("stale_report_count", 0) or 0), "有滞后"),
+        ],
+        [
+            "组合健康",
+            _count_status(int(ops_overview.get("degraded_health_count", 0) or 0), "有降级"),
+        ],
+        [
+            "执行模式偏差",
+            _count_status(int(ops_overview.get("execution_mode_mismatch_count", 0) or 0), "有偏差"),
+        ],
+        [
+            "控制服务",
+            _dashboard_control_service_state_label(str(ops_overview.get("control_service_status", "disabled") or "disabled")),
+        ],
+    ]
+
+
+def _simple_market_data_health_rows(rows: List[Dict[str, Any]]) -> List[List[str]]:
+    return [
+        [
+            str(row.get("market", "") or "-"),
+            str(row.get("status_label", "") or "-"),
+            _short_summary_text(str(row.get("diagnosis", "") or "-"), max_len=72),
+        ]
+        for row in rows[:4]
+    ]
+
+
+def _simple_runtime_status_rows(runtime_status: Dict[str, Any]) -> List[List[str]]:
+    market_rows = [
+        row
+        for row in list(runtime_status.get("market_mode_summary", []) or [])
+        if str(row.get("market", "") or "").strip() and str(row.get("watchlist", "") or "").strip()
+    ]
+    return [
+        ["连接账户", str(runtime_status.get("account_id", "") or "-")],
+        ["账户模式", _dashboard_account_mode_label(str(runtime_status.get("account_mode", "") or ""))],
+        ["覆盖市场", str(len(market_rows))],
+    ]
+
+
+def _runtime_mode_display_rows(runtime_status: Dict[str, Any]) -> List[List[str]]:
+    rows = [
+        [
+            str(row.get("market", "") or "-"),
+            str(row.get("watchlist", "") or "-"),
+            _dashboard_mode_display_label(str(row.get("mode", "") or "")),
+        ]
+        for row in list(runtime_status.get("market_mode_summary", []) or [])
+        if str(row.get("market", "") or "").strip() and str(row.get("watchlist", "") or "").strip()
+    ]
+    return rows or [["-", "-", "-"]]
+
+
+def _runtime_status_detail_text(runtime_status: Dict[str, Any]) -> str:
+    return (
+        f"连接账户：{str(runtime_status.get('account_id', '') or '-')} | "
+        f"账户模式：{_dashboard_account_mode_label(str(runtime_status.get('account_mode', '') or ''))} | "
+        f"运行范围：{str(runtime_status.get('runtime_scope', '') or '-')}"
+    )
+
+
+def _simple_dry_run_attribution_text(rows: List[List[str]]) -> str:
+    if not rows:
+        return ""
+    market, watchlist, _, *_rest, dominant, diagnosis = rows[0]
+    return f"先看 {market or '-'} / {watchlist or '-'}：本周主要由 {dominant or '-'} 驱动，诊断：{_short_summary_text(str(diagnosis or '-'), max_len=72)}。"
+
+
+def _simple_risk_review_text(rows: List[List[str]]) -> str:
+    if not rows:
+        return ""
+    market, watchlist, _, driver, net, gross, *_rest, diagnosis = rows[0]
+    return f"先看 {market or '-'} / {watchlist or '-'}：风险主因 {driver or '-'}，净/总敞口 {net or '-'} / {gross or '-'}，诊断：{_short_summary_text(str(diagnosis or '-'), max_len=72)}。"
+
+
+def _simple_risk_history_text(rows: List[List[str]]) -> str:
+    if not rows:
+        return ""
+    market, watchlist, _, _ts, source, scale, net, _gross, _corr, stress, _stress_loss, _driver, notes = rows[0]
+    return f"先看 {market or '-'} / {watchlist or '-'}：最近一次 {source or '-'} 风险预算 scale {scale or '-'}，净敞口 {net or '-'}，最差情景 {stress or '-'}。{_short_summary_text(str(notes or '-'), max_len=56)}"
+
+
+def _simple_risk_alert_text(rows: List[List[str]]) -> str:
+    if not rows:
+        return ""
+    market, watchlist, _, _source, alert, trend, _latest_ts, _scale, scale_delta, _net, _gross, _corr, stress, _stress_loss, diagnosis = rows[0]
+    return f"先看 {market or '-'} / {watchlist or '-'}：当前 {alert or '-'} / {trend or '-'}，预算变化 {scale_delta or '-'}，最差情景 {stress or '-'}。{_short_summary_text(str(diagnosis or '-'), max_len=56)}"
+
+
 def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     out = _resolve_path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -5450,8 +6153,8 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
         [
             row.get("market", ""),
             row.get("watchlist", ""),
-            row.get("mode", ""),
-            "OPEN" if row.get("exchange_open") else "CLOSED",
+            _dashboard_mode_display_label(str(row.get("mode", "") or "")),
+            _dashboard_market_state_label(bool(row.get("exchange_open"))),
             row.get("priority_order", ""),
             row.get("recommended_action", ""),
             row.get("recommended_detail", ""),
@@ -5464,6 +6167,31 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
         ]
         for row in list(payload.get("overview", []) or [])
     ]
+    simple_overview_rows = [
+        [
+            row.get("market", ""),
+            row.get("watchlist", ""),
+            _dashboard_mode_display_label(str(row.get("mode", "") or "")),
+            row.get("recommended_action", "") or "-",
+            row.get("ibkr_health", "") or "-",
+            _short_summary_text(
+                " | ".join(
+                    part
+                    for part in (
+                        row.get("recommended_detail", "") or "-",
+                        "OPEN" if row.get("exchange_open") else "CLOSED",
+                        f"可立即入场 {int(row.get('opp_entry_now', 0) or 0)}",
+                        f"继续等待 {int(row.get('opp_wait', 0) or 0)}",
+                        f"执行中 {int(row.get('execution_orders', 0) or 0)}",
+                    )
+                    if part
+                )
+            ),
+        ]
+        for row in list(payload.get("overview", []) or [])
+    ]
+    health_overview = list(payload.get("health_overview", []) or [])
+    health_summary_text = _simple_gateway_health_text(health_overview)
     health_rows = [
         [
             row.get("market", ""),
@@ -5477,15 +6205,17 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
             row.get("latest_event_label", ""),
             row.get("latest_event_ts", ""),
         ]
-        for row in list(payload.get("health_overview", []) or [])
+        for row in health_overview
     ]
     dry_run_overview_rows = []
+    simple_dry_run_overview_rows = []
     for card in dry_run_cards:
         paper = dict(card.get("paper_summary", {}) or {})
         horizon_labels = ",".join(
             f"{int(row.get('horizon_days', 0) or 0)}d"
             for row in list(card.get("outcome_summary_rows", []) or [])
         ) or "-"
+        rebalance_label = "需要处理" if bool(paper.get("rebalance_due", False)) else "保持观察"
         dry_run_overview_rows.append(
             [
                 card.get("market", ""),
@@ -5495,6 +6225,25 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
                 _fmt_pct(paper.get("target_invested_weight")),
                 horizon_labels,
                 str(bool(paper.get("executed", False))),
+            ]
+        )
+        simple_dry_run_overview_rows.append(
+            [
+                card.get("market", ""),
+                card.get("watchlist", ""),
+                _fmt_money(paper.get("equity_after")),
+                rebalance_label,
+                _short_summary_text(
+                    " | ".join(
+                        part
+                        for part in (
+                            f"现金 {_fmt_money(paper.get('cash_after'))}",
+                            f"目标仓位 {_fmt_pct(paper.get('target_invested_weight'))}",
+                            f"回标 {horizon_labels}",
+                        )
+                        if part
+                    )
+                ),
             ]
         )
     dry_run_attribution_rows = [
@@ -5543,20 +6292,29 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
             """
         )
     focus_cards = []
+    simple_focus_rows = []
     for row in list(payload.get("focus_actions", []) or []):
         market = html.escape(str(row.get("market", "") or ""))
         watchlist = html.escape(str(row.get("watchlist", "") or ""))
         action = html.escape(str(row.get("action", "") or ""))
         detail = html.escape(str(row.get("detail", "") or "-"))
-        mode = html.escape(str(row.get("mode", "") or ""))
-        state = "OPEN" if bool(row.get("exchange_open", False)) else "CLOSED"
+        mode = _dashboard_mode_display_label(str(row.get("mode", "") or ""))
+        state = _dashboard_market_state_label(bool(row.get("exchange_open", False)))
+        simple_focus_rows.append(
+            [
+                str(row.get("market", "") or ""),
+                str(row.get("watchlist", "") or ""),
+                str(row.get("action", "") or "-"),
+                _short_summary_text(str(row.get("detail", "") or "-")),
+            ]
+        )
         focus_cards.append(
             f"""
             <div class="focus-card">
               <div class="focus-top">
                 <span class="badge badge-market">{market}</span>
-                <span class="badge badge-mode">{mode}</span>
-                <span class="badge badge-state">{state}</span>
+                <span class="badge badge-mode" data-i18n-zh="{html.escape(mode)}">{html.escape(mode)}</span>
+                <span class="badge badge-state" data-i18n-zh="{html.escape(state)}">{html.escape(state)}</span>
               </div>
               <div class="focus-title">{market} / {watchlist}</div>
               <div class="focus-action">{action}</div>
@@ -5571,11 +6329,11 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     control_actions = dict(dashboard_control.get("actions", {}) or {})
     control_enabled = bool(control_service.get("enabled", False))
     control_url = str(control_service.get("url", "") or "")
-    control_status_text = (
-        f"service={str(control_service.get('status', 'disabled') or 'disabled')} | "
-        f"endpoint={control_url or '-'} | "
-        f"last_action={str(control_actions.get('last_action', '-') or '-')} | "
-        f"last_error={str(control_actions.get('last_error', '-') or '-')}"
+    control_status_text = _dashboard_control_status_text(
+        str(control_service.get('status', 'disabled') or 'disabled'),
+        control_url or '-',
+        str(control_actions.get('last_action', '-') or '-'),
+        str(control_actions.get('last_error', '-') or '-'),
     )
     ops_alert_rows = [
         [
@@ -5594,22 +6352,34 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
         ]
         for row in list(ops_overview.get("preflight_banner_rows", []) or [])
     ]
+    preflight_banner_simple_rows = _simple_preflight_banner_rows(ops_overview)
+    simple_ops_overview_rows = _simple_ops_overview_rows(ops_overview)
     preflight_banner = f"""
     <section class="card overview recommendation-banner ops-banner ops-banner-{html.escape(str(ops_overview.get('preflight_banner_level', 'WARN') or 'WARN').lower())}">
       <h2>Preflight 关键提示</h2>
+      <div class="simple-only" data-simple-section="preflight-banner">
+      {_render_table(["问题", "答案"], preflight_banner_simple_rows)}
+      </div>
+      <div class="advanced-only">
       <div class="meta" style="font-size:18px; font-weight:700; color:var(--ink); margin-bottom:8px;">{html.escape(str(ops_overview.get('preflight_banner_title', '') or ''))}</div>
       <div class="meta">{html.escape(str(ops_overview.get('preflight_banner_reason', '') or ''))}</div>
       <div class="meta" style="margin-top:8px;">{html.escape(str(ops_overview.get('preflight_banner_action', '') or ''))}</div>
       {_render_table(["status", "name", "detail"], preflight_banner_rows) if preflight_banner_rows else ""}
+      </div>
     </section>
     """ if str(ops_overview.get("preflight_banner_title", "") or "").strip() else ""
     ops_card = f"""
     <section class="card overview">
       <h2>运维总览</h2>
+      <div class="simple-only" data-simple-section="ops-overview">
+      <div class="meta" data-i18n-zh="先看不是 0 的项目；细节留在专业模式。">先看不是 0 的项目；细节留在专业模式。</div>
+      {_render_table(["项目", "当前状态"], simple_ops_overview_rows)}
+      </div>
+      <div class="advanced-only">
       <div class="meta">{html.escape(str(ops_overview.get('summary_text', '尚无运维摘要') or '尚无运维摘要'))}</div>
       <div class="stats">
         <div><strong>Preflight</strong><span>P{int(ops_overview.get('preflight_pass_count', 0) or 0)} / W{int(ops_overview.get('preflight_warn_count', 0) or 0)} / F{int(ops_overview.get('preflight_fail_count', 0) or 0)}</span></div>
-        <div><strong>IBKR Ports</strong><span>{int(ops_overview.get('ibkr_port_warning_count', 0) or 0)} warnings</span></div>
+        <div><strong>Gateway Ports</strong><span>{int(ops_overview.get('ibkr_port_warning_count', 0) or 0)} warnings</span></div>
         <div><strong>Stale Reports</strong><span>{int(ops_overview.get('stale_report_count', 0) or 0)}</span></div>
         <div><strong>Degraded Health</strong><span>{int(ops_overview.get('degraded_health_count', 0) or 0)}</span></div>
         <div><strong>Mode Mismatch</strong><span>{int(ops_overview.get('execution_mode_mismatch_count', 0) or 0)}</span></div>
@@ -5617,6 +6387,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
       </div>
       <div class="meta">preflight_generated_at={html.escape(str(ops_overview.get('preflight_generated_at', '-') or '-'))}</div>
       {_render_table(["category", "name", "status", "detail"], ops_alert_rows) if ops_alert_rows else '<div class="empty">当前没有需要优先处理的运维告警。</div>'}
+      </div>
     </section>
     """
     control_panel = (
@@ -5625,12 +6396,13 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
       <h2>Dashboard 控制</h2>
       <div class="meta" id="control-status">{html.escape(control_status_text)}</div>
       <div class="control-toolbar">
-        <button type="button" class="control-action" data-api-action="run_once">立即跑一轮</button>
-        <button type="button" class="control-action" data-api-action="run_preflight">立即跑 Preflight</button>
-        <button type="button" class="control-action" data-api-action="run_weekly_review">立即跑 Weekly Review</button>
-        <button type="button" class="control-action" data-api-action="refresh_dashboard">刷新 Dashboard</button>
+        <button type="button" class="control-action" data-api-action="run_once" data-i18n-zh="立即跑一轮">立即跑一轮</button>
+        <button type="button" class="control-action" data-api-action="run_preflight" data-i18n-zh="立即跑 Preflight">立即跑 Preflight</button>
+        <button type="button" class="control-action" data-api-action="run_weekly_review" data-i18n-zh="立即跑 Weekly Review">立即跑 Weekly Review</button>
+        <button type="button" class="control-action" data-api-action="refresh_dashboard" data-i18n-zh="刷新 Dashboard">刷新 Dashboard</button>
       </div>
-      <div class="meta">这些按钮调用本机 supervisor control service；组合级开关会写入当前 summary 目录的 `dashboard_control_state.json`，并在下次启动 `python -m src.app.supervisor` 时自动恢复。</div>
+      <div class="meta simple-only" data-i18n-zh="这些按钮会直接触发本机控制服务。">这些按钮会直接触发本机控制服务。</div>
+      <div class="meta advanced-only" data-i18n-zh="这些按钮调用本机 supervisor control service；组合级开关会写入当前 summary 目录的 `dashboard_control_state.json`，并在下次启动 `python -m src.app.supervisor` 时自动恢复。">这些按钮调用本机 supervisor control service；组合级开关会写入当前 summary 目录的 `dashboard_control_state.json`，并在下次启动 `python -m src.app.supervisor` 时自动恢复。</div>
     </section>
     """
         if control_enabled
@@ -5650,56 +6422,79 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
         f'<button type="button" class="execution-mode-market-filter" data-market-filter="{html.escape(str(row[0]))}">{html.escape(str(row[0]))} ({html.escape(str(row[2]))}/{html.escape(str(row[3]))})</button>'
         for row in execution_mode_summary_market_rows
     )
+    simple_runtime_status_rows = _simple_runtime_status_rows(runtime_status)
+    runtime_mode_display_rows = _runtime_mode_display_rows(runtime_status)
+    runtime_status_detail_text = _runtime_status_detail_text(runtime_status)
     trade_banner = f"""
     <section class="card overview">
       <h2>交易运行状态</h2>
-      <div class="meta" style="font-size:18px; font-weight:700; color:var(--ink); margin-bottom:10px;">{html.escape(str(runtime_status.get('summary_text', '-') or '-'))}</div>
-      <div class="meta">market_modes={html.escape(str(runtime_status.get('market_mode_summary_text', '-') or '-'))}</div>
+      <div class="simple-only" data-simple-section="runtime-status">
+      <div class="meta" data-i18n-zh="先看账户模式和运行方式；如果模式混杂，再去看下面各市场卡片。">先看账户模式和运行方式；如果模式混杂，再去看下面各市场卡片。</div>
+      {_render_table(["问题", "答案"], simple_runtime_status_rows)}
+      {_render_table(["市场", "股票池", "运行方式"], runtime_mode_display_rows)}
+      </div>
+      <div class="advanced-only">
+      <div class="meta" style="font-size:18px; font-weight:700; color:var(--ink); margin-bottom:10px;">{html.escape(runtime_status_detail_text)}</div>
+      {_render_table(["market", "watchlist", "mode"], runtime_mode_display_rows)}
+      </div>
     </section>
     """
     execution_mode_summary_card = f"""
     <section class="card overview recommendation-banner" id="execution-mode-summary">
       <h2>执行模式告警计数</h2>
       <div class="meta" id="execution-mode-summary-text">{html.escape(str(execution_mode_summary.get("summary_text", "") or ""))}</div>
+      <div class="advanced-only">
       <div class="stats">
-        <div><strong>Need Change</strong><span id="execution-mode-summary-mismatch">{int(execution_mode_summary.get("mismatch_count", 0) or 0)}</span></div>
-        <div><strong>Review Only</strong><span id="execution-mode-summary-review-only">{int(execution_mode_summary.get("review_only_count", 0) or 0)}</span></div>
-        <div><strong>Paused</strong><span id="execution-mode-summary-paused">{int(execution_mode_summary.get("paused_count", 0) or 0)}</span></div>
+        <div><strong data-i18n-zh="建议切换">建议切换</strong><span id="execution-mode-summary-mismatch">{int(execution_mode_summary.get("mismatch_count", 0) or 0)}</span></div>
+        <div><strong data-i18n-zh="建议人工审核">建议人工审核</strong><span id="execution-mode-summary-review-only">{int(execution_mode_summary.get("review_only_count", 0) or 0)}</span></div>
+        <div><strong data-i18n-zh="建议暂停">建议暂停</strong><span id="execution-mode-summary-paused">{int(execution_mode_summary.get("paused_count", 0) or 0)}</span></div>
       </div>
       <div class="control-toolbar">
-        <button type="button" class="execution-mode-market-filter active" data-market-filter="">全部</button>
+        <button type="button" class="execution-mode-market-filter active" data-market-filter="" data-i18n-zh="全部">全部</button>
         {execution_mode_summary_market_buttons}
       </div>
       <div class="meta">
         <span id="execution-mode-market-filter-label">当前告警市场筛选：全部</span>
-        <button type="button" id="execution-mode-market-filter-clear" style="display:none; margin-left:8px;">× 清除</button>
+        <button type="button" id="execution-mode-market-filter-clear" data-i18n-zh="× 清除" style="display:none; margin-left:8px;">× 清除</button>
       </div>
       <table>
         <thead>
           <tr>
-            <th>market</th>
-            <th>need_change</th>
-            <th>review_only</th>
-            <th>paused</th>
+            <th data-i18n-zh="市场">市场</th>
+            <th data-i18n-zh="建议切换">建议切换</th>
+            <th data-i18n-zh="建议人工审核">建议人工审核</th>
+            <th data-i18n-zh="建议暂停">建议暂停</th>
           </tr>
         </thead>
         <tbody id="execution-mode-summary-market-body">
           {''.join(f"<tr><td>{html.escape(str(row[0]))}</td><td>{html.escape(str(row[1]))}</td><td>{html.escape(str(row[2]))}</td><td>{html.escape(str(row[3]))}</td></tr>" for row in execution_mode_summary_market_rows)}
         </tbody>
       </table>
+      </div>
     </section>
     """ if int(execution_mode_summary.get("mismatch_count", 0) or 0) > 0 else ""
     dry_run_banner = """
     <section class="card overview">
       <h2>Dry Run 页面说明</h2>
-      <div class="meta">这里展示的是本地模拟账本与快照回标，不会向 IBKR 提交订单。它和 trade 共用同一份股票池、候选股与计划数据，目的是验证资金利用率、调仓节奏、阈值和打分是否需要升级。</div>
-      <div class="meta">如果这里有 5/20/60 日回标数据，就能直接判断哪些信号长期有效、哪些执行门太松或太紧；闭市后更适合跑 post-report、baseline 和 snapshot labeling，而不是反复做盘中机会扫描。</div>
+      <div class="simple-only" data-simple-section="dry-run-banner">
+      <div class="meta" data-i18n-zh="这里只做本地模拟，不会向 IBKR 下单。">这里只做本地模拟，不会向 IBKR 下单。</div>
+      <div class="meta" data-i18n-zh="重点看模拟账本、调仓计划和 5/20/60 日回标。">重点看模拟账本、调仓计划和 5/20/60 日回标。</div>
+      </div>
+      <div class="advanced-only">
+      <div class="meta" data-i18n-zh="这里展示的是本地模拟账本与快照回标，不会向 IBKR 提交订单。它和 trade 共用同一份股票池、候选股与计划数据，目的是验证资金利用率、调仓节奏、阈值和打分是否需要升级。">这里展示的是本地模拟账本与快照回标，不会向 IBKR 提交订单。它和 trade 共用同一份股票池、候选股与计划数据，目的是验证资金利用率、调仓节奏、阈值和打分是否需要升级。</div>
+      <div class="meta" data-i18n-zh="如果这里有 5/20/60 日回标数据，就能直接判断哪些信号长期有效、哪些执行门太松或太紧；闭市后更适合跑 post-report、baseline 和 snapshot labeling，而不是反复做盘中机会扫描。">如果这里有 5/20/60 日回标数据，就能直接判断哪些信号长期有效、哪些执行门太松或太紧；闭市后更适合跑 post-report、baseline 和 snapshot labeling，而不是反复做盘中机会扫描。</div>
+      </div>
     </section>
     """
     dry_run_overview_card = f"""
     <section class="card overview">
       <h2>Dry Run 总览</h2>
+      <div class="simple-only" data-simple-section="dry-run-overview">
+      {_render_table(["市场", "股票池", "模拟权益", "调仓状态", "说明"], simple_dry_run_overview_rows)}
+      </div>
+      <div class="advanced-only">
       {_render_table(["market", "watchlist", "ledger_equity", "ledger_cash", "target_invested", "labeled_horizons", "rebalanced"], dry_run_overview_rows)}
+      </div>
     </section>
     """ if dry_run_overview_rows else """
     <section class="card overview">
@@ -5710,7 +6505,8 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     dry_run_attribution_card = f"""
     <section class="card overview">
       <h2>Dry Run 周度代理归因</h2>
-      <div class="meta">这是策略复盘用的代理归因 v1，用来指导调阈值、调信号和调仓位；它会尽量回收到周收益，但不是严格的学术因子归因。</div>
+      <div class="meta simple-only" data-simple-section="dry-run-attribution">{html.escape(_simple_dry_run_attribution_text(dry_run_attribution_rows))}</div>
+      <div class="meta advanced-only">这是策略复盘用的代理归因 v1，用来指导调阈值、调信号和调仓位；它会尽量回收到周收益，但不是严格的学术因子归因。</div>
       {_render_table(["market", "watchlist", "portfolio_id", "weekly_return", "selection", "sizing", "sector", "execution", "market", "plan_cost", "actual_cost", "cost_gap", "dominant", "diagnosis"], dry_run_attribution_rows)}
     </section>
     """ if dry_run_attribution_rows else """
@@ -5722,7 +6518,8 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     stock_list_card = f"""
     <section class="card overview" id="stock-list" data-view="stock-list">
       <h2>股票列表</h2>
-      <div class="meta">通用分析列表会跨 repo 与各个 runtime scope 合并，不会因切换账号或 live/paper 而缩减；当前账户的 paper/broker holding 只会作为补充信息加入。</div>
+      <div class="meta simple-only" data-simple-section="stock-list-intro" data-i18n-zh="这里汇总当前需要跟踪的股票；基础观察池不会因切换账号或 live/paper 而消失。">这里汇总当前需要跟踪的股票；基础观察池不会因切换账号或 live/paper 而消失。</div>
+      <div class="meta advanced-only" data-i18n-zh="通用分析列表会跨 repo 与各个 runtime scope 合并，不会因切换账号或 live/paper 而缩减；当前账户的 paper/broker holding 只会作为补充信息加入。">通用分析列表会跨 repo 与各个 runtime scope 合并，不会因切换账号或 live/paper 而缩减；当前账户的 paper/broker holding 只会作为补充信息加入。</div>
       {''.join(stock_list_sections) or '<div class="empty">当前没有可展示的股票列表。</div>'}
     </section>
     """
@@ -5733,6 +6530,16 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
         weekly_card = f"""
         <section class="card overview">
           <h2>本周执行质量</h2>
+          <div class="simple-only" data-simple-section="weekly-execution">
+          {_render_table(["问题", "答案"], [
+              ["周次", html.escape(str(execution_weekly.get('week', '') or '-'))],
+              ["已提交", str(int(execution_weekly.get('submitted_order_rows', 0) or 0))],
+              ["成交(status/audit)", f"{int(execution_weekly.get('filled_order_rows', 0) or 0)} / {int(execution_weekly.get('filled_with_audit_rows', 0) or 0)}"],
+              ["阻断/错误", f"{int(execution_weekly.get('blocked_opportunity_rows', 0) or 0)} / {int(execution_weekly.get('error_order_rows', 0) or 0)}"],
+              ["净收益", _fmt_money(execution_weekly.get('realized_net_pnl'))],
+          ])}
+          </div>
+          <div class="advanced-only">
           <div class="stats weekly-stats">
             <div><strong>Week</strong><span>{html.escape(str(execution_weekly.get('week', '') or '-'))}</span></div>
             <div><strong>Submitted</strong><span>{int(execution_weekly.get('submitted_order_rows', 0) or 0)}</span></div>
@@ -5741,6 +6548,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
             <div><strong>Fill Rate (status/audit)</strong><span>{_fmt_pct(execution_weekly.get('fill_rate_status'))} / {_fmt_pct(execution_weekly.get('fill_rate_audit'))}</span></div>
             <div><strong>Net PnL</strong><span>{_fmt_money(execution_weekly.get('realized_net_pnl'))}</span></div>
             <div><strong>Commission</strong><span>{_fmt_money(execution_weekly.get('commission_total'))}</span></div>
+          </div>
           </div>
         </section>
         """
@@ -6249,6 +7057,8 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
         ]
         for row in list(payload.get("feedback_threshold_override_overview", []) or [])
     ]
+    market_data_health_overview = list(payload.get("market_data_health_overview", []) or [])
+    market_data_health_summary_text = _simple_market_data_health_text(market_data_health_overview)
     market_data_health_rows = [
         [
             row.get("market", ""),
@@ -6272,7 +7082,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
                 )
             ),
         ]
-        for row in list(payload.get("market_data_health_overview", []) or [])
+        for row in market_data_health_overview
     ]
     ibkr_history_probe_rows = [
         [
@@ -6421,6 +7231,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     risk_review_overview_card = f"""
     <section class="card overview">
       <h2>周度风险复盘</h2>
+      <div class="meta simple-only" data-simple-section="risk-review-overview">{html.escape(_simple_risk_review_text(risk_review_overview_rows))}</div>
       {_render_table(["market", "watchlist", "portfolio_id", "driver", "net", "gross", "corr", "stress", "stress_loss", "diagnosis"], risk_review_overview_rows)}
     </section>
     """ if risk_review_overview_rows else """
@@ -6432,7 +7243,8 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     trade_risk_alert_overview_card = f"""
     <section class="card overview">
       <h2>风险轨迹告警</h2>
-      <div class="meta">这里聚合最近一段时间风险预算的变化方向，优先把持续收紧、stress 恶化或相关性抬升的组合提到最前面。</div>
+      <div class="meta simple-only" data-simple-section="trade-risk-alert">{html.escape(_simple_risk_alert_text(trade_risk_alert_overview_rows))}</div>
+      <div class="meta advanced-only">这里聚合最近一段时间风险预算的变化方向，优先把持续收紧、stress 恶化或相关性抬升的组合提到最前面。</div>
       {_render_table(["market", "watchlist", "portfolio_id", "source", "alert", "trend", "latest_ts", "scale", "scale_delta", "net", "gross", "corr", "stress", "stress_loss", "diagnosis"], trade_risk_alert_overview_rows)}
     </section>
     """ if trade_risk_alert_overview_rows else """
@@ -6618,11 +7430,18 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
       <div class="empty">当前还没有可展示的分市场阈值 override。</div>
     </section>
     """
+    simple_market_data_health_rows = _simple_market_data_health_rows(market_data_health_overview)
     market_data_health_card = f"""
     <section class="card overview">
       <h2>市场数据健康总览</h2>
+      <div class="meta simple-only">{html.escape(market_data_health_summary_text)}</div>
+      <div class="simple-only" data-simple-section="market-data-health">
+      {_render_table(["市场", "状态", "说明"], simple_market_data_health_rows)}
+      </div>
+      <div class="advanced-only">
       <div class="meta">这里按市场聚合当前投资报告的数据质量与历史来源，帮助区分“IBKR 正常”与“主要依赖 fallback”，避免在数据底座不稳时过度调参。</div>
       {_render_table(["market", "portfolios", "watchlists", "status", "avg_score", "src_cov", "miss", "ibkr/yf/missing", "diagnosis"], market_data_health_rows)}
+      </div>
     </section>
     """ if market_data_health_rows else """
     <section class="card overview">
@@ -6645,7 +7464,8 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     trade_risk_history_overview_card = f"""
     <section class="card overview">
       <h2>近期风险轨迹</h2>
-      <div class="meta">这里直接读取运行数据库里的风险预算历史，帮助解释最近几次为什么主动缩仓、放仓或降低集中度。</div>
+      <div class="meta simple-only" data-simple-section="trade-risk-history">{html.escape(_simple_risk_history_text(trade_risk_history_overview_rows))}</div>
+      <div class="meta advanced-only">这里直接读取运行数据库里的风险预算历史，帮助解释最近几次为什么主动缩仓、放仓或降低集中度。</div>
       {_render_table(["market", "watchlist", "portfolio_id", "ts", "source", "scale", "net", "gross", "corr", "stress", "stress_loss", "driver", "notes"], trade_risk_history_overview_rows)}
     </section>
     """ if trade_risk_history_overview_rows else """
@@ -6657,7 +7477,8 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     dry_run_risk_history_overview_card = f"""
     <section class="card overview">
       <h2>近期风险轨迹</h2>
-      <div class="meta">这里显示 dry-run 本地账本最近几次实际采用的风险预算，方便复盘策略升级前后的变化。</div>
+      <div class="meta simple-only" data-simple-section="dry-run-risk-history">{html.escape(_simple_risk_history_text(dry_run_risk_history_overview_rows))}</div>
+      <div class="meta advanced-only">这里显示 dry-run 本地账本最近几次实际采用的风险预算，方便复盘策略升级前后的变化。</div>
       {_render_table(["market", "watchlist", "portfolio_id", "ts", "source", "scale", "net", "gross", "corr", "stress", "stress_loss", "driver", "notes"], dry_run_risk_history_overview_rows)}
     </section>
     """ if dry_run_risk_history_overview_rows else """
@@ -6669,7 +7490,8 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     dry_run_risk_alert_overview_card = f"""
     <section class="card overview">
       <h2>风险轨迹告警</h2>
-      <div class="meta">这里帮助 dry-run 侧快速识别哪些组合最近在持续收紧风险预算，适合优先复盘阈值、分散度和资金利用率。</div>
+      <div class="meta simple-only" data-simple-section="dry-run-risk-alert">{html.escape(_simple_risk_alert_text(dry_run_risk_alert_overview_rows))}</div>
+      <div class="meta advanced-only">这里帮助 dry-run 侧快速识别哪些组合最近在持续收紧风险预算，适合优先复盘阈值、分散度和资金利用率。</div>
       {_render_table(["market", "watchlist", "portfolio_id", "source", "alert", "trend", "latest_ts", "scale", "scale_delta", "net", "gross", "corr", "stress", "stress_loss", "diagnosis"], dry_run_risk_alert_overview_rows)}
     </section>
     """ if dry_run_risk_alert_overview_rows else """
@@ -6838,12 +7660,18 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     }}
     * {{ box-sizing: border-box; }}
     body {{ margin: 0; font-family: Georgia, "Times New Roman", serif; background: linear-gradient(180deg, #f7f2e8 0%, #ebe4d8 100%); color: var(--ink); }}
+    body[data-detail-mode="simple"] .advanced-only {{ display: none !important; }}
+    body[data-detail-mode="advanced"] .simple-only {{ display: none !important; }}
     .wrap {{ max-width: 1500px; margin: 0 auto; padding: 28px 20px 40px; }}
     h1 {{ margin: 0 0 8px; font-size: 32px; }}
     .sub {{ color: var(--muted); margin-bottom: 20px; }}
+    .mode-hint {{ color: var(--muted); margin: -8px 0 18px; }}
     .toolbar {{ display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 18px; }}
+    .toolbar[data-toolbar="detail-mode"] {{ margin-bottom: 8px; }}
     .toolbar button {{ border: 1px solid var(--line); background: #fffaf2; color: var(--ink); border-radius: 999px; padding: 8px 14px; cursor: pointer; }}
     .toolbar button.active {{ background: var(--accent); color: white; border-color: var(--accent); }}
+    .simple-card-summary {{ margin: 14px 0 8px; }}
+    .simple-card-summary h3 {{ margin: 0 0 10px; font-size: 20px; }}
     .control-toolbar {{ display: flex; flex-wrap: wrap; gap: 10px; margin: 10px 0 4px; }}
     .control-toolbar button {{ border: 1px solid var(--line); background: #fffaf2; color: var(--ink); border-radius: 999px; padding: 8px 14px; cursor: pointer; }}
     .control-toolbar button.active {{ background: var(--accent); color: white; border-color: var(--accent); }}
@@ -6886,18 +7714,27 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     }}
   </style>
 </head>
-<body>
+<body data-detail-mode="simple" data-language="zh">
   <div class="wrap">
-    <h1>Market Dashboard</h1>
-    <div class="sub">生成时间：{html.escape(str(payload.get("generated_at", "")))} | 60 秒自动刷新</div>
-    <div class="toolbar">
-      <button class="active" data-filter="trade">交易</button>
+    <h1 data-i18n-zh="IB Gateway 量化交易 Dashboard">IB Gateway 量化交易 Dashboard</h1>
+    <div class="sub" id="dashboard-subtitle" data-generated-at="{html.escape(str(payload.get("generated_at", "")))}">生成时间：{html.escape(str(payload.get("generated_at", "")))} | 60 秒自动刷新 | 默认进入简单模式</div>
+    <div class="toolbar" data-toolbar="language">
+      <button class="active" data-language-button="zh">中文</button>
+      <button data-language-button="en">English</button>
+    </div>
+    <div class="toolbar" data-toolbar="detail-mode">
+      <button class="active" data-detail-mode-button="simple" data-i18n-zh="简单模式">简单模式</button>
+      <button data-detail-mode-button="advanced" data-i18n-zh="专业模式">专业模式</button>
+    </div>
+    <div class="mode-hint" data-i18n-zh="简单模式只保留连接状态、当前动作、持仓和执行重点；Shadow、阈值、校准和复盘细节放在专业模式里。">简单模式只保留连接状态、当前动作、持仓和执行重点；Shadow、阈值、校准和复盘细节放在专业模式里。</div>
+    <div class="toolbar" data-toolbar="filter">
+      <button class="active" data-filter="trade" data-i18n-zh="交易">交易</button>
       <button data-filter="dry-run">Dry Run</button>
-      <button data-filter="all">全部</button>
-      <button data-filter="open">只看开市</button>
-      <button data-filter="auto-submit">只看自动提交</button>
-      <button data-filter="actionable">只看有动作</button>
-      <button data-filter="stock-list">股票列表</button>
+      <button data-filter="all" data-i18n-zh="全部">全部</button>
+      <button data-filter="open" data-i18n-zh="只看开市">只看开市</button>
+      <button data-filter="auto-submit" data-i18n-zh="只看自动提交">只看自动提交</button>
+      <button data-filter="actionable" data-i18n-zh="只看有动作">只看有动作</button>
+      <button data-filter="stock-list" data-i18n-zh="股票列表">股票列表</button>
     </div>
     {control_panel}
     <div data-view="trade">
@@ -6908,14 +7745,29 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     {ibkr_history_probe_card}
     {execution_mode_summary_card}
     {execution_mode_banner}
-    {feedback_threshold_trial_alert_card}
     <section class="card overview">
       <h2>今日最该关注的动作 / 研究</h2>
+      <div class="simple-only" data-simple-section="focus-actions">
+      {_render_table(["市场", "股票池", "动作", "说明"], simple_focus_rows) if simple_focus_rows else '<div class="empty">当前没有高优先级动作。</div>'}
+      </div>
+      <div class="advanced-only">
       <div class="focus-grid">
         {''.join(focus_cards) or '<div class="empty">当前没有高优先级动作。</div>'}
       </div>
+      </div>
     </section>
     {weekly_card}
+    <section class="card overview">
+      <h2>市场总览</h2>
+      <div class="simple-only" data-simple-section="market-overview">
+      {_render_table(["市场", "股票池", "模式", "建议动作", "IB Gateway", "说明"], simple_overview_rows)}
+      </div>
+      <div class="advanced-only">
+      {_render_table(["市场", "股票池", "模式", "是否开市", "优先级", "建议动作", "说明", "账户权益", "账户现金", "Gateway", "可立即入场", "继续等待", "执行中订单"], overview_rows)}
+      </div>
+    </section>
+    <div class="advanced-only">
+    {feedback_threshold_trial_alert_card}
     {weekly_group_card}
     {orphan_group_card}
     {review_overview_card}
@@ -6946,13 +7798,13 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     {execution_hotspot_overview_card}
     {execution_cost_overview_card}
     <section class="card overview">
-      <h2>IBKR 健康状态</h2>
+      <h2>IB Gateway 健康状态</h2>
+      <div class="meta simple-only">{html.escape(health_summary_text)}</div>
+      <div class="advanced-only">
       {_render_table(["market", "watchlist", "status", "detail", "delayed", "perm", "breaks", "acct_limit", "latest_event", "latest_ts"], health_rows)}
+      </div>
     </section>
-    <section class="card overview">
-      <h2>市场总览</h2>
-      {_render_table(["market", "watchlist", "mode", "open", "priority", "recommended_action", "detail", "account_equity", "account_cash", "ibkr_health", "entry_now", "wait", "exec_orders"], overview_rows)}
-    </section>
+    </div>
     {trade_cards_html or '<div class="empty">当前没有可展示的交易页面报告。</div>'}
     </div>
     <div data-view="dry-run" style="display:none;">
@@ -6960,6 +7812,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     {market_data_health_card}
     {ibkr_history_probe_card}
     {dry_run_overview_card}
+    <div class="advanced-only">
     {dry_run_attribution_card}
     {labeling_ready_overview_card}
     {feedback_calibration_overview_card}
@@ -6979,12 +7832,16 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     {dry_run_risk_alert_overview_card}
     {dry_run_risk_history_overview_card}
     {risk_feedback_overview_card}
+    </div>
     {dry_run_cards_html or '<div class="empty">当前没有可展示的 dry-run 页面数据。</div>'}
     </div>
     {stock_list_card}
   </div>
   <script>
-    const filterButtons = Array.from(document.querySelectorAll('.toolbar button'));
+    const filterButtons = Array.from(document.querySelectorAll('.toolbar[data-toolbar="filter"] button'));
+    const detailModeButtons = Array.from(document.querySelectorAll('.toolbar[data-toolbar="detail-mode"] button'));
+    const languageButtons = Array.from(document.querySelectorAll('.toolbar[data-toolbar="language"] button'));
+    const dashboardSubtitle = document.getElementById('dashboard-subtitle');
     const tradeCards = Array.from(document.querySelectorAll('.card[data-open][data-dashboard-view="trade"]'));
     const tradeSections = Array.from(document.querySelectorAll('[data-view="trade"]'));
     const dryRunSections = Array.from(document.querySelectorAll('[data-view="dry-run"]'));
@@ -7000,6 +7857,8 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     const executionModeRecommendedLabels = Array.from(document.querySelectorAll('.execution-mode-recommended'));
     const executionModeChangeLabels = Array.from(document.querySelectorAll('.execution-mode-change'));
     const executionModeSummaryCard = document.getElementById('execution-mode-summary');
+    const weeklyFeedbackStatusLabels = Array.from(document.querySelectorAll('.weekly-feedback-status'));
+    const thresholdSyncStatusLabels = Array.from(document.querySelectorAll('.threshold-sync-status'));
     const executionModeSummaryText = document.getElementById('execution-mode-summary-text');
     const executionModeSummaryMismatch = document.getElementById('execution-mode-summary-mismatch');
     const executionModeSummaryReviewOnly = document.getElementById('execution-mode-summary-review-only');
@@ -7011,15 +7870,160 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     const executionModeBannerRows = Array.from(document.querySelectorAll('.execution-mode-banner-row'));
     const controlUrl = controlRoot ? (controlRoot.dataset.controlUrl || '') : '';
     const executionModeMarketFilterStorageKey = 'dashboard.executionModeMarketFilter';
+    const detailModeStorageKey = 'dashboard.detailMode';
+    const languageStorageKey = 'dashboard.language';
     const executionModeHashViewKey = 'view';
     const executionModeHashMarketKey = 'alert_market';
-    const executionModeLabelMap = {{
-      AUTO: '自动执行',
-      REVIEW_ONLY: '只保留人工审核',
-      PAUSED: '暂停自动执行',
+    const executionModeLabels = {{
+      zh: {json.dumps(EXECUTION_MODE_LABELS, ensure_ascii=False)},
+      en: {json.dumps(EXECUTION_MODE_LABELS_EN, ensure_ascii=False)},
     }};
+    const controlActionLabels = {{
+      zh: {json.dumps(CONTROL_ACTION_STATUS_LABELS, ensure_ascii=False)},
+      en: {json.dumps(CONTROL_ACTION_STATUS_LABELS_EN, ensure_ascii=False)},
+    }};
+    const controlServiceStateLabels = {{
+      zh: {json.dumps(CONTROL_SERVICE_STATE_LABELS, ensure_ascii=False)},
+      en: {json.dumps(CONTROL_SERVICE_STATE_LABELS_EN, ensure_ascii=False)},
+    }};
+    const uiTranslationsEn = {json.dumps(DASHBOARD_TRANSLATIONS_EN, ensure_ascii=False)};
+    const uiFragmentTranslationsEn = {json.dumps(DASHBOARD_FRAGMENT_TRANSLATIONS_EN, ensure_ascii=False)};
     let currentFilterKind = 'trade';
+    let currentDetailMode = 'simple';
+    let currentLanguage = 'zh';
     let executionModeMarketFilter = '';
+    let lastControlState = null;
+    const translateText = (text) => {{
+      const raw = String(text || '');
+      if (currentLanguage !== 'en') return raw;
+      if (Object.prototype.hasOwnProperty.call(uiTranslationsEn, raw)) {{
+        return uiTranslationsEn[raw];
+      }}
+      let translated = raw;
+      Object.entries(uiFragmentTranslationsEn).forEach(([source, target]) => {{
+        translated = translated.split(source).join(target);
+      }});
+      return translated;
+    }};
+    const registerStaticTranslations = () => {{
+      document.querySelectorAll('h1, h2, h3, .empty').forEach((node) => {{
+        if (node.dataset.i18nZh) return;
+        const text = String(node.textContent || '').trim();
+        if (text) node.dataset.i18nZh = text;
+      }});
+    }};
+    const renderDashboardSubtitle = () => {{
+      if (!dashboardSubtitle) return;
+      const generatedAt = dashboardSubtitle.dataset.generatedAt || '';
+      dashboardSubtitle.textContent = currentLanguage === 'en'
+        ? `Generated at: ${{generatedAt}} | auto refresh every 60s | default view: simple mode`
+        : `生成时间：${{generatedAt}} | 60 秒自动刷新 | 默认进入简单模式`;
+    }};
+    const executionModeLabel = (mode) => {{
+      const labels = executionModeLabels[currentLanguage] || executionModeLabels.zh;
+      return labels[mode] || mode;
+    }};
+    const controlActionLabel = (action) => {{
+      const labels = controlActionLabels[currentLanguage] || controlActionLabels.zh;
+      return labels[action] || action || '-';
+    }};
+    const controlServiceStateLabel = (status) => {{
+      const labels = controlServiceStateLabels[currentLanguage] || controlServiceStateLabels.zh;
+      return labels[String(status || '').toLowerCase()] || status || '-';
+    }};
+    const toggleValueLabel = (value) => currentLanguage === 'en' ? (value ? 'Enabled' : 'Disabled') : (value ? '已开启' : '已关闭');
+    const executionModeChangeText = (needsChange) => currentLanguage === 'en' ? (needsChange ? 'Needs Change' : 'Aligned') : (needsChange ? '需要切换' : '已一致');
+    const weeklyFeedbackStatusText = (row) => {{
+      if (row && row.weekly_feedback_pending_live_confirm) return currentLanguage === 'en' ? 'Pending Confirmation' : '待确认';
+      const confirmedTs = row && row.weekly_feedback_confirmed_ts ? String(row.weekly_feedback_confirmed_ts).slice(0, 19) : '';
+      if (confirmedTs) return currentLanguage === 'en' ? `Confirmed @ ${{confirmedTs}}` : `已确认 @ ${{confirmedTs}}`;
+      return currentLanguage === 'en' ? 'N/A' : '暂无';
+    }};
+    const thresholdSyncStatusText = (row) => {{
+      const pending = !!(row && row.weekly_feedback_pending_live_confirm);
+      return currentLanguage === 'en' ? (pending ? 'Pending' : 'Synced') : (pending ? '待处理' : '已同步');
+    }};
+    const renderControlStatusText = (service, actions, errorText = '') => {{
+      if (currentLanguage === 'en') {{
+        return `Control Service: ${{controlServiceStateLabel(service.status || 'unknown')}} | Endpoint: ${{service.url || controlUrl || '-'}} | Last Action: ${{controlActionLabel(actions.last_action || '-')}} | Last Error: ${{errorText || actions.last_error || '-'}}`;
+      }}
+      return `控制服务：${{controlServiceStateLabel(service.status || 'unknown')}} | 地址：${{service.url || controlUrl || '-'}} | 最近操作：${{controlActionLabel(actions.last_action || '-')}} | 最近错误：${{errorText || actions.last_error || '-'}}`;
+    }};
+    const renderLanguageSensitiveControls = () => {{
+      controlModes.forEach((btn) => {{
+        btn.textContent = executionModeLabel(btn.dataset.modeValue || 'AUTO');
+      }});
+      controlToggles.forEach((btn) => {{
+        const label = translateText(btn.dataset.label || '');
+        const value = btn.dataset.value === 'true';
+        btn.textContent = `${{label}}: ${{toggleValueLabel(value)}}`;
+      }});
+      controlWeeklyFeedbackButtons.forEach((btn) => {{
+        if (btn.dataset.i18nZh) {{
+          btn.textContent = translateText(btn.dataset.i18nZh);
+        }}
+      }});
+    }};
+    const persistLanguage = () => {{
+      try {{
+        if (!window.localStorage) return;
+        window.localStorage.setItem(languageStorageKey, currentLanguage);
+      }} catch (error) {{
+        // 本地存储失败时只跳过记忆能力，不影响 dashboard 正常使用。
+      }}
+    }};
+    const loadLanguage = () => {{
+      try {{
+        if (!window.localStorage) return 'zh';
+        const saved = window.localStorage.getItem(languageStorageKey) || 'zh';
+        return saved === 'en' ? 'en' : 'zh';
+      }} catch (error) {{
+        return 'zh';
+      }}
+    }};
+    const applyLanguage = (language) => {{
+      currentLanguage = language === 'en' ? 'en' : 'zh';
+      document.body.dataset.language = currentLanguage;
+      languageButtons.forEach((btn) => {{
+        btn.classList.toggle('active', (btn.dataset.languageButton || '') === currentLanguage);
+      }});
+      renderDashboardSubtitle();
+      document.querySelectorAll('[data-i18n-zh]').forEach((node) => {{
+        const zhText = node.dataset.i18nZh || '';
+        node.textContent = translateText(zhText);
+      }});
+      renderLanguageSensitiveControls();
+      updateExecutionModeMarketButtons();
+      if (lastControlState) {{
+        updateControlUi(lastControlState);
+      }}
+      persistLanguage();
+    }};
+    const persistDetailMode = () => {{
+      try {{
+        if (!window.localStorage) return;
+        window.localStorage.setItem(detailModeStorageKey, currentDetailMode);
+      }} catch (error) {{
+        // 本地存储失败时只跳过记忆能力，不影响 dashboard 正常使用。
+      }}
+    }};
+    const loadDetailMode = () => {{
+      try {{
+        if (!window.localStorage) return 'simple';
+        const saved = window.localStorage.getItem(detailModeStorageKey) || 'simple';
+        return saved === 'advanced' ? 'advanced' : 'simple';
+      }} catch (error) {{
+        return 'simple';
+      }}
+    }};
+    const applyDetailMode = (mode) => {{
+      currentDetailMode = mode === 'advanced' ? 'advanced' : 'simple';
+      document.body.dataset.detailMode = currentDetailMode;
+      detailModeButtons.forEach((btn) => {{
+        btn.classList.toggle('active', (btn.dataset.detailModeButton || '') === currentDetailMode);
+      }});
+      persistDetailMode();
+    }};
     const persistExecutionModeMarketFilter = () => {{
       try {{
         if (!window.localStorage) return;
@@ -7077,8 +8081,9 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
         btn.classList.toggle('active', (btn.dataset.marketFilter || '') === executionModeMarketFilter);
       }});
       if (executionModeMarketFilterLabel) {{
-        // 这里直接展示当前告警筛选，避免刷新后看不出页面为什么只剩某个市场。
-        executionModeMarketFilterLabel.textContent = `当前告警市场筛选：${{executionModeMarketFilter || '全部'}}`;
+        executionModeMarketFilterLabel.textContent = currentLanguage === 'en'
+          ? `Current alert market filter: ${{executionModeMarketFilter || 'All'}}`
+          : `当前告警市场筛选：${{executionModeMarketFilter || '全部'}}`;
       }}
       if (executionModeMarketFilterClear) {{
         executionModeMarketFilterClear.style.display = executionModeMarketFilter ? '' : 'none';
@@ -7121,11 +8126,12 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     }};
     const updateControlUi = (state) => {{
       if (!state) return;
+      lastControlState = state;
       const service = state.service || {{}};
       const actions = state.actions || {{}};
       const portfolios = state.portfolios || {{}};
       if (controlStatus) {{
-        controlStatus.textContent = `service=${{service.status || 'unknown'}} | endpoint=${{service.url || controlUrl || '-'}} | last_action=${{actions.last_action || '-'}} | last_error=${{actions.last_error || '-'}}`;
+        controlStatus.textContent = renderControlStatusText(service, actions);
       }}
       const busy = !!actions.run_once_in_progress || !!actions.preflight_in_progress || !!actions.weekly_review_in_progress;
       controlActions.forEach((btn) => {{
@@ -7141,7 +8147,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
         const value = !!row[btn.dataset.field];
         btn.dataset.value = value ? 'true' : 'false';
         btn.classList.toggle('active', value);
-        btn.textContent = `${{btn.dataset.label}}: ${{value ? 'ON' : 'OFF'}}`;
+        btn.textContent = `${{translateText(btn.dataset.label || '')}}: ${{toggleValueLabel(value)}}`;
       }});
       controlModes.forEach((btn) => {{
         const row = portfolios[btn.dataset.portfolioId] || {{}};
@@ -7150,6 +8156,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
         btn.disabled = busy;
         btn.classList.toggle('active', mode === btn.dataset.modeValue);
         btn.classList.toggle('recommended', recommendedMode === btn.dataset.modeValue && recommendedMode !== mode);
+        btn.textContent = executionModeLabel(btn.dataset.modeValue || 'AUTO');
       }});
       controlWeeklyFeedbackButtons.forEach((btn) => {{
         const row = portfolios[btn.dataset.portfolioId] || {{}};
@@ -7157,19 +8164,28 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
         btn.disabled = busy || !pending;
         btn.style.display = pending ? '' : 'none';
       }});
+      weeklyFeedbackStatusLabels.forEach((node) => {{
+        const row = portfolios[node.dataset.portfolioId] || {{}};
+        node.textContent = weeklyFeedbackStatusText(row);
+      }});
+      thresholdSyncStatusLabels.forEach((node) => {{
+        const row = portfolios[node.dataset.portfolioId] || {{}};
+        node.textContent = thresholdSyncStatusText(row);
+      }});
       executionModeCurrentLabels.forEach((node) => {{
         const row = portfolios[node.dataset.portfolioId] || {{}};
         const mode = row.execution_control_mode || 'AUTO';
-        node.textContent = executionModeLabelMap[mode] || mode;
+        node.textContent = executionModeLabel(mode);
       }});
       executionModeRecommendedLabels.forEach((node) => {{
-        node.textContent = node.dataset.recommendedLabel || '自动执行';
+        const recommendedMode = node.dataset.recommendedMode || '';
+        node.textContent = recommendedMode ? executionModeLabel(recommendedMode) : translateText(node.dataset.recommendedLabel || '自动执行');
       }});
       executionModeChangeLabels.forEach((node) => {{
         const row = portfolios[node.dataset.portfolioId] || {{}};
         const mode = row.execution_control_mode || 'AUTO';
         const recommendedMode = node.dataset.recommendedMode || 'AUTO';
-        node.textContent = recommendedMode !== mode ? 'YES' : 'NO';
+        node.textContent = executionModeChangeText(recommendedMode !== mode);
       }});
       executionModeBannerRows.forEach((rowNode) => {{
         const row = portfolios[rowNode.dataset.portfolioId] || {{}};
@@ -7177,7 +8193,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
         const recommendedMode = rowNode.dataset.recommendedMode || 'AUTO';
         const currentCell = rowNode.querySelector('[data-cell="current"]');
         if (currentCell) {{
-          currentCell.textContent = executionModeLabelMap[mode] || mode;
+          currentCell.textContent = executionModeLabel(mode);
         }}
         rowNode.style.display = recommendedMode !== mode ? '' : 'none';
       }});
@@ -7229,8 +8245,10 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
           }}
           if (executionModeSummaryText) {{
             executionModeSummaryText.textContent = mismatchCount
-              ? `${{mismatchCount}} 个组合建议切换：${{reviewOnlyCount}} 个建议 只保留人工审核，${{pausedCount}} 个建议 暂停自动执行`
-              : '当前执行模式与风险建议一致';
+              ? (currentLanguage === 'en'
+                  ? `${{mismatchCount}} portfolios need a mode change: ${{reviewOnlyCount}} to manual review, ${{pausedCount}} to pause auto execution`
+                  : `当前有 ${{mismatchCount}} 个组合建议切换：${{reviewOnlyCount}} 个建议人工审核，${{pausedCount}} 个建议暂停自动执行`)
+              : (currentLanguage === 'en' ? 'Current execution modes align with risk recommendations' : '当前执行模式与风险建议一致');
           }}
         }}
       }}
@@ -7245,7 +8263,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
         return data;
       }} catch (error) {{
         if (controlStatus) {{
-          controlStatus.textContent = `service=unreachable | endpoint=${{controlUrl}} | error=${{error.message}}`;
+          controlStatus.textContent = renderControlStatusText({{ status: 'unreachable', url: controlUrl }}, {{ last_action: '-', last_error: error.message }}, error.message);
         }}
         return null;
       }}
@@ -7264,6 +8282,8 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
       return data;
     }};
     filterButtons.forEach((btn) => btn.addEventListener('click', () => applyFilter(btn.dataset.filter)));
+    detailModeButtons.forEach((btn) => btn.addEventListener('click', () => applyDetailMode(btn.dataset.detailModeButton)));
+    languageButtons.forEach((btn) => btn.addEventListener('click', () => applyLanguage(btn.dataset.languageButton)));
     controlActions.forEach((btn) => btn.addEventListener('click', async () => {{
       btn.disabled = true;
       try {{
@@ -7285,7 +8305,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
         }}
       }} catch (error) {{
         if (controlStatus) {{
-          controlStatus.textContent = `service=unreachable | endpoint=${{controlUrl}} | error=${{error.message}}`;
+          controlStatus.textContent = renderControlStatusText({{ status: 'unreachable', url: controlUrl }}, {{ last_action: '-', last_error: error.message }}, error.message);
         }}
       }} finally {{
         btn.disabled = false;
@@ -7303,7 +8323,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
         window.setTimeout(fetchControlState, 400);
       }} catch (error) {{
         if (controlStatus) {{
-          controlStatus.textContent = `service=unreachable | endpoint=${{controlUrl}} | error=${{error.message}}`;
+          controlStatus.textContent = renderControlStatusText({{ status: 'unreachable', url: controlUrl }}, {{ last_action: '-', last_error: error.message }}, error.message);
         }}
       }} finally {{
         btn.disabled = false;
@@ -7319,7 +8339,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
         window.setTimeout(fetchControlState, 400);
       }} catch (error) {{
         if (controlStatus) {{
-          controlStatus.textContent = `service=unreachable | endpoint=${{controlUrl}} | error=${{error.message}}`;
+          controlStatus.textContent = renderControlStatusText({{ status: 'unreachable', url: controlUrl }}, {{ last_action: '-', last_error: error.message }}, error.message);
         }}
       }} finally {{
         btn.disabled = false;
@@ -7334,7 +8354,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
         window.setTimeout(fetchControlState, 400);
       }} catch (error) {{
         if (controlStatus) {{
-          controlStatus.textContent = `service=unreachable | endpoint=${{controlUrl}} | error=${{error.message}}`;
+          controlStatus.textContent = renderControlStatusText({{ status: 'unreachable', url: controlUrl }}, {{ last_action: '-', last_error: error.message }}, error.message);
         }}
       }} finally {{
         btn.disabled = false;
@@ -7375,7 +8395,10 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
       restoreDashboardState(false);
       applyFilter(currentFilterKind);
     }});
+    registerStaticTranslations();
     restoreDashboardState(true);
+    applyDetailMode(loadDetailMode());
+    applyLanguage(loadLanguage());
     applyFilter(currentFilterKind);
     if (controlRoot) {{
       fetchControlState();

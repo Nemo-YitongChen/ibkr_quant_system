@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ibkr-quant-system"
+version = "0.1.0"
+description = "IBKR-driven investment research, paper execution, and supervisor tooling."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "ib_insync==0.9.86",
+    "PyYAML==6.0.2",
+    "pandas==2.2.3",
+    "requests>=2.31.0",
+    "yfinance>=0.2.54",
+    "python-dotenv>=1.0.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4,<9",
+]
+
+[project.scripts]
+ibkr-quant-engine = "src.main:main"
+ibkr-quant-supervisor = "src.app.supervisor:main"
+ibkr-quant-preflight = "src.tools.preflight_supervisor:main"
+ibkr-quant-report = "src.tools.generate_investment_report:main"
+ibkr-quant-paper = "src.tools.run_investment_paper:main"
+ibkr-quant-execution = "src.tools.run_investment_execution:main"
+ibkr-quant-guard = "src.tools.run_investment_guard:main"
+ibkr-quant-opportunity = "src.tools.run_investment_opportunity:main"
+ibkr-quant-weekly-review = "src.tools.review_investment_weekly:main"
+ibkr-quant-reconcile = "src.tools.reconcile_investment_broker:main"
+ibkr-quant-sync-paper = "src.tools.sync_investment_paper_from_broker:main"
+
+[tool.setuptools.packages.find]
+include = ["src", "src.*"]

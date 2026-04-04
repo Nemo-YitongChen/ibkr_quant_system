@@ -2,6 +2,18 @@
 
 这份文档整理当前项目里可以直接运行的入口脚本，以及这些入口背后的核心模块。
 
+Phase 0 之后的运行约定：
+
+- 推荐先在仓库根执行 `python -m pip install -e ".[dev]"`
+- 安装后优先使用 console scripts
+  - `ibkr-quant-preflight`
+  - `ibkr-quant-supervisor`
+  - `ibkr-quant-engine`
+  - `ibkr-quant-report`
+  - `ibkr-quant-paper`
+  - `ibkr-quant-execution`
+- 原有 `python -m src...` 路径继续兼容
+
 当前主路径已经切到中长期投资：
 
 - `US` / `HK` 的 `config/ibkr_*.yaml` 默认是 `investment_only`
@@ -23,7 +35,8 @@
 
 约定：
 
-- 主运行方式是 `python -m ...`
+- 推荐主运行方式是 console scripts
+- `python -m ...` 仍然兼容
 - `src/*` 里多数文件是库模块，不是直接执行入口
 - `tests/*` 是测试入口
 
@@ -36,7 +49,8 @@
 - `config/strategy_defaults*.yaml`
 - `audit.db`
 - 可选：`symbol_master.db`
-- 若涉及实盘或 paper 连接：本地 `TWS` 或 `IB Gateway`
+- 若涉及实盘或 paper 连接：本地 `IB Gateway`
+- 当前仅支持 `IB Gateway`，不再以 `TWS` 作为运行入口
 - 若涉及研究层增强：本地 `.env.local`
 
 研究层数据源：
@@ -74,7 +88,7 @@
 - 检查 supervisor 配置是否可读
 - 检查 scoped `audit.db`
 - 检查 watchlist / ibkr_config / summary 目录
-- 检查本地 `127.0.0.1:4001/4002/7496/7497` 端口是否在监听
+- 检查本地 `127.0.0.1:4001/4002` 的 IB Gateway 端口是否在监听
 
 说明：
 

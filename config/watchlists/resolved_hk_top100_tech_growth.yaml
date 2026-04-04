@@ -66,8 +66,7 @@ symbols:
 - 2313.HK
 - 2318.HK
 - 2328.HK
-source_config: /Users/nemo/Library/CloudStorage/OneDrive-AustralianNationalUniversity/Nemo_Creation/AI
-  Assisted Projects/My Website/ibkr_quant_system/config/watchlists/hk_top100_tech_growth.yaml
+source_config: config/watchlists/hk_top100_tech_growth.yaml
 sources:
 - type: aastocks_index_constituents
   index: HSTECH

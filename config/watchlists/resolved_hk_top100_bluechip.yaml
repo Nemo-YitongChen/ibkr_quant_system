@@ -103,8 +103,7 @@ symbols:
 - 1288.HK
 - 1658.HK
 - 2328.HK
-source_config: /Users/nemo/Library/CloudStorage/OneDrive-AustralianNationalUniversity/Nemo_Creation/AI
-  Assisted Projects/My Website/ibkr_quant_system/config/watchlists/hk_top100_bluechip.yaml
+source_config: config/watchlists/hk_top100_bluechip.yaml
 sources:
 - type: aastocks_index_constituents
   index: HSI

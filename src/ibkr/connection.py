@@ -9,7 +9,7 @@ except ImportError:  # Support direct script execution from the src/ tree.
 log = get_logger("ibkr.connection")
 
 class IBKRConnection:
-    """Connection wrapper with retry loop for IB Gateway/TWS sessions."""
+    """Connection wrapper with retry loop for IB Gateway sessions."""
 
     def __init__(self, host: str, port: int, client_id: int):
         self.host = host
