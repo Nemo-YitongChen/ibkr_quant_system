@@ -13,13 +13,34 @@ import time
 import yaml
 
 from src.app.supervisor import BASE_DIR as SUPERVISOR_BASE_DIR
-from src.app.supervisor import Supervisor, parse_args
+from src.app.supervisor import ManagedProcess, Supervisor, parse_args
 from src.common.runtime_paths import resolve_scoped_runtime_path, scope_from_ibkr_config
 from src.tools.generate_dashboard import build_dashboard, write_dashboard
 from src.common.storage import Storage, build_investment_risk_history_row
 
 
 class SupervisorCliTests(unittest.TestCase):
+    def test_managed_process_stop_clears_handle_after_graceful_shutdown(self):
+        proc = unittest.mock.Mock()
+        proc.poll.side_effect = [None]
+        managed = ManagedProcess(name="trade-engine", cmd=["python", "-m", "src.main"], process=proc)
+
+        managed.stop()
+
+        proc.terminate.assert_called_once()
+        proc.wait.assert_called_once_with(timeout=10)
+        self.assertIsNone(managed.process)
+
+    def test_managed_process_stop_clears_handle_for_already_exited_process(self):
+        proc = unittest.mock.Mock(returncode=0)
+        proc.poll.return_value = 0
+        managed = ManagedProcess(name="trade-engine", cmd=["python", "-m", "src.main"], process=proc)
+
+        managed.stop()
+
+        proc.terminate.assert_not_called()
+        self.assertIsNone(managed.process)
+
     def test_parse_args_accepts_once_and_config(self):
         args = parse_args(["--config", "config/supervisor.yaml", "--once"])
         self.assertEqual(args.config, "config/supervisor.yaml")

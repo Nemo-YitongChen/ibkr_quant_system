@@ -101,20 +101,28 @@ class ManagedProcess:
         self.process = subprocess.Popen(self.cmd, cwd=str(BASE_DIR), text=True)
 
     def stop(self) -> None:
-        if not self.process or self.process.poll() is not None:
+        proc = self.process
+        if proc is None:
+            return
+        if proc.poll() is not None:
+            self.process = None
             return
         log.info(f"Stopping process {self.name}")
-        self.process.terminate()
+        proc.terminate()
         try:
-            self.process.wait(timeout=10)
+            proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
-            self.process.kill()
-            self.process.wait(timeout=5)
+            proc.kill()
+            proc.wait(timeout=5)
+        finally:
+            self.process = None
 
     def ensure_running(self) -> None:
-        if self.process is None or self.process.poll() is not None:
-            if self.process is not None:
-                log.warning(f"Process {self.name} exited with code {self.process.returncode}; restarting")
+        proc = self.process
+        if proc is None or proc.poll() is not None:
+            if proc is not None:
+                log.warning(f"Process {self.name} exited with code {proc.returncode}; restarting")
+                self.process = None
             self.start()
 
 
