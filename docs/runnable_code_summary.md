@@ -7,6 +7,7 @@ Phase 0 之后的运行约定：
 - 推荐先在仓库根执行 `python -m pip install -e ".[dev]"`
 - 安装后优先使用 console scripts
   - `ibkr-quant-preflight`
+  - `ibkr-quant-dashboard`
   - `ibkr-quant-supervisor`
   - `ibkr-quant-engine`
   - `ibkr-quant-report`
@@ -75,7 +76,7 @@ Phase 0 之后的运行约定：
 ### Supervisor Preflight
 
 ```bash
-.venv/bin/python -m src.tools.preflight_supervisor --config config/supervisor.yaml --runtime_root runtime_data/paper_investment_only_duq152001 --out_dir reports_preflight
+ibkr-quant-preflight --config config/supervisor.yaml --runtime_root runtime_data/paper_investment_only_duq152001 --out_dir reports_preflight
 ```
 
 输出目录：
@@ -97,6 +98,24 @@ Phase 0 之后的运行约定：
 - dashboard 的 `运维总览` 会汇总 preflight、报告新鲜度、组合健康度和执行模式偏差
 - dashboard 的“本周执行质量”优先读取 `reports_investment_weekly/weekly_execution_summary.csv`
 - `src.tools.review_investment_execution` 现在更适合手动深挖执行明细
+
+### Dashboard 生成
+
+```bash
+ibkr-quant-dashboard --config config/supervisor.yaml --out_dir reports_supervisor
+```
+
+输出目录：
+
+- `reports_supervisor/dashboard.json`
+- `reports_supervisor/dashboard.html`
+
+用途：
+
+- 汇总 supervisor、preflight、weekly review、execution KPI 和 report 目录结果
+- 生成 simple/advanced、中文/English 共用的静态 dashboard 页面
+- 在不重启 supervisor 的情况下手动刷新 dashboard 输出
+
 ## 3. 当前最常用命令
 
 ### HK 投资报告

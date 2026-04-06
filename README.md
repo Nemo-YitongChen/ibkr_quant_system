@@ -125,7 +125,20 @@ ibkr-quant-supervisor --config config/supervisor.yaml --once
 
 如果你想用 dashboard 作为主要入口，这通常是最直接的启动方式。
 
-### 3. 手动跑一条最小闭环
+### 3. 生成 dashboard
+
+```bash
+ibkr-quant-dashboard --config config/supervisor.yaml --out_dir reports_supervisor
+```
+
+输出结果：
+
+- `reports_supervisor/dashboard.json`
+- `reports_supervisor/dashboard.html`
+
+这个命令会把 supervisor、weekly review、execution KPI 和 preflight 的结果整理成 dashboard 页面；如果你已经在跑 supervisor，也可以在需要时手动刷新一次 dashboard 输出。
+
+### 4. 手动跑一条最小闭环
 
 以 `HK` 为例：
 
@@ -151,11 +164,12 @@ ibkr-quant-weekly-review --market US --db audit.db --out_dir reports_investment_
 ibkr-quant-reconcile --market US --db audit.db --portfolio_id US:watchlist --out_dir reports_investment_reconcile
 ```
 
-### 4. 常用命令入口
+### 5. 常用命令入口
 
 安装完成后，推荐直接使用这些 console scripts：
 
 - `ibkr-quant-preflight`
+- `ibkr-quant-dashboard`
 - `ibkr-quant-supervisor`
 - `ibkr-quant-engine`
 - `ibkr-quant-report`

@@ -26,6 +26,7 @@ dev = [
 ibkr-quant-engine = "src.main:main"
 ibkr-quant-supervisor = "src.app.supervisor:main"
 ibkr-quant-preflight = "src.tools.preflight_supervisor:main"
+ibkr-quant-dashboard = "src.tools.generate_dashboard:main"
 ibkr-quant-report = "src.tools.generate_investment_report:main"
 ibkr-quant-paper = "src.tools.run_investment_paper:main"
 ibkr-quant-execution = "src.tools.run_investment_execution:main"

@@ -19,6 +19,7 @@ def test_pyproject_declares_console_scripts_and_runtime_metadata() -> None:
     assert scripts["ibkr-quant-engine"] == "src.main:main"
     assert scripts["ibkr-quant-supervisor"] == "src.app.supervisor:main"
     assert scripts["ibkr-quant-preflight"] == "src.tools.preflight_supervisor:main"
+    assert scripts["ibkr-quant-dashboard"] == "src.tools.generate_dashboard:main"
     assert scripts["ibkr-quant-report"] == "src.tools.generate_investment_report:main"
     assert scripts["ibkr-quant-paper"] == "src.tools.run_investment_paper:main"
     assert scripts["ibkr-quant-execution"] == "src.tools.run_investment_execution:main"
@@ -63,4 +64,5 @@ def test_readme_uses_repo_relative_links_and_gateway_wording() -> None:
     assert "](/Users" not in readme
     assert "IB Gateway" in readme
     assert "当前仅支持 `IB Gateway`" in readme
+    assert "ibkr-quant-dashboard" in readme
     assert "本地 `TWS`" not in readme
