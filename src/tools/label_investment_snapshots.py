@@ -10,8 +10,10 @@ import yaml
 from ib_insync import IB  # type: ignore
 
 from ..analysis.report import write_csv, write_json
+from ..common.cli import build_cli_parser
 from ..common.logger import get_logger
 from ..common.markets import add_market_args, market_config_path, resolve_market_code
+from ..common.runtime_paths import resolve_repo_path
 from ..common.storage import Storage
 from ..enrichment.yfinance_history import fetch_daily_bars
 from ..ibkr.contracts import make_stock_contract
@@ -133,26 +135,34 @@ def _load_daily_bars_for_labeling(
     return [], ""
 
 
-def parse_args() -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description="Backfill forward outcomes for investment candidate snapshots.")
+def build_parser() -> argparse.ArgumentParser:
+    ap = build_cli_parser(
+        description="Backfill forward outcomes for investment candidate snapshots.",
+        command="ibkr-quant-label-snapshots",
+        examples=[
+            "ibkr-quant-label-snapshots --db audit.db --market HK --portfolio_id HK:watchlist",
+            "ibkr-quant-label-snapshots --market US --horizons 5,20,60 --limit 200",
+        ],
+        notes=[
+            "Generates labeled outcome CSV and summary JSON files under --out_dir/<market>/.",
+        ],
+    )
     add_market_args(ap)
-    ap.add_argument("--db", default="audit.db")
-    ap.add_argument("--portfolio_id", default="", help="Optional report portfolio id filter, e.g. US:watchlist.")
-    ap.add_argument("--stage", default="final", help="Snapshot stage filter. Use broad/deep/final or empty for all.")
+    ap.add_argument("--db", default="audit.db", help="SQLite audit database containing candidate snapshots.")
+    ap.add_argument("--portfolio_id", default="", help="Optional report portfolio id filter, for example US:watchlist.")
+    ap.add_argument("--stage", default="final", help="Snapshot stage filter. Use broad, deep, final, or empty for all.")
     ap.add_argument("--horizons", default="5,20,60", help="Comma-separated forward horizons in trading days.")
-    ap.add_argument("--limit", type=int, default=400)
-    ap.add_argument("--out_dir", default="reports_investment_labels")
-    return ap.parse_args()
+    ap.add_argument("--limit", type=int, default=400, help="Maximum pending snapshots to label per horizon.")
+    ap.add_argument("--out_dir", default="reports_investment_labels", help="Directory used for labeled outcome artifacts.")
+    return ap
+
+
+def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
+    return build_parser().parse_args(argv)
 
 
 def _resolve_project_path(path_str: str) -> Path:
-    path = Path(path_str)
-    if path.is_absolute():
-        return path
-    for candidate in (BASE_DIR / path, Path.cwd() / path):
-        if candidate.exists():
-            return candidate.resolve()
-    return (BASE_DIR / path).resolve()
+    return resolve_repo_path(BASE_DIR, path_str)
 
 
 def _parse_horizons(raw_value: str) -> List[int]:

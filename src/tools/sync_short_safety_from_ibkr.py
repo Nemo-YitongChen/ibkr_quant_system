@@ -11,6 +11,7 @@ import datetime as dt
 
 import yaml
 
+from ..common.cli import build_cli_parser
 from ..common.logger import get_logger
 from ..common.markets import (
     add_market_args,
@@ -19,6 +20,7 @@ from ..common.markets import (
     market_config_path,
     resolve_market_code,
 )
+from ..common.runtime_paths import resolve_repo_path
 from ..ibkr.connection import IBKRConnection
 from ..ibkr.contracts import make_stock_contract
 from ..offhours.candidates import load_watchlist_symbols
@@ -42,20 +44,34 @@ SAFETY_FIELDS = [
 ]
 
 
-def parse_args() -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description="Sync short safety reference files from IBKR market data.")
+def build_parser() -> argparse.ArgumentParser:
+    ap = build_cli_parser(
+        description="Sync short safety reference files from IBKR market data.",
+        command="ibkr-quant-short-safety-sync",
+        examples=[
+            "ibkr-quant-short-safety-sync --market US --ibkr_config config/ibkr_us.yaml",
+            "ibkr-quant-short-safety-sync --market HK --symbols 0005.HK,0700.HK --max_symbols 20",
+        ],
+        notes=[
+            "Updates borrow fee and short safety reference files configured for the selected market.",
+        ],
+    )
     add_market_args(ap)
-    ap.add_argument("--ibkr_config", default="config/ibkr.yaml")
-    ap.add_argument("--watchlist_yaml", default="")
-    ap.add_argument("--symbols", default="")
-    ap.add_argument("--max_symbols", type=int, default=200)
-    ap.add_argument("--snapshot_wait_sec", type=float, default=2.5)
-    ap.add_argument("--batch_size", type=int, default=40)
+    ap.add_argument("--ibkr_config", default="config/ibkr.yaml", help="Path to the IBKR market config yaml.")
+    ap.add_argument("--watchlist_yaml", default="", help="Optional watchlist yaml used to define the symbol universe.")
+    ap.add_argument("--symbols", default="", help="Optional comma-separated symbol override.")
+    ap.add_argument("--max_symbols", type=int, default=200, help="Maximum symbols to request in one run.")
+    ap.add_argument("--snapshot_wait_sec", type=float, default=2.5, help="Wait time after subscribing before reading market data snapshots.")
+    ap.add_argument("--batch_size", type=int, default=40, help="Number of symbols to request per IBKR batch.")
     ap.add_argument("--market_data_type", type=int, default=1, help="IB market data type: 1=real-time, 4=delayed-frozen.")
-    ap.add_argument("--fallback_market_data_type", type=int, default=4)
-    ap.add_argument("--no_delayed_fallback", action="store_true", default=False)
-    ap.add_argument("--generic_tick_list", default="236")
-    return ap.parse_args()
+    ap.add_argument("--fallback_market_data_type", type=int, default=4, help="Fallback data type when real-time data is unavailable.")
+    ap.add_argument("--no_delayed_fallback", action="store_true", default=False, help="Disable delayed-frozen fallback requests.")
+    ap.add_argument("--generic_tick_list", default="236", help="Generic tick list requested from IBKR.")
+    return ap
+
+
+def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
+    return build_parser().parse_args(argv)
 
 
 def _market_data_type_selected_by_user() -> bool:
@@ -63,13 +79,7 @@ def _market_data_type_selected_by_user() -> bool:
 
 
 def _resolve_project_path(path_str: str) -> Path:
-    path = Path(path_str)
-    if path.is_absolute():
-        return path
-    for candidate in (BASE_DIR / path, BASE_DIR / "config" / path, Path.cwd() / path, Path.cwd() / "config" / path):
-        if candidate.exists():
-            return candidate.resolve()
-    return (BASE_DIR / path).resolve()
+    return resolve_repo_path(BASE_DIR, path_str)
 
 
 def _load_yaml(path_str: str) -> Dict[str, Any]:

@@ -14,6 +14,7 @@ from ..analysis.plan import TradePlanConfig, make_trade_plan
 from ..analysis.report import write_csv, write_json, write_md
 from ..analysis.scoring import ReportScoringConfig, overlay_symbol
 from ..analysis.universe import build_candidates
+from ..common.cli import build_cli_parser
 from ..common.logger import get_logger
 from ..common.markets import (
     add_market_args,
@@ -24,6 +25,7 @@ from ..common.markets import (
     resolve_market_code,
     symbol_matches_market,
 )
+from ..common.runtime_paths import resolve_repo_path
 from ..common.storage import Storage
 from ..enrichment.providers import EnrichmentProviders
 from ..ibkr.universe import UniverseService, UniverseConfig, scanner_location_codes_from_config
@@ -42,30 +44,44 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_SEED_SYMBOLS = "SPY,TSLA,AAPL,MSFT,NVDA"
 
 
-def parse_args() -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description="Automated analysis -> ranked candidates -> trade plan report.")
+def build_parser() -> argparse.ArgumentParser:
+    ap = build_cli_parser(
+        description="Automated analysis -> ranked candidates -> trade plan report.",
+        command="ibkr-quant-trade-report",
+        examples=[
+            "ibkr-quant-trade-report --market US --ibkr_config config/ibkr_us.yaml --top_n 20",
+            "ibkr-quant-trade-report --market HK --watchlist_yaml config/watchlists/resolved_hk_top100_bluechip.yaml",
+        ],
+        notes=[
+            "Generates ranked candidate, scoring, and trade-plan artifacts under --out_dir.",
+        ],
+    )
     add_market_args(ap)
     ap.add_argument("--ibkr_config", default="config/ibkr.yaml", help="Path to the IBKR connection config yaml.")
     ap.add_argument("--report_config", default="", help="Path to report scoring/plan config yaml.")
-    ap.add_argument("--out_dir", default="")
-    ap.add_argument("--top_n", type=int, default=10)
-    ap.add_argument("--max_universe", type=int, default=1000)
+    ap.add_argument("--out_dir", default="", help="Optional output directory override. Defaults to reports_<market>.")
+    ap.add_argument("--top_n", type=int, default=10, help="Number of ranked trade ideas to emit.")
+    ap.add_argument("--max_universe", type=int, default=1000, help="Maximum candidate universe size before scoring.")
     ap.add_argument("--symbols", default=DEFAULT_SEED_SYMBOLS, help="Comma-separated seed symbols.")
-    ap.add_argument("--watchlist_yaml", default="", help="YAML with {symbols: [...]} to expand candidates.")
-    ap.add_argument("--db", default="audit.db", help="SQLite audit db used for recents and blacklist.")
-    ap.add_argument("--symbol_master_db", default="", help="SQLite symbol master db used for market universe candidates.")
-    ap.add_argument("--use_seed", action="store_true", default=False)
-    ap.add_argument("--no_seed", dest="use_seed", action="store_false")
+    ap.add_argument("--watchlist_yaml", default="", help="YAML with {symbols: [...]} used to expand candidates.")
+    ap.add_argument("--db", default="audit.db", help="SQLite audit database used for recents and blacklist data.")
+    ap.add_argument("--symbol_master_db", default="", help="SQLite symbol master database used for market universe candidates.")
+    ap.add_argument("--use_seed", action="store_true", default=False, help="Include the explicit seed symbols in the candidate pool.")
+    ap.add_argument("--no_seed", dest="use_seed", action="store_false", help="Exclude the explicit seed symbols from the candidate pool.")
     ap.add_argument("--use_audit_recent", action="store_true", default=True, help="Include recent symbols from signals_audit.")
-    ap.add_argument("--audit_limit", type=int, default=500)
-    ap.add_argument("--use_scanner", action="store_true", default=False, help="Include scanner hotlist via UniverseService.")
-    ap.add_argument("--scanner_limit", type=int, default=None)
-    ap.add_argument("--scanner_codes", default="")
-    ap.add_argument("--scanner_max_codes_per_run", type=int, default=None)
-    ap.add_argument("--scanner_refresh_sec", type=int, default=None)
-    ap.add_argument("--exclude_blacklist", action="store_true", default=True)
-    ap.add_argument("--include_blacklist", dest="exclude_blacklist", action="store_false")
-    return ap.parse_args()
+    ap.add_argument("--audit_limit", type=int, default=500, help="Maximum recent audit symbols to pull into the candidate pool.")
+    ap.add_argument("--use_scanner", action="store_true", default=False, help="Include scanner hotlist results via UniverseService.")
+    ap.add_argument("--scanner_limit", type=int, default=None, help="Optional override for scanner result count.")
+    ap.add_argument("--scanner_codes", default="", help="Optional comma-separated IBKR scanner codes.")
+    ap.add_argument("--scanner_max_codes_per_run", type=int, default=None, help="Optional limit for scanner codes per refresh.")
+    ap.add_argument("--scanner_refresh_sec", type=int, default=None, help="Optional scanner cache TTL override in seconds.")
+    ap.add_argument("--exclude_blacklist", action="store_true", default=True, help="Drop blacklisted symbols from the candidate pool.")
+    ap.add_argument("--include_blacklist", dest="exclude_blacklist", action="store_false", help="Keep blacklisted symbols in the candidate pool.")
+    return ap
+
+
+def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
+    return build_parser().parse_args(argv)
 
 
 def _extract_vix(bundle: Dict[str, Any]) -> float:
@@ -135,22 +151,7 @@ def _filter_symbols_for_market(symbols: List[str], market: str) -> List[str]:
 
 
 def _resolve_project_path(path_str: str) -> str:
-    path = Path(path_str)
-    if path.is_absolute():
-        return str(path)
-
-    candidates = [
-        BASE_DIR / path,
-        BASE_DIR / "config" / path,
-        Path.cwd() / path,
-        Path.cwd() / "config" / path,
-    ]
-    for candidate in candidates:
-        if candidate.exists():
-            return str(candidate.resolve())
-
-    # Fall back to the project-root interpretation so callers still get a deterministic path.
-    return str((BASE_DIR / path).resolve())
+    return str(resolve_repo_path(BASE_DIR, path_str))
 
 
 def _load_yaml(path_str: str) -> Dict[str, Any]:

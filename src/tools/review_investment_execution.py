@@ -10,22 +10,39 @@ from statistics import median
 from typing import Any, Dict, Iterable, List, Optional
 
 from ..analysis.report import write_csv, write_json
+from ..common.cli import build_cli_parser
 from ..common.logger import get_logger
 from ..common.markets import add_market_args, resolve_market_code, symbol_matches_market
+from ..common.runtime_paths import resolve_repo_path
 
 log = get_logger("tools.review_investment_execution")
 UTC = timezone.utc
+BASE_DIR = Path(__file__).resolve().parents[2]
 
 
-def parse_args() -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description="Review broker-backed investment execution KPI from audit.db.")
+def build_parser() -> argparse.ArgumentParser:
+    ap = build_cli_parser(
+        description="Review broker-backed investment execution KPI from audit.db.",
+        command="ibkr-quant-execution-review",
+        examples=[
+            "ibkr-quant-execution-review --db audit.db --market HK --days 7",
+            "ibkr-quant-execution-review --db runtime_data/paper_investment_only/account/audit.db --portfolio_id HK:watchlist",
+        ],
+        notes=[
+            "Writes summary JSON, CSV breakdowns, and a markdown KPI report into --out_dir.",
+        ],
+    )
     add_market_args(ap)
-    ap.add_argument("--db", default="audit.db")
-    ap.add_argument("--out_dir", default="reports_investment_execution")
-    ap.add_argument("--days", type=int, default=30)
-    ap.add_argument("--since", default="")
-    ap.add_argument("--portfolio_id", default="")
-    return ap.parse_args()
+    ap.add_argument("--db", default="audit.db", help="SQLite audit database to review.")
+    ap.add_argument("--out_dir", default="reports_investment_execution", help="Directory for generated KPI artifacts.")
+    ap.add_argument("--days", type=int, default=30, help="Lookback window in days when --since is not set.")
+    ap.add_argument("--since", default="", help="Optional ISO timestamp cutoff. Overrides --days when provided.")
+    ap.add_argument("--portfolio_id", default="", help="Optional portfolio filter, for example HK:watchlist.")
+    return ap
+
+
+def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
+    return build_parser().parse_args(argv)
 
 
 def _parse_ts(raw: Any) -> Optional[datetime]:
@@ -822,15 +839,16 @@ def _write_md(path: Path, report: Dict[str, Any]) -> None:
 
 def main() -> None:
     args = parse_args()
+    db_path = resolve_repo_path(BASE_DIR, args.db)
+    out_dir = resolve_repo_path(BASE_DIR, args.out_dir)
     report = build_investment_execution_report(
-        args.db,
+        str(db_path),
         market=getattr(args, "market", ""),
         days=int(args.days),
         since=str(args.since or ""),
         portfolio_id=str(args.portfolio_id or ""),
     )
 
-    out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     write_json(str(out_dir / "investment_execution_summary.json"), report["summary"])
     write_csv(str(out_dir / "investment_execution_runs.csv"), report["run_rows"])
