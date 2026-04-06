@@ -35,6 +35,10 @@ ibkr-quant-opportunity = "src.tools.run_investment_opportunity:main"
 ibkr-quant-weekly-review = "src.tools.review_investment_weekly:main"
 ibkr-quant-reconcile = "src.tools.reconcile_investment_broker:main"
 ibkr-quant-sync-paper = "src.tools.sync_investment_paper_from_broker:main"
+ibkr-quant-execution-review = "src.tools.review_investment_execution:main"
+ibkr-quant-label-snapshots = "src.tools.label_investment_snapshots:main"
+ibkr-quant-trade-report = "src.tools.generate_trade_report:main"
+ibkr-quant-short-safety-sync = "src.tools.sync_short_safety_from_ibkr:main"
 
 [tool.setuptools.packages.find]
 include = ["src", "src.*"]

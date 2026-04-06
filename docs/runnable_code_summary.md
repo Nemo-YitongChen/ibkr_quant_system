@@ -13,7 +13,18 @@ Phase 0 之后的运行约定：
   - `ibkr-quant-report`
   - `ibkr-quant-paper`
   - `ibkr-quant-execution`
+  - `ibkr-quant-execution-review`
+  - `ibkr-quant-label-snapshots`
+  - `ibkr-quant-trade-report`
+  - `ibkr-quant-short-safety-sync`
 - 原有 `python -m src...` 路径继续兼容
+
+额外的一等维护工具入口：
+
+- `ibkr-quant-execution-review`
+- `ibkr-quant-label-snapshots`
+- `ibkr-quant-trade-report`
+- `ibkr-quant-short-safety-sync`
 
 当前主路径已经切到中长期投资：
 

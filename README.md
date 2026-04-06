@@ -180,8 +180,25 @@ ibkr-quant-reconcile --market US --db audit.db --portfolio_id US:watchlist --out
 - `ibkr-quant-weekly-review`
 - `ibkr-quant-reconcile`
 - `ibkr-quant-sync-paper`
+- `ibkr-quant-execution-review`
+- `ibkr-quant-label-snapshots`
+- `ibkr-quant-trade-report`
+- `ibkr-quant-short-safety-sync`
 
 旧的 `python -m src...` 调用方式仍然兼容，但新安装环境建议优先用上面的命令。
+
+### 6. 维护与诊断工具
+
+下面这几项更偏维护、复盘和运营支持：
+
+- `ibkr-quant-execution-review`
+  - 生成 execution KPI、订单/成交明细和执行质量摘要
+- `ibkr-quant-label-snapshots`
+  - 对研究/执行快照做 outcome 标注，给 weekly review 和 dashboard 提供回标样本
+- `ibkr-quant-trade-report`
+  - 生成面向交易面的日报/摘要输出
+- `ibkr-quant-short-safety-sync`
+  - 从 IBKR 同步 short safety 参考数据，更新借券和可做空规则输入
 
 ## 推荐上手路径
 

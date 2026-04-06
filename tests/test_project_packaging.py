@@ -28,6 +28,10 @@ def test_pyproject_declares_console_scripts_and_runtime_metadata() -> None:
     assert scripts["ibkr-quant-weekly-review"] == "src.tools.review_investment_weekly:main"
     assert scripts["ibkr-quant-reconcile"] == "src.tools.reconcile_investment_broker:main"
     assert scripts["ibkr-quant-sync-paper"] == "src.tools.sync_investment_paper_from_broker:main"
+    assert scripts["ibkr-quant-execution-review"] == "src.tools.review_investment_execution:main"
+    assert scripts["ibkr-quant-label-snapshots"] == "src.tools.label_investment_snapshots:main"
+    assert scripts["ibkr-quant-trade-report"] == "src.tools.generate_trade_report:main"
+    assert scripts["ibkr-quant-short-safety-sync"] == "src.tools.sync_short_safety_from_ibkr:main"
 
 
 def test_main_loads_env_before_delegating_to_runtime(monkeypatch) -> None:
@@ -65,4 +69,6 @@ def test_readme_uses_repo_relative_links_and_gateway_wording() -> None:
     assert "IB Gateway" in readme
     assert "当前仅支持 `IB Gateway`" in readme
     assert "ibkr-quant-dashboard" in readme
+    assert "ibkr-quant-execution-review" in readme
+    assert "ibkr-quant-short-safety-sync" in readme
     assert "本地 `TWS`" not in readme
