@@ -12,6 +12,7 @@ from typing import Any, Dict, List
 import yaml
 
 from ..analysis.tracking import STATUS_LABELS
+from ..common.cli import build_cli_parser, emit_cli_summary
 from ..common.markets import market_config_path, resolve_market_code, symbol_matches_market
 from ..common.runtime_paths import resolve_repo_path, resolve_scoped_runtime_path, scope_from_ibkr_config
 from ..common.storage import Storage
@@ -276,11 +277,25 @@ def _dashboard_threshold_sync_status_label(pending: bool) -> str:
     return "待处理" if bool(pending) else "已同步"
 
 
-def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description="Generate a static dashboard from supervisor and report outputs.")
+def build_parser() -> argparse.ArgumentParser:
+    ap = build_cli_parser(
+        description="Generate a static dashboard from supervisor and report outputs.",
+        command="ibkr-quant-dashboard",
+        examples=[
+            "ibkr-quant-dashboard --config config/supervisor.yaml --out_dir reports_supervisor",
+            "ibkr-quant-dashboard --config config/supervisor_live.yaml --out_dir reports_supervisor_live",
+        ],
+        notes=[
+            "Writes dashboard.html and dashboard.json under --out_dir.",
+        ],
+    )
     ap.add_argument("--config", default="config/supervisor.yaml", help="Path to supervisor config.")
     ap.add_argument("--out_dir", default="reports_supervisor", help="Output directory for dashboard html/json.")
-    return ap.parse_args(argv)
+    return ap
+
+
+def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
+    return build_parser().parse_args(argv)
 
 
 def _resolve_path(path_str: str) -> Path:
@@ -8411,13 +8426,37 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     (out / "dashboard.html").write_text(html_text, encoding="utf-8")
 
 
+def _cli_summary_payload(payload: Dict[str, Any], out_dir: Path) -> tuple[Dict[str, Any], Dict[str, Path]]:
+    trade_cards = list(payload.get("trade_cards", []) or [])
+    dry_run_cards = list(payload.get("dry_run_cards", []) or [])
+    ops_overview = dict(payload.get("ops_overview", {}) or {})
+    return (
+        {
+            "market_cards": int(len(list(payload.get("cards", []) or []))),
+            "trade_cards": int(len(trade_cards)),
+            "dry_run_cards": int(len(dry_run_cards)),
+            "preflight_warn_count": int(ops_overview.get("preflight_warn_count", 0) or 0),
+            "preflight_fail_count": int(ops_overview.get("preflight_fail_count", 0) or 0),
+        },
+        {
+            "dashboard_json": out_dir / "dashboard.json",
+            "dashboard_html": out_dir / "dashboard.html",
+        },
+    )
+
+
 def main(argv: List[str] | None = None) -> None:
     args = parse_args(argv)
     payload = build_dashboard(args.config, args.out_dir)
     write_dashboard(payload, args.out_dir)
     out = _resolve_path(args.out_dir)
-    print(f"dashboard_json={out / 'dashboard.json'}")
-    print(f"dashboard_html={out / 'dashboard.html'}")
+    summary_fields, artifact_fields = _cli_summary_payload(payload, out)
+    emit_cli_summary(
+        command="ibkr-quant-dashboard",
+        headline="dashboard build complete",
+        summary=summary_fields,
+        artifacts=artifact_fields,
+    )
 
 
 if __name__ == "__main__":

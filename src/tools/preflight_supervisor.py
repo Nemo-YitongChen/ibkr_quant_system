@@ -10,6 +10,7 @@ from typing import Any, Dict, List
 
 import yaml
 
+from ..common.cli import build_cli_parser, emit_cli_summary
 from ..common.logger import get_logger
 from ..common.markets import market_config_path, resolve_market_code
 from ..common.runtime_paths import resolve_repo_path, scope_from_ibkr_config
@@ -18,12 +19,26 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 log = get_logger("tools.preflight_supervisor")
 
 
-def parse_args() -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description="Run lightweight preflight checks for supervisor paper/live deployment.")
+def build_parser() -> argparse.ArgumentParser:
+    ap = build_cli_parser(
+        description="Run lightweight preflight checks for supervisor paper/live deployment.",
+        command="ibkr-quant-preflight",
+        examples=[
+            "ibkr-quant-preflight --config config/supervisor.yaml",
+            "ibkr-quant-preflight --config config/supervisor_live.yaml --runtime_root runtime_data/paper_investment_only_account",
+        ],
+        notes=[
+            "Writes a JSON summary and markdown report under --out_dir.",
+        ],
+    )
     ap.add_argument("--config", default="config/supervisor.yaml", help="Supervisor config path.")
     ap.add_argument("--runtime_root", default="", help="Optional scoped runtime root such as runtime_data/paper_... .")
     ap.add_argument("--out_dir", default="reports_preflight", help="Directory to write preflight summary files.")
-    return ap.parse_args()
+    return ap
+
+
+def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
+    return build_parser().parse_args(argv)
 
 
 def _load_yaml(path: Path) -> Dict[str, Any]:
@@ -305,9 +320,32 @@ def run_preflight(config_path: str, runtime_root: str = "", out_dir: str = "repo
     return summary
 
 
-def main() -> None:
-    args = parse_args()
-    run_preflight(args.config, runtime_root=args.runtime_root, out_dir=args.out_dir)
+def _cli_summary_payload(summary: Dict[str, Any], out_dir: Path) -> tuple[Dict[str, Any], Dict[str, Path]]:
+    return (
+        {
+            "pass_count": int(summary.get("pass_count") or 0),
+            "warn_count": int(summary.get("warn_count") or 0),
+            "fail_count": int(summary.get("fail_count") or 0),
+            "runtime_root": str(summary.get("runtime_root") or "-"),
+        },
+        {
+            "summary_json": out_dir / "supervisor_preflight_summary.json",
+            "report_md": out_dir / "supervisor_preflight_report.md",
+        },
+    )
+
+
+def main(argv: List[str] | None = None) -> None:
+    args = parse_args(argv)
+    summary = run_preflight(args.config, runtime_root=args.runtime_root, out_dir=args.out_dir)
+    out_dir = resolve_repo_path(BASE_DIR, args.out_dir)
+    summary_fields, artifact_fields = _cli_summary_payload(summary, out_dir)
+    emit_cli_summary(
+        command="ibkr-quant-preflight",
+        headline="preflight checks complete",
+        summary=summary_fields,
+        artifacts=artifact_fields,
+    )
 
 
 if __name__ == "__main__":

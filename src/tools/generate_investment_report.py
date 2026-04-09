@@ -26,6 +26,7 @@ from ..analysis.investment_short import InvestmentShortBookConfig, build_short_b
 from ..analysis.investment_backtest import InvestmentBacktestConfig, compute_investment_backtest_from_bars
 from ..analysis.report import write_csv, write_investment_md, write_json
 from ..analysis.universe import build_candidates
+from ..common.cli import build_cli_parser, emit_cli_summary
 from ..common.logger import get_logger
 from ..common.markets import (
     add_market_args,
@@ -36,6 +37,7 @@ from ..common.markets import (
     resolve_market_code,
     symbol_matches_market,
 )
+from ..common.runtime_paths import resolve_repo_path
 from ..common.storage import Storage
 from ..data import MarketDataAdapter
 from ..enrichment.providers import EnrichmentProviders
@@ -53,38 +55,41 @@ log = get_logger("tools.generate_investment_report")
 BASE_DIR = Path(__file__).resolve().parents[2]
 
 
-def parse_args() -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description="Generate medium/long-term investment candidates from historical data.")
+def build_parser() -> argparse.ArgumentParser:
+    ap = build_cli_parser(
+        description="Generate medium/long-term investment candidates from historical data.",
+        command="ibkr-quant-report",
+        examples=[
+            "ibkr-quant-report --market HK --ibkr_config config/ibkr_hk.yaml --top_n 20",
+            "ibkr-quant-report --market US --watchlist_yaml config/watchlists/resolved_us_growth.yaml",
+        ],
+        notes=[
+            "Writes investment_report.md, candidate CSVs, and summary JSON files under --out_dir.",
+        ],
+    )
     add_market_args(ap)
     ap.add_argument("--ibkr_config", default="config/ibkr.yaml", help="Path to the IBKR runtime config yaml.")
     ap.add_argument("--investment_config", default="", help="Path to investment scoring/plan config yaml.")
-    ap.add_argument("--out_dir", default="")
-    ap.add_argument("--top_n", type=int, default=15)
-    ap.add_argument("--max_universe", type=int, default=1000)
-    ap.add_argument("--watchlist_yaml", default="", help="YAML with {symbols: [...]} to build candidates.")
-    ap.add_argument("--db", default="audit.db", help="SQLite audit db used for recent symbols.")
-    ap.add_argument("--symbol_master_db", default="", help="SQLite symbol master db used for market universe candidates.")
-    ap.add_argument("--use_audit_recent", action="store_true", default=False)
-    ap.add_argument("--audit_limit", type=int, default=500)
-    ap.add_argument("--request_timeout_sec", type=float, default=15.0)
-    ap.add_argument("--backtest_top_k", type=int, default=10)
-    ap.add_argument("--fundamentals_top_k", type=int, default=20)
-    return ap.parse_args()
+    ap.add_argument("--out_dir", default="", help="Optional output directory override. Defaults to reports_investment_<market>.")
+    ap.add_argument("--top_n", type=int, default=15, help="Number of ranked long ideas to emit.")
+    ap.add_argument("--max_universe", type=int, default=1000, help="Maximum candidate universe size before scoring.")
+    ap.add_argument("--watchlist_yaml", default="", help="YAML with {symbols: [...]} used to build candidates.")
+    ap.add_argument("--db", default="audit.db", help="SQLite audit database used for recent symbols.")
+    ap.add_argument("--symbol_master_db", default="", help="SQLite symbol master database used for market universe candidates.")
+    ap.add_argument("--use_audit_recent", action="store_true", default=False, help="Include recent symbols from audit snapshots.")
+    ap.add_argument("--audit_limit", type=int, default=500, help="Maximum recent audit symbols to include.")
+    ap.add_argument("--request_timeout_sec", type=float, default=15.0, help="Per-request timeout for enrichment requests in seconds.")
+    ap.add_argument("--backtest_top_k", type=int, default=10, help="How many ranked symbols to backtest in detail.")
+    ap.add_argument("--fundamentals_top_k", type=int, default=20, help="How many symbols to enrich with fundamentals in detail.")
+    return ap
+
+
+def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
+    return build_parser().parse_args(argv)
 
 
 def _resolve_project_path(path_str: str) -> str:
-    path = Path(path_str)
-    if path.is_absolute():
-        return str(path)
-    for candidate in (
-        BASE_DIR / path,
-        BASE_DIR / "config" / path,
-        Path.cwd() / path,
-        Path.cwd() / "config" / path,
-    ):
-        if candidate.exists():
-            return str(candidate.resolve())
-    return str((BASE_DIR / path).resolve())
+    return str(resolve_repo_path(BASE_DIR, path_str))
 
 
 def _load_yaml(path_str: str) -> Dict[str, Any]:
@@ -1493,8 +1498,39 @@ def _compute_symbol_features(
     }
 
 
-def main() -> None:
-    args = parse_args()
+def _cli_summary_payload(
+    *,
+    market: str,
+    portfolio_id: str,
+    out_dir: Path,
+    candidate_count: int,
+    ranked_count: int,
+    short_candidate_count: int,
+    plan_count: int,
+    backtest_count: int,
+) -> tuple[Dict[str, Any], Dict[str, Path]]:
+    return (
+        {
+            "market": str(market or "DEFAULT"),
+            "portfolio_id": str(portfolio_id or "-"),
+            "candidate_count": int(candidate_count),
+            "ranked_count": int(ranked_count),
+            "short_candidate_count": int(short_candidate_count),
+            "plan_count": int(plan_count),
+            "backtest_count": int(backtest_count),
+        },
+        {
+            "report_md": out_dir / "investment_report.md",
+            "ranked_csv": out_dir / "investment_candidates.csv",
+            "plan_csv": out_dir / "investment_plan.csv",
+            "backtest_csv": out_dir / "investment_backtest.csv",
+            "enrichment_json": out_dir / "enrichment.json",
+        },
+    )
+
+
+def main(argv: List[str] | None = None) -> None:
+    args = parse_args(argv)
 
     market_code = resolve_market_code(getattr(args, "market", ""))
     explicit_cfg = str(args.ibkr_config) if str(args.ibkr_config) != "config/ibkr.yaml" or not market_code else ""
@@ -2141,6 +2177,22 @@ def main() -> None:
             list(ranked) + list(short_ranked),
             list(plans) + list(short_plans),
             context,
+        )
+        summary_fields, artifact_fields = _cli_summary_payload(
+            market=resolved_market,
+            portfolio_id=portfolio_id,
+            out_dir=out_dir,
+            candidate_count=len(candidates),
+            ranked_count=len(ranked),
+            short_candidate_count=len(short_ranked),
+            plan_count=len(plans),
+            backtest_count=len(backtests),
+        )
+        emit_cli_summary(
+            command="ibkr-quant-report",
+            headline="investment report generated",
+            summary=summary_fields,
+            artifacts=artifact_fields,
         )
         log.info("Wrote investment report -> %s (ranked=%s plans=%s)", out_dir / "investment_report.md", len(ranked), len(plans))
     finally:
