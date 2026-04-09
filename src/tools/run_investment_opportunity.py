@@ -6,8 +6,10 @@ from typing import Any, Dict
 
 from ..analysis.investment_portfolio import InvestmentPaperConfig
 from ..app.investment_opportunity import InvestmentOpportunityConfig, InvestmentOpportunityEngine
+from ..common.cli import build_cli_parser, emit_cli_summary
 from ..common.logger import get_logger
 from ..common.markets import add_market_args, market_config_path, resolve_market_code
+from ..common.runtime_paths import resolve_repo_path
 from ..common.storage import Storage
 from ..offhours.ib_setup import connect_ib
 from ..portfolio.investment_allocator import InvestmentExecutionConfig
@@ -16,29 +18,37 @@ log = get_logger("tools.run_investment_opportunity")
 BASE_DIR = Path(__file__).resolve().parents[2]
 
 
-def parse_args() -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description="Scan current market snapshots for medium/long-term entry opportunities.")
+def build_parser() -> argparse.ArgumentParser:
+    ap = build_cli_parser(
+        description="Scan current market snapshots for medium/long-term entry opportunities.",
+        command="ibkr-quant-opportunity",
+        examples=[
+            "ibkr-quant-opportunity --market HK",
+            "ibkr-quant-opportunity --market US --report_dir reports_investment_us/market_us",
+        ],
+        notes=[
+            "Writes investment opportunity summary JSON, scan CSV, and investment_opportunity_report.md in the report directory.",
+        ],
+    )
     add_market_args(ap)
     ap.add_argument("--ibkr_config", default="", help="Path to the IBKR runtime config yaml.")
     ap.add_argument("--execution_config", default="", help="Path to the investment execution config yaml.")
     ap.add_argument("--opportunity_config", default="", help="Path to the investment opportunity config yaml.")
-    ap.add_argument("--db", default="audit.db")
+    ap.add_argument("--db", default="audit.db", help="SQLite audit database used for opportunity scans.")
     ap.add_argument("--report_dir", default="", help="Explicit report directory used for output artifacts.")
     ap.add_argument("--reports_root", default="reports_investment", help="Root directory used by investment reports.")
     ap.add_argument("--watchlist_yaml", default="", help="Use the same watchlist stem as the report generator.")
     ap.add_argument("--portfolio_id", default="", help="Stable identifier for one investment opportunity portfolio.")
-    ap.add_argument("--request_timeout_sec", type=float, default=10.0)
-    return ap.parse_args()
+    ap.add_argument("--request_timeout_sec", type=float, default=10.0, help="IBKR request timeout in seconds.")
+    return ap
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    return build_parser().parse_args(argv)
 
 
 def _resolve_project_path(path_str: str) -> Path:
-    path = Path(path_str)
-    if path.is_absolute():
-        return path
-    for candidate in (BASE_DIR / path, BASE_DIR / "config" / path, Path.cwd() / path, Path.cwd() / "config" / path):
-        if candidate.exists():
-            return candidate.resolve()
-    return (BASE_DIR / path).resolve()
+    return resolve_repo_path(BASE_DIR, path_str)
 
 
 def _load_yaml(path_str: str) -> Dict[str, Any]:
@@ -64,8 +74,25 @@ def _infer_report_dir(args: argparse.Namespace, market: str) -> Path:
     return root / f"market_{str(market or 'default').lower()}"
 
 
-def main() -> None:
-    args = parse_args()
+def _cli_summary_payload(result: Any, report_dir: Path) -> tuple[Dict[str, Any], Dict[str, Path]]:
+    return (
+        {
+            "market": str(getattr(result, "market", "") or "DEFAULT"),
+            "portfolio_id": str(getattr(result, "portfolio_id", "") or "-"),
+            "entry_now_count": int(getattr(result, "entry_now_count", 0) or 0),
+            "near_entry_count": int(getattr(result, "near_entry_count", 0) or 0),
+            "wait_count": int(getattr(result, "wait_count", 0) or 0),
+        },
+        {
+            "summary_json": report_dir / "investment_opportunity_summary.json",
+            "scan_csv": report_dir / "investment_opportunity_scan.csv",
+            "report_md": report_dir / "investment_opportunity_report.md",
+        },
+    )
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
     market = resolve_market_code(getattr(args, "market", ""))
     if not market:
         raise SystemExit("--market is required")
@@ -108,13 +135,13 @@ def main() -> None:
             result = engine.run(report_dir=str(report_dir))
         except ValueError as e:
             raise SystemExit(str(e))
-        print(
-            f"market={result.market} portfolio={result.portfolio_id} "
-            f"entry_now={result.entry_now_count} near_entry={result.near_entry_count} wait={result.wait_count}"
+        summary_fields, artifact_fields = _cli_summary_payload(result, report_dir)
+        emit_cli_summary(
+            command="ibkr-quant-opportunity",
+            headline="investment opportunity scan complete",
+            summary=summary_fields,
+            artifacts=artifact_fields,
         )
-        print(f"summary_json={report_dir / 'investment_opportunity_summary.json'}")
-        print(f"scan_csv={report_dir / 'investment_opportunity_scan.csv'}")
-        print(f"markdown={report_dir / 'investment_opportunity_report.md'}")
     finally:
         try:
             ib.disconnect()

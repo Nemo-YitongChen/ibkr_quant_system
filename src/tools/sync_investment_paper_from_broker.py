@@ -9,32 +9,42 @@ from typing import Any, Dict, List
 from uuid import uuid4
 
 from ..analysis.report import write_csv, write_json
+from ..common.cli import build_cli_parser, emit_cli_summary
 from ..common.logger import get_logger
 from ..common.markets import add_market_args, resolve_market_code
+from ..common.runtime_paths import resolve_repo_path
 from ..common.storage import Storage
 
 log = get_logger("tools.sync_investment_paper_from_broker")
 BASE_DIR = Path(__file__).resolve().parents[2]
 
 
-def parse_args() -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description="Seed the local investment paper ledger from the latest broker snapshot.")
+def build_parser() -> argparse.ArgumentParser:
+    ap = build_cli_parser(
+        description="Seed the local investment paper ledger from the latest broker snapshot.",
+        command="ibkr-quant-sync-paper",
+        examples=[
+            "ibkr-quant-sync-paper --market HK --portfolio_id HK:watchlist",
+            "ibkr-quant-sync-paper --market US --portfolio_id US:market_us --note broker_sync_manual",
+        ],
+        notes=[
+            "Writes broker sync positions CSV, summary JSON, and broker_sync_report.md under --out_dir.",
+        ],
+    )
     add_market_args(ap)
-    ap.add_argument("--db", default="audit.db")
+    ap.add_argument("--db", default="audit.db", help="SQLite audit database used for broker snapshots and local paper state.")
     ap.add_argument("--portfolio_id", default="", help="Stable portfolio id to sync.")
-    ap.add_argument("--out_dir", default="reports_investment_sync")
-    ap.add_argument("--note", default="broker_sync")
-    return ap.parse_args()
+    ap.add_argument("--out_dir", default="reports_investment_sync", help="Directory for sync artifacts.")
+    ap.add_argument("--note", default="broker_sync", help="Operator note stored in the synced run details.")
+    return ap
+
+
+def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
+    return build_parser().parse_args(argv)
 
 
 def _resolve_project_path(path_str: str) -> Path:
-    path = Path(path_str)
-    if path.is_absolute():
-        return path
-    for candidate in (BASE_DIR / path, BASE_DIR / "config" / path, Path.cwd() / path, Path.cwd() / "config" / path):
-        if candidate.exists():
-            return candidate.resolve()
-    return (BASE_DIR / path).resolve()
+    return resolve_repo_path(BASE_DIR, path_str)
 
 
 def _to_float(value: Any, default: float = 0.0) -> float:
@@ -72,8 +82,25 @@ def _write_md(path: Path, summary: Dict[str, Any], rows: List[Dict[str, Any]]) -
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
-def main() -> None:
-    args = parse_args()
+def _cli_summary_payload(summary: Dict[str, Any], out_dir: Path) -> tuple[Dict[str, Any], Dict[str, Path]]:
+    return (
+        {
+            "market": str(summary.get("market") or "DEFAULT"),
+            "portfolio_id": str(summary.get("portfolio_id") or "-"),
+            "account_id": str(summary.get("account_id") or "-"),
+            "position_count": int(summary.get("position_count") or 0),
+            "equity_after": f"{float(summary.get('equity_after', 0.0) or 0.0):.2f}",
+        },
+        {
+            "positions_csv": out_dir / "broker_sync_positions.csv",
+            "summary_json": out_dir / "broker_sync_summary.json",
+            "report_md": out_dir / "broker_sync_report.md",
+        },
+    )
+
+
+def main(argv: List[str] | None = None) -> None:
+    args = parse_args(argv)
     market = resolve_market_code(getattr(args, "market", ""))
     if not market:
         raise SystemExit("--market is required")
@@ -178,6 +205,13 @@ def main() -> None:
     write_csv(str(out_dir / "broker_sync_positions.csv"), position_rows)
     write_json(str(out_dir / "broker_sync_summary.json"), summary)
     _write_md(out_dir / "broker_sync_report.md", summary, position_rows)
+    summary_fields, artifact_fields = _cli_summary_payload(summary, out_dir)
+    emit_cli_summary(
+        command="ibkr-quant-sync-paper",
+        headline="broker paper sync complete",
+        summary=summary_fields,
+        artifacts=artifact_fields,
+    )
     log.info(
         "Synced investment paper from broker -> %s positions=%s account=%s",
         out_dir / "broker_sync_report.md",

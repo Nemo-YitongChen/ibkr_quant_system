@@ -15,35 +15,45 @@ from ..analysis.investment_portfolio import (
     simulate_rebalance,
 )
 from ..analysis.report import write_csv, write_json
+from ..common.cli import build_cli_parser, emit_cli_summary
 from ..common.logger import get_logger
 from ..common.markets import add_market_args, resolve_market_code
+from ..common.runtime_paths import resolve_repo_path
 from ..common.storage import Storage, build_investment_risk_history_row
 
 log = get_logger("tools.run_investment_paper")
 BASE_DIR = Path(__file__).resolve().parents[2]
 
 
-def parse_args() -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description="Run the investment paper ledger and periodic rebalance.")
+def build_parser() -> argparse.ArgumentParser:
+    ap = build_cli_parser(
+        description="Run the investment paper ledger and periodic rebalance.",
+        command="ibkr-quant-paper",
+        examples=[
+            "ibkr-quant-paper --market HK --reports_root reports_investment_hk",
+            "ibkr-quant-paper --market US --report_dir reports_investment_us/market_us --force",
+        ],
+        notes=[
+            "Writes paper ledger CSV, rebalance trades, summary JSON, and investment_paper_report.md in the report directory.",
+        ],
+    )
     add_market_args(ap)
-    ap.add_argument("--db", default="audit.db")
+    ap.add_argument("--db", default="audit.db", help="SQLite audit database used for the paper ledger.")
     ap.add_argument("--report_dir", default="", help="Explicit report directory that contains investment_candidates.csv.")
     ap.add_argument("--reports_root", default="reports_investment", help="Root directory used by investment reports.")
     ap.add_argument("--watchlist_yaml", default="", help="Use the same watchlist stem as the report generator.")
     ap.add_argument("--paper_config", default="", help="Path to investment paper config yaml.")
     ap.add_argument("--portfolio_id", default="", help="Optional stable identifier for one investment paper portfolio.")
-    ap.add_argument("--force", action="store_true", default=False)
-    return ap.parse_args()
+    ap.add_argument("--force", action="store_true", default=False, help="Run the rebalance even if the portfolio is not yet due.")
+    return ap
+
+
+def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
+    return build_parser().parse_args(argv)
 
 
 def _resolve_project_path(path_str: str) -> Path:
-    path = Path(path_str)
-    if path.is_absolute():
-        return path
-    for candidate in (BASE_DIR / path, BASE_DIR / "config" / path, Path.cwd() / path, Path.cwd() / "config" / path):
-        if candidate.exists():
-            return candidate.resolve()
-    return (BASE_DIR / path).resolve()
+    return resolve_repo_path(BASE_DIR, path_str)
 
 
 def _load_yaml(path_str: str) -> Dict[str, Any]:
@@ -133,8 +143,27 @@ def _write_md(path: Path, summary: Dict[str, Any], trades: List[Dict[str, Any]],
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
-def main() -> None:
-    args = parse_args()
+def _cli_summary_payload(summary: Dict[str, Any], report_dir: Path, *, trade_count: int, position_count: int) -> tuple[Dict[str, Any], Dict[str, Path]]:
+    return (
+        {
+            "market": str(summary.get("market") or "DEFAULT"),
+            "portfolio_id": str(summary.get("portfolio_id") or "-"),
+            "rebalance_due": bool(summary.get("rebalance_due", False)),
+            "executed": bool(summary.get("executed", False)),
+            "trade_count": int(trade_count),
+            "position_count": int(position_count),
+        },
+        {
+            "summary_json": report_dir / "investment_paper_summary.json",
+            "portfolio_csv": report_dir / "investment_portfolio.csv",
+            "trades_csv": report_dir / "investment_rebalance_trades.csv",
+            "report_md": report_dir / "investment_paper_report.md",
+        },
+    )
+
+
+def main(argv: List[str] | None = None) -> None:
+    args = parse_args(argv)
     market = resolve_market_code(getattr(args, "market", ""))
     if not market:
         raise SystemExit("--market is required for investment paper runs")
@@ -328,6 +357,13 @@ def main() -> None:
     write_csv(str(report_dir / "investment_rebalance_trades.csv"), trades)
     write_json(str(report_dir / "investment_paper_summary.json"), summary)
     _write_md(report_dir / "investment_paper_report.md", summary, trades, position_rows)
+    summary_fields, artifact_fields = _cli_summary_payload(summary, report_dir, trade_count=len(trades), position_count=len(position_rows))
+    emit_cli_summary(
+        command="ibkr-quant-paper",
+        headline="investment paper run complete",
+        summary=summary_fields,
+        artifacts=artifact_fields,
+    )
     log.info(
         "Wrote investment paper -> %s executed=%s trades=%s positions=%s",
         report_dir / "investment_paper_report.md",

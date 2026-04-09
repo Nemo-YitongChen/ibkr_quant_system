@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from ..analysis.report import write_csv, write_json
+from ..common.cli import build_cli_parser, emit_cli_summary
 from .review_weekly_io import (
     load_json_file as _load_json_file,
     load_yaml_file as _load_yaml_file,
@@ -31,6 +32,7 @@ from .review_weekly_thresholds import (
 )
 from ..common.logger import get_logger
 from ..common.markets import add_market_args, market_config_path, resolve_market_code
+from ..common.runtime_paths import resolve_repo_path
 from ..common.storage import Storage
 
 log = get_logger("tools.review_investment_weekly")
@@ -38,11 +40,21 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 FEEDBACK_CALIBRATION_LOOKBACK_DAYS = 180
 
 
-def parse_args() -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description="Review weekly performance for investment paper portfolios.")
+def build_parser() -> argparse.ArgumentParser:
+    ap = build_cli_parser(
+        description="Review weekly performance for investment paper portfolios.",
+        command="ibkr-quant-weekly-review",
+        examples=[
+            "ibkr-quant-weekly-review --market HK --days 7",
+            "ibkr-quant-weekly-review --market US --portfolio_id US:market_us --out_dir reports_investment_weekly_us",
+        ],
+        notes=[
+            "Writes weekly_review.md, weekly_review_summary.json, and the weekly CSV breakdowns under --out_dir.",
+        ],
+    )
     add_market_args(ap)
-    ap.add_argument("--db", default="audit.db")
-    ap.add_argument("--out_dir", default="reports_investment_weekly")
+    ap.add_argument("--db", default="audit.db", help="SQLite audit database used for weekly review inputs.")
+    ap.add_argument("--out_dir", default="reports_investment_weekly", help="Directory for weekly review artifacts.")
     ap.add_argument("--labeling_dir", default="", help="Optional snapshot labeling output dir. Defaults to auto-detect.")
     ap.add_argument("--preflight_dir", default="reports_preflight", help="Optional preflight output dir for IBKR history probe summary.")
     ap.add_argument(
@@ -50,20 +62,18 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="Optional YAML of market-level AUTO_APPLY threshold overrides. Defaults to weekly_review out_dir override file.",
     )
-    ap.add_argument("--days", type=int, default=7)
-    ap.add_argument("--portfolio_id", default="")
-    ap.add_argument("--include_legacy", action="store_true", default=False)
-    return ap.parse_args()
+    ap.add_argument("--days", type=int, default=7, help="Lookback window in days for weekly review inputs.")
+    ap.add_argument("--portfolio_id", default="", help="Optional portfolio filter.")
+    ap.add_argument("--include_legacy", action="store_true", default=False, help="Include legacy non-portfolio rows when present.")
+    return ap
+
+
+def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
+    return build_parser().parse_args(argv)
 
 
 def _resolve_project_path(path_str: str) -> Path:
-    path = Path(path_str)
-    if path.is_absolute():
-        return path
-    for candidate in (BASE_DIR / path, BASE_DIR / "config" / path, Path.cwd() / path, Path.cwd() / "config" / path):
-        if candidate.exists():
-            return candidate.resolve()
-    return (BASE_DIR / path).resolve()
+    return resolve_repo_path(BASE_DIR, path_str)
 
 
 def _mean(values: List[float]) -> float:
@@ -3763,8 +3773,28 @@ def _build_broker_local_diff_rows(
 
 
 
-def main() -> None:
-    args = parse_args()
+def _cli_summary_payload(summary: Dict[str, Any], out_dir: Path) -> tuple[Dict[str, Any], Dict[str, Path]]:
+    return (
+        {
+            "market_filter": str(summary.get("market_filter") or "ALL"),
+            "portfolio_filter": str(summary.get("portfolio_filter") or "ALL"),
+            "portfolio_count": int(summary.get("portfolio_count") or 0),
+            "trade_count": int(summary.get("trade_count") or 0),
+            "execution_run_count": int(summary.get("execution_run_count") or 0),
+            "best_portfolio": str(summary.get("best_portfolio") or "-"),
+            "worst_portfolio": str(summary.get("worst_portfolio") or "-"),
+        },
+        {
+            "summary_json": out_dir / "weekly_review_summary.json",
+            "summary_csv": out_dir / "weekly_portfolio_summary.csv",
+            "trade_log_csv": out_dir / "weekly_trade_log.csv",
+            "report_md": out_dir / "weekly_review.md",
+        },
+    )
+
+
+def main(argv: List[str] | None = None) -> None:
+    args = parse_args(argv)
     db_path = _resolve_project_path(args.db)
     out_dir = _resolve_project_path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -4161,50 +4191,51 @@ def main() -> None:
     write_csv(str(out_dir / "weekly_execution_feedback_summary.csv"), execution_feedback_rows)
     write_csv(str(out_dir / "weekly_broker_positions.csv"), [row for rows in broker_latest_rows_by_portfolio.values() for row in rows])
     write_csv(str(out_dir / "weekly_broker_comparison.csv"), broker_diff_rows)
+    summary_payload = {
+        "window_start": since_ts,
+        "window_end": datetime.now(timezone.utc).isoformat(),
+        "market_filter": market_filter or "ALL",
+        "portfolio_filter": portfolio_filter or "ALL",
+        "portfolio_count": len(summary_rows),
+        "trade_count": len(trade_rows),
+        "execution_run_count": len(execution_run_rows),
+        "execution_order_count": len(execution_order_rows),
+        "shadow_review_order_count": len(shadow_review_order_rows),
+        "shadow_review_portfolio_count": len(shadow_review_summary_rows),
+        "shadow_review_summary": shadow_review_summary_rows,
+        "shadow_feedback_summary": shadow_feedback_rows,
+        "feedback_calibration_summary": feedback_calibration_rows,
+        "feedback_automation_summary": feedback_automation_rows,
+        "feedback_automation_effect_overview": feedback_automation_effect_overview_rows,
+        "feedback_effect_market_summary": feedback_effect_market_summary_rows,
+        "feedback_threshold_suggestion_summary": feedback_threshold_suggestion_rows,
+        "feedback_threshold_history_overview": feedback_threshold_history_overview_rows,
+        "feedback_threshold_effect_overview": feedback_threshold_effect_overview_rows,
+        "feedback_threshold_cohort_overview": feedback_threshold_cohort_overview_rows,
+        "feedback_threshold_trial_alerts": feedback_threshold_trial_alert_rows,
+        "feedback_threshold_tuning_summary": feedback_threshold_tuning_rows,
+        "feedback_thresholds_config_path": str(thresholds_config_path),
+        "labeling_summary": labeling_summary,
+        "labeling_skip_summary": labeling_skip_rows,
+        "execution_effect_summary": execution_effect_rows,
+        "planned_execution_cost_summary": planned_execution_cost_rows,
+        "execution_session_summary": execution_session_rows,
+        "execution_hotspot_summary": execution_hotspot_rows,
+        "attribution_summary": attribution_rows,
+        "risk_review_summary": risk_review_rows,
+        "risk_feedback_summary": risk_feedback_rows,
+        "execution_feedback_summary": execution_feedback_rows,
+        "broker_snapshot_portfolio_count": len(broker_latest_rows_by_portfolio),
+        "avg_weekly_return": float(avg_weekly_return),
+        "avg_max_drawdown": float(avg_max_drawdown),
+        "gross_buy_value_total": float(buy_value_total),
+        "gross_sell_value_total": float(sell_value_total),
+        "best_portfolio": best_portfolio,
+        "worst_portfolio": worst_portfolio,
+    }
     write_json(
         str(out_dir / "weekly_review_summary.json"),
-        {
-            "window_start": since_ts,
-            "window_end": datetime.now(timezone.utc).isoformat(),
-            "market_filter": market_filter or "ALL",
-            "portfolio_filter": portfolio_filter or "ALL",
-            "portfolio_count": len(summary_rows),
-            "trade_count": len(trade_rows),
-            "execution_run_count": len(execution_run_rows),
-            "execution_order_count": len(execution_order_rows),
-            "shadow_review_order_count": len(shadow_review_order_rows),
-            "shadow_review_portfolio_count": len(shadow_review_summary_rows),
-            "shadow_review_summary": shadow_review_summary_rows,
-            "shadow_feedback_summary": shadow_feedback_rows,
-            "feedback_calibration_summary": feedback_calibration_rows,
-            "feedback_automation_summary": feedback_automation_rows,
-            "feedback_automation_effect_overview": feedback_automation_effect_overview_rows,
-            "feedback_effect_market_summary": feedback_effect_market_summary_rows,
-            "feedback_threshold_suggestion_summary": feedback_threshold_suggestion_rows,
-            "feedback_threshold_history_overview": feedback_threshold_history_overview_rows,
-            "feedback_threshold_effect_overview": feedback_threshold_effect_overview_rows,
-            "feedback_threshold_cohort_overview": feedback_threshold_cohort_overview_rows,
-            "feedback_threshold_trial_alerts": feedback_threshold_trial_alert_rows,
-            "feedback_threshold_tuning_summary": feedback_threshold_tuning_rows,
-            "feedback_thresholds_config_path": str(thresholds_config_path),
-            "labeling_summary": labeling_summary,
-            "labeling_skip_summary": labeling_skip_rows,
-            "execution_effect_summary": execution_effect_rows,
-            "planned_execution_cost_summary": planned_execution_cost_rows,
-            "execution_session_summary": execution_session_rows,
-            "execution_hotspot_summary": execution_hotspot_rows,
-            "attribution_summary": attribution_rows,
-            "risk_review_summary": risk_review_rows,
-            "risk_feedback_summary": risk_feedback_rows,
-            "execution_feedback_summary": execution_feedback_rows,
-            "broker_snapshot_portfolio_count": len(broker_latest_rows_by_portfolio),
-            "avg_weekly_return": float(avg_weekly_return),
-            "avg_max_drawdown": float(avg_max_drawdown),
-            "gross_buy_value_total": float(buy_value_total),
-            "gross_sell_value_total": float(sell_value_total),
-            "best_portfolio": best_portfolio,
-            "worst_portfolio": worst_portfolio,
-        },
+        summary_payload,
     )
     _write_md(
         out_dir / "weekly_review.md",
@@ -4233,6 +4264,13 @@ def main() -> None:
         execution_hotspot_rows,
         execution_feedback_rows,
         window_label,
+    )
+    summary_fields, artifact_fields = _cli_summary_payload(summary_payload, out_dir)
+    emit_cli_summary(
+        command="ibkr-quant-weekly-review",
+        headline="weekly investment review complete",
+        summary=summary_fields,
+        artifacts=artifact_fields,
     )
     log.info(
         "Wrote weekly investment review -> %s portfolios=%s trades=%s changes=%s sectors=%s",
