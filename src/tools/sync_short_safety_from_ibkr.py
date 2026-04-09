@@ -11,7 +11,7 @@ import datetime as dt
 
 import yaml
 
-from ..common.cli import build_cli_parser
+from ..common.cli import build_cli_parser, emit_cli_summary
 from ..common.logger import get_logger
 from ..common.markets import (
     add_market_args,
@@ -508,6 +508,31 @@ def _merge_missing_market_rows(base_rows: Dict[str, Dict[str, Any]], fallback_ro
     return merged
 
 
+def _cli_summary_payload(
+    *,
+    market: str,
+    symbol_count: int,
+    borrow_rows: int,
+    safety_rows: int,
+    delayed_fallback_enabled: bool,
+    borrow_out: Path,
+    safety_out: Path,
+) -> tuple[Dict[str, Any], Dict[str, Path]]:
+    return (
+        {
+            "market": str(market or "DEFAULT"),
+            "symbol_count": int(symbol_count),
+            "borrow_rows": int(borrow_rows),
+            "safety_rows": int(safety_rows),
+            "delayed_fallback_enabled": bool(delayed_fallback_enabled),
+        },
+        {
+            "borrow_csv": borrow_out,
+            "short_safety_csv": safety_out,
+        },
+    )
+
+
 def main() -> None:
     args = parse_args()
     market_code = resolve_market_code(getattr(args, "market", ""))
@@ -608,6 +633,21 @@ def main() -> None:
 
         _write_csv(borrow_out, borrow_rows, BORROW_FIELDS)
         _write_csv(safety_out, safety_rows, SAFETY_FIELDS)
+        summary_fields, artifact_fields = _cli_summary_payload(
+            market=market_code,
+            symbol_count=len(symbols),
+            borrow_rows=len(borrow_rows),
+            safety_rows=len(safety_rows),
+            delayed_fallback_enabled=allow_fallback,
+            borrow_out=borrow_out,
+            safety_out=safety_out,
+        )
+        emit_cli_summary(
+            command="ibkr-quant-short-safety-sync",
+            headline="short safety sync complete",
+            summary=summary_fields,
+            artifacts=artifact_fields,
+        )
         log.info("Wrote borrow reference -> %s rows=%s", borrow_out, len(borrow_rows))
         log.info("Wrote short safety reference -> %s rows=%s", safety_out, len(safety_rows))
     finally:

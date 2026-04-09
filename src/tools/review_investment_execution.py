@@ -10,7 +10,7 @@ from statistics import median
 from typing import Any, Dict, Iterable, List, Optional
 
 from ..analysis.report import write_csv, write_json
-from ..common.cli import build_cli_parser
+from ..common.cli import build_cli_parser, emit_cli_summary
 from ..common.logger import get_logger
 from ..common.markets import add_market_args, resolve_market_code, symbol_matches_market
 from ..common.runtime_paths import resolve_repo_path
@@ -837,6 +837,28 @@ def _write_md(path: Path, report: Dict[str, Any]) -> None:
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def _cli_summary_payload(report: Dict[str, Any], out_dir: Path) -> tuple[Dict[str, Any], Dict[str, Path]]:
+    summary = dict(report.get("summary") or {})
+    return (
+        {
+            "market": str(summary.get("market") or "ALL"),
+            "portfolio_id": str(summary.get("portfolio_id") or "ALL"),
+            "execution_runs": int(summary.get("execution_run_rows") or 0),
+            "planned_orders": int(summary.get("planned_order_rows") or 0),
+            "fills": int(summary.get("fill_rows") or 0),
+            "realized_net_pnl": f"{float(summary.get('realized_net_pnl', 0.0) or 0.0):.2f}",
+        },
+        {
+            "summary_json": out_dir / "investment_execution_summary.json",
+            "runs_csv": out_dir / "investment_execution_runs.csv",
+            "weekly_csv": out_dir / "investment_execution_weekly_summary.csv",
+            "orders_csv": out_dir / "investment_execution_orders.csv",
+            "fills_csv": out_dir / "investment_execution_fills.csv",
+            "markdown": out_dir / "investment_execution_kpi.md",
+        },
+    )
+
+
 def main() -> None:
     args = parse_args()
     db_path = resolve_repo_path(BASE_DIR, args.db)
@@ -860,18 +882,13 @@ def main() -> None:
     write_csv(str(out_dir / "investment_execution_symbols.csv"), report["symbol_rows"])
     _write_md(out_dir / "investment_execution_kpi.md", report)
 
-    summary = report["summary"]
-    print(
-        f"market={summary.get('market')} portfolio={summary.get('portfolio_id')} "
-        f"runs={summary.get('execution_run_rows')} orders={summary.get('planned_order_rows')} "
-        f"fills={summary.get('fill_rows')} net_pnl={float(summary.get('realized_net_pnl', 0.0) or 0.0):.2f}"
+    summary_fields, artifact_fields = _cli_summary_payload(report, out_dir)
+    emit_cli_summary(
+        command="ibkr-quant-execution-review",
+        headline="execution review complete",
+        summary=summary_fields,
+        artifacts=artifact_fields,
     )
-    print(f"summary_json={out_dir / 'investment_execution_summary.json'}")
-    print(f"runs_csv={out_dir / 'investment_execution_runs.csv'}")
-    print(f"weekly_csv={out_dir / 'investment_execution_weekly_summary.csv'}")
-    print(f"orders_csv={out_dir / 'investment_execution_orders.csv'}")
-    print(f"fills_csv={out_dir / 'investment_execution_fills.csv'}")
-    print(f"markdown={out_dir / 'investment_execution_kpi.md'}")
     log.info("Wrote investment execution KPI -> %s runs=%s orders=%s fills=%s", out_dir / "investment_execution_kpi.md", len(report["run_rows"]), len(report["order_rows"]), len(report["fill_rows"]))
 
 

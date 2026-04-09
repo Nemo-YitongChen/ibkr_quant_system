@@ -1,11 +1,39 @@
 from __future__ import annotations
 
 import argparse
-from typing import Sequence
+from pathlib import Path
+from typing import Any, Mapping, Sequence
 
 
 class CliHelpFormatter(argparse.ArgumentDefaultsHelpFormatter, argparse.RawDescriptionHelpFormatter):
     """Show default values while preserving multi-line help layout."""
+
+
+def _format_cli_value(value: Any) -> str:
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
+def emit_cli_summary(
+    *,
+    command: str,
+    headline: str,
+    summary: Mapping[str, Any] | None = None,
+    artifacts: Mapping[str, Any] | None = None,
+) -> None:
+    prefix = f"{command}: " if str(command).strip() else ""
+    print(f"{prefix}{headline}")
+    if summary:
+        print("summary:")
+        for key, value in summary.items():
+            print(f"  {key}: {_format_cli_value(value)}")
+    if artifacts:
+        print("artifacts:")
+        for key, value in artifacts.items():
+            print(f"  {key}: {_format_cli_value(value)}")
 
 
 def build_cli_parser(

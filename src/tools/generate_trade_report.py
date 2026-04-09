@@ -14,7 +14,7 @@ from ..analysis.plan import TradePlanConfig, make_trade_plan
 from ..analysis.report import write_csv, write_json, write_md
 from ..analysis.scoring import ReportScoringConfig, overlay_symbol
 from ..analysis.universe import build_candidates
-from ..common.cli import build_cli_parser
+from ..common.cli import build_cli_parser, emit_cli_summary
 from ..common.logger import get_logger
 from ..common.markets import (
     add_market_args,
@@ -298,6 +298,35 @@ def _scanner_symbols(ib, md, db_path: str, args: argparse.Namespace, cache_names
     except Exception as e:
         log.warning(f"scanner failed: {type(e).__name__} {e}")
         return []
+
+
+def _cli_summary_payload(
+    *,
+    market: str,
+    out_dir: Path,
+    candidate_count: int,
+    ranked_count: int,
+    plan_count: int,
+    scanner_enabled: bool,
+    watchlist_name: str = "",
+) -> tuple[Dict[str, Any], Dict[str, Path]]:
+    return (
+        {
+            "market": str(market or "DEFAULT"),
+            "candidate_count": int(candidate_count),
+            "ranked_count": int(ranked_count),
+            "plan_count": int(plan_count),
+            "scanner_enabled": bool(scanner_enabled),
+            "watchlist": str(watchlist_name or "-"),
+        },
+        {
+            "report_md": out_dir / "report.md",
+            "ranked_csv": out_dir / "ranked_candidates.csv",
+            "trade_plan_csv": out_dir / "trade_plan.csv",
+            "universe_csv": out_dir / "universe_candidates.csv",
+            "enrichment_json": out_dir / "enrichment.json",
+        },
+    )
 
 
 def main() -> None:
@@ -659,6 +688,21 @@ def main() -> None:
         }
         write_md(str(out_dir / "report.md"), "Daily Trade Candidate Report", ranked, plans, context)
 
+        summary_fields, artifact_fields = _cli_summary_payload(
+            market=resolved_market,
+            out_dir=out_dir,
+            candidate_count=len(candidates),
+            ranked_count=len(ranked),
+            plan_count=len(plans),
+            scanner_enabled=bool(args.use_scanner),
+            watchlist_name=Path(watchlist_yaml).name if watchlist_yaml else "",
+        )
+        emit_cli_summary(
+            command="ibkr-quant-trade-report",
+            headline="trade report generated",
+            summary=summary_fields,
+            artifacts=artifact_fields,
+        )
         log.info(f"Wrote report -> {out_dir / 'report.md'} (ranked={len(ranked)} plans={len(plans)})")
     finally:
         try:

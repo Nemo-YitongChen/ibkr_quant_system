@@ -10,7 +10,7 @@ import yaml
 from ib_insync import IB  # type: ignore
 
 from ..analysis.report import write_csv, write_json
-from ..common.cli import build_cli_parser
+from ..common.cli import build_cli_parser, emit_cli_summary
 from ..common.logger import get_logger
 from ..common.markets import add_market_args, market_config_path, resolve_market_code
 from ..common.runtime_paths import resolve_repo_path
@@ -413,6 +413,25 @@ def _build_skip_summary_rows(skip_rows: List[Dict[str, Any]]) -> List[Dict[str, 
     return rows
 
 
+def _cli_summary_payload(summary: Dict[str, Any], out_dir: Path) -> tuple[Dict[str, Any], Dict[str, Path]]:
+    return (
+        {
+            "market": str(summary.get("market") or "ALL"),
+            "portfolio_id": str(summary.get("portfolio_id") or "ALL"),
+            "stage": str(summary.get("stage") or "ALL"),
+            "labeled_rows": int(summary.get("labeled_rows") or 0),
+            "skipped_rows": int(summary.get("skipped_rows") or 0),
+            "horizons": ",".join(str(x) for x in list(summary.get("horizons") or [])),
+        },
+        {
+            "outcomes_csv": out_dir / "investment_candidate_outcomes.csv",
+            "skip_details_csv": out_dir / "investment_candidate_outcome_skip_details.csv",
+            "skip_summary_csv": out_dir / "investment_candidate_outcome_skip_summary.csv",
+            "summary_json": out_dir / "investment_candidate_outcomes_summary.json",
+        },
+    )
+
+
 def main() -> None:
     args = parse_args()
     market = resolve_market_code(getattr(args, "market", "")) or ""
@@ -513,12 +532,13 @@ def main() -> None:
         "skip_summary_rows": skip_summary_rows,
     }
     write_json(str(out_dir / "investment_candidate_outcomes_summary.json"), summary)
-    print(
-        f"market={market or 'ALL'} stage={stage or 'ALL'} labeled_rows={len(written_rows)} "
-        f"skipped_rows={skipped} horizons={','.join(str(x) for x in horizons)}"
+    summary_fields, artifact_fields = _cli_summary_payload(summary, out_dir)
+    emit_cli_summary(
+        command="ibkr-quant-label-snapshots",
+        headline="snapshot labeling complete",
+        summary=summary_fields,
+        artifacts=artifact_fields,
     )
-    print(f"outcomes_csv={out_dir / 'investment_candidate_outcomes.csv'}")
-    print(f"summary_json={out_dir / 'investment_candidate_outcomes_summary.json'}")
 
 
 if __name__ == "__main__":
