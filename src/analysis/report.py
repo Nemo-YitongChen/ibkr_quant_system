@@ -103,6 +103,8 @@ def write_md(
 
     summary = context.get("summary", {})
     market_profile = dict(context.get("market_profile", {}) or {})
+    market_structure = dict(context.get("market_structure", {}) or {})
+    adaptive_strategy = dict(context.get("adaptive_strategy", {}) or {})
     lines.append("## Market Summary")
     lines.append(
         f"- 市场波动: VIX={float(summary.get('vix', 0.0) or 0.0):.2f}；"
@@ -185,6 +187,8 @@ def write_investment_md(
 
     summary = context.get("summary", {})
     market_profile = dict(context.get("market_profile", {}) or {})
+    market_structure = dict(context.get("market_structure", {}) or {})
+    adaptive_strategy = dict(context.get("adaptive_strategy", {}) or {})
     lines.append("## Market Summary")
     lines.append(
         f"- 市场波动: VIX={float(summary.get('vix', 0.0) or 0.0):.2f}；"
@@ -321,6 +325,103 @@ def write_investment_md(
         notes = [str(note).strip() for note in list(market_profile.get("notes", []) or []) if str(note).strip()]
         if notes:
             lines.append("- 市场备注: " + " ".join(notes))
+    if market_structure:
+        costs = dict(market_structure.get("costs", {}) or {})
+        order_rules = dict(market_structure.get("order_rules", {}) or {})
+        account_rules = dict(market_structure.get("account_rules", {}) or {})
+        prefs = dict(market_structure.get("portfolio_preferences", {}) or {})
+        total_one_side_bps = float(costs.get("total_one_side_bps", 0.0) or 0.0)
+        lines.append(
+            f"- 市场约束: scope={market_structure.get('market_scope', '') or 'N/A'}；"
+            f"settlement={account_rules.get('standard_settlement_cycle', '') or 'N/A'}；"
+            f"buy_lot={int(order_rules.get('buy_lot_multiple', 0) or 0) or 1}；"
+            f"day_turnaround={'Y' if bool(order_rules.get('day_turnaround_allowed', True)) else 'N'}；"
+            f"price_limit={float(order_rules.get('price_limit_pct', 0.0) or 0.0):.1f}%"
+            if float(order_rules.get("price_limit_pct", 0.0) or 0.0) > 0.0
+            else f"- 市场约束: scope={market_structure.get('market_scope', '') or 'N/A'}；"
+            f"settlement={account_rules.get('standard_settlement_cycle', '') or 'N/A'}；"
+            f"buy_lot={int(order_rules.get('buy_lot_multiple', 0) or 0) or 1}；"
+            f"day_turnaround={'Y' if bool(order_rules.get('day_turnaround_allowed', True)) else 'N'}；"
+            "price_limit=N/A"
+        )
+        if total_one_side_bps > 0.0:
+            lines.append(
+                f"- 市场费用底座: one_side={total_one_side_bps:.2f}bps；"
+                f"broker={float(costs.get('broker_commission_bps', 0.0) or 0.0):.2f}；"
+                f"stamp={float(costs.get('stamp_duty_bps_per_side', 0.0) or 0.0):.2f}；"
+                f"trading_fee={float(costs.get('trading_fee_bps_per_side', 0.0) or 0.0):.3f}；"
+                f"settlement_fee={float(costs.get('settlement_fee_bps_per_side', 0.0) or 0.0):.3f}"
+            )
+        if float(account_rules.get("pdt_margin_equity_min", 0.0) or 0.0) > 0.0:
+            lines.append(
+                f"- 账户门槛: intraday_margin_equity_min={float(account_rules.get('pdt_margin_equity_min', 0.0) or 0.0):.0f}"
+            )
+        if prefs:
+            lines.append(
+                f"- 组合偏好: instruments={','.join(str(x) for x in list(prefs.get('preferred_instruments', []) or [])) or 'N/A'}；"
+                f"signal_freq={prefs.get('recommended_signal_frequency', '') or 'N/A'}；"
+                f"rebalance_freq={prefs.get('recommended_rebalance_frequency', '') or 'N/A'}；"
+                f"max_rebalances_per_week={int(prefs.get('max_rebalances_per_week', 0) or 0)}"
+            )
+        ms_notes = [str(note).strip() for note in list(market_structure.get("notes", []) or []) if str(note).strip()]
+        if ms_notes:
+            lines.append("- 市场结构备注: " + " ".join(ms_notes))
+    if adaptive_strategy:
+        regime = dict(adaptive_strategy.get("regime", {}) or {})
+        relative_strength = dict(adaptive_strategy.get("relative_strength", {}) or {})
+        pullback = dict(adaptive_strategy.get("pullback", {}) or {})
+        defensive = dict(adaptive_strategy.get("defensive", {}) or {})
+        execution = dict(adaptive_strategy.get("execution", {}) or {})
+        lines.append(
+            f"- 策略框架: {adaptive_strategy.get('name', '') or 'N/A'}；"
+            f"{adaptive_strategy.get('display_name', '') or 'N/A'}；"
+            f"bias={adaptive_strategy.get('implementation_bias', '') or 'N/A'}"
+        )
+        if adaptive_strategy.get("objective"):
+            lines.append(f"- 策略目标: {adaptive_strategy.get('objective', '')}")
+        lines.append(
+            f"- Regime 规则: uptrend=Close>MA{int(regime.get('long_ma_window', 0) or 0)} & "
+            f"MA{int(regime.get('short_ma_window', 0) or 0)}>MA{int(regime.get('long_ma_window', 0) or 0)}；"
+            f"sideways_high_vol=|Close/MA{int(regime.get('long_ma_window', 0) or 0)}-1|<={float(regime.get('near_long_ma_band_pct', 0.0) or 0.0) * 100.0:.1f}% "
+            f"& Vol{int(regime.get('short_vol_window', 0) or 0)}>{float(regime.get('high_vol_multiple_vs_long', 0.0) or 0.0):.2f}xVol{int(regime.get('long_vol_window', 0) or 0)}；"
+            f"downtrend=Close<MA{int(regime.get('long_ma_window', 0) or 0)} & MA{int(regime.get('short_ma_window', 0) or 0)}<MA{int(regime.get('long_ma_window', 0) or 0)}"
+        )
+        lines.append(
+            f"- 相对强弱: R{int(relative_strength.get('lookback_long', 0) or 0)} / "
+            f"R{int(relative_strength.get('lookback_mid', 0) or 0)} / "
+            f"Vol{int(relative_strength.get('volatility_window', 0) or 0)}；"
+            f"weights={float(relative_strength.get('long_weight', 0.0) or 0.0):.2f}/"
+            f"{float(relative_strength.get('mid_weight', 0.0) or 0.0):.2f}/"
+            f"-{float(relative_strength.get('volatility_penalty_weight', 0.0) or 0.0):.2f}；"
+            f"price_filter=MA{int(relative_strength.get('price_filter_ma_window', 0) or 0)}"
+        )
+        lines.append(
+            f"- 回撤模块: above_MA{int(pullback.get('trend_ma_window', 0) or 0)}；"
+            f"R{int(pullback.get('long_strength_lookback', 0) or 0)} top "
+            f"{float(pullback.get('long_strength_top_pct', 0.0) or 0.0) * 100.0:.0f}% ; "
+            f"R{int(pullback.get('short_pullback_lookback', 0) or 0)} bottom "
+            f"{float(pullback.get('short_pullback_bottom_pct', 0.0) or 0.0) * 100.0:.0f}% ; "
+            f"size_scale={float(pullback.get('size_scale_vs_trend', 0.0) or 0.0):.2f}"
+        )
+        lines.append(
+            f"- 防守模式: small={float(defensive.get('small_max_gross', 0.0) or 0.0) * 100.0:.0f}% gross；"
+            f"medium={float(defensive.get('medium_max_gross', 0.0) or 0.0) * 100.0:.0f}% gross；"
+            f"large={float(defensive.get('large_max_gross', 0.0) or 0.0) * 100.0:.0f}% gross；"
+            f"entry_threshold_raise={float(defensive.get('raise_entry_threshold_pct', 0.0) or 0.0) * 100.0:.0f}%"
+        )
+        lines.append(
+            f"- 执行节奏: signal={execution.get('signal_frequency', '') or 'N/A'}；"
+            f"rebalance={execution.get('rebalance_frequency', '') or 'N/A'}；"
+            f"high_vol_max={int(execution.get('max_rebalances_per_week_high_vol', 0) or 0)}/week；"
+            f"entry_delay={int(execution.get('entry_delay_min_minutes', 0) or 0)}-"
+            f"{int(execution.get('entry_delay_max_minutes', 0) or 0)}m after open"
+        )
+        rollout = [dict(item) for item in list(adaptive_strategy.get("rollout", []) or []) if isinstance(item, dict)]
+        if rollout:
+            lines.append("- 实施顺序: " + " | ".join(f"{row.get('name', '')}:{row.get('scope', '')}" for row in rollout[:3]))
+        strategy_notes = [str(note).strip() for note in list(adaptive_strategy.get("notes", []) or []) if str(note).strip()]
+        if strategy_notes:
+            lines.append("- 策略备注: " + " ".join(strategy_notes))
     lines.append(
         "- Regime 说明: 这里只解释趋势、动量、波动、回撤四个维度的综合含义，不展示具体参数和阈值。"
     )

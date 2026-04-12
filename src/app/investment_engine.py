@@ -11,9 +11,12 @@ from zoneinfo import ZoneInfo
 
 from ..analysis.investment_portfolio import InvestmentPaperConfig, build_target_allocations
 from ..analysis.report import write_csv, write_json
+from ..common.account_profile import AccountProfilesConfig, apply_account_profile
+from ..common.market_structure import MarketStructureConfig
 from ..common.markets import market_timezone_name, symbol_matches_market
 from ..common.logger import get_logger
 from ..common.storage import Storage, build_investment_risk_history_row
+from ..common.user_explanations import annotate_execution_user_explanation
 from ..events.models import ExecutionIntent
 from ..ibkr.contracts import make_stock_contract
 from ..ibkr.fills import FillProcessor
@@ -65,6 +68,8 @@ class InvestmentExecutionResult:
     order_value: float
     gap_symbols: int
     gap_notional: float
+    account_profile_name: str = ""
+    account_profile_label: str = ""
 
 
 @dataclass(frozen=True)
@@ -88,6 +93,8 @@ class InvestmentExecutionEngine:
         portfolio_id: str,
         paper_cfg: InvestmentPaperConfig,
         execution_cfg: InvestmentExecutionConfig,
+        market_structure: MarketStructureConfig | None = None,
+        account_profiles: AccountProfilesConfig | None = None,
     ):
         self.ib = ib
         self.account_id = str(account_id)
@@ -96,6 +103,8 @@ class InvestmentExecutionEngine:
         self.portfolio_id = str(portfolio_id)
         self.paper_cfg = paper_cfg
         self.execution_cfg = execution_cfg
+        self.market_structure = market_structure or MarketStructureConfig(market=self.market)
+        self.account_profiles = account_profiles or AccountProfilesConfig()
         self.order_service = InvestmentOrderService(
             ib,
             self.account_id,
@@ -402,6 +411,7 @@ class InvestmentExecutionEngine:
                 blocked_row["risk_alert_trend_label"] = str(summary.get("trend_label") or "")
                 blocked_row["risk_alert_reason"] = str(summary.get("diagnosis") or "")
                 blocked_row["reason"] = f"{str(row.get('reason') or '')}|risk_alert_review".strip("|")
+                annotate_execution_user_explanation(blocked_row)
                 blocked.append(blocked_row)
                 continue
 
@@ -416,6 +426,7 @@ class InvestmentExecutionEngine:
                     f"组合风险告警期间，{session.session_label}优先延后新增仓位。{str(summary.get('diagnosis') or '')}"
                 ).strip()
                 blocked_row["reason"] = f"{str(row.get('reason') or '')}|risk_alert_defer".strip("|")
+                annotate_execution_user_explanation(blocked_row)
                 blocked.append(blocked_row)
                 continue
 
@@ -512,6 +523,8 @@ class InvestmentExecutionEngine:
         return {
             "submitted": bool(submitted),
             "parent_order_key": str(row.get("parent_order_key", "") or ""),
+            "user_reason_label": str(row.get("user_reason_label", "") or ""),
+            "user_reason": str(row.get("user_reason", "") or ""),
             "quality_status": row.get("quality_status", ""),
             "quality_reason": row.get("quality_reason", ""),
             "manual_review_status": row.get("manual_review_status", ""),
@@ -620,6 +633,7 @@ class InvestmentExecutionEngine:
                 blocked_row["hotspot_penalty_slippage_proxy_bps_add"] = float(slippage_proxy_bps_add)
                 blocked_row["hotspot_penalty_session_labels"] = session_labels
                 blocked_row["reason"] = f"{str(row.get('reason') or '')}|execution_hotspot_defer".strip("|")
+                annotate_execution_user_explanation(blocked_row)
                 blocked.append(blocked_row)
                 continue
 
@@ -634,6 +648,7 @@ class InvestmentExecutionEngine:
             slowed_row["hotspot_penalty_expected_cost_bps_add"] = float(expected_cost_bps_add)
             slowed_row["hotspot_penalty_slippage_proxy_bps_add"] = float(slippage_proxy_bps_add)
             slowed_row["hotspot_penalty_session_labels"] = session_labels
+            annotate_execution_user_explanation(slowed_row)
             slowed_row["hotspot_adv_scale"] = round(max(0.25, min(1.0, base_adv_scale - penalty_strength * 0.75)), 6)
             slowed_row["hotspot_split_trigger_scale"] = round(max(0.20, min(1.0, base_split_scale - penalty_strength * 0.55)), 6)
             slowed_row["hotspot_limit_buffer_scale"] = round(
@@ -1070,6 +1085,7 @@ class InvestmentExecutionEngine:
             if status and status in allowed_statuses:
                 row["opportunity_status"] = status
                 row["opportunity_reason"] = str(opp.get("entry_reason") or "")
+                annotate_execution_user_explanation(row)
                 filtered.append(row)
                 continue
             blocked_row = dict(row)
@@ -1080,6 +1096,7 @@ class InvestmentExecutionEngine:
                 f"{str(row.get('reason') or '')}|opportunity_"
                 f"{(status or 'missing').lower()}"
             ).strip("|")
+            annotate_execution_user_explanation(blocked_row)
             blocked.append(blocked_row)
         return filtered, blocked
 
@@ -1140,12 +1157,14 @@ class InvestmentExecutionEngine:
                     f"{', '.join(block_reasons)}"
                 )
                 blocked_row["reason"] = f"{str(row.get('reason') or '')}|quality_gate".strip("|")
+                annotate_execution_user_explanation(blocked_row)
                 blocked.append(blocked_row)
                 continue
             row["quality_status"] = "QUALITY_OK"
             row["quality_reason"] = (
                 f"model={model_score:.3f} exec={execution_score:.3f} ready={int(bool(execution_ready))}"
             )
+            annotate_execution_user_explanation(row)
             filtered.append(row)
         return filtered, blocked
 
@@ -1175,10 +1194,12 @@ class InvestmentExecutionEngine:
                     f"single order {order_pct:.3f} exceeds auto-submit threshold {threshold:.3f}"
                 )
                 blocked_row["reason"] = f"{str(row.get('reason') or '')}|manual_review".strip("|")
+                annotate_execution_user_explanation(blocked_row)
                 blocked.append(blocked_row)
                 continue
             row["manual_review_status"] = "AUTO_OK"
             row["manual_review_reason"] = f"single order {order_pct:.3f} within threshold {threshold:.3f}"
+            annotate_execution_user_explanation(row)
             filtered.append(row)
         return filtered, blocked
 
@@ -1248,6 +1269,7 @@ class InvestmentExecutionEngine:
                     f"score={shadow_score:.3f} prob={shadow_prob:.3f} samples={shadow_training_samples}"
                 )
                 blocked_row["reason"] = f"{str(row.get('reason') or '')}|shadow_ml_review".strip("|")
+                annotate_execution_user_explanation(blocked_row)
                 blocked.append(blocked_row)
                 continue
 
@@ -1255,7 +1277,66 @@ class InvestmentExecutionEngine:
             row["shadow_review_reason"] = (
                 f"score={shadow_score:.3f} prob={shadow_prob:.3f} samples={shadow_training_samples}"
             )
+            annotate_execution_user_explanation(row)
             filtered.append(row)
+        return filtered, blocked
+
+    def _apply_market_structure_review_gates(
+        self,
+        report_path: Path,
+        order_rows: List[Dict[str, Any]],
+        *,
+        broker_equity: float,
+    ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        if not self.market_structure.small_account_requires_etf_first(broker_equity):
+            return order_rows, []
+
+        allowed_asset_classes = {
+            str(item).strip().lower()
+            for item in list(self.market_structure.portfolio_preferences.small_account_preferred_asset_classes or [])
+            if str(item).strip()
+        }
+        if not allowed_asset_classes:
+            return order_rows, []
+
+        candidate_map = self._read_candidate_map(report_path)
+        if not candidate_map:
+            return order_rows, []
+
+        filtered: List[Dict[str, Any]] = []
+        blocked: List[Dict[str, Any]] = []
+        threshold = float(self.market_structure.account_rules.prefer_etf_only_below_equity or 0.0)
+        for row in order_rows:
+            if not self._is_long_entry_order(row):
+                filtered.append(row)
+                continue
+
+            symbol = str(row.get("symbol") or "").upper()
+            candidate = dict(candidate_map.get((symbol, "LONG")) or {})
+            asset_class = str(candidate.get("asset_class") or "").strip().lower()
+            if asset_class and asset_class in allowed_asset_classes:
+                row["market_structure_review_status"] = "AUTO_OK"
+                row["market_structure_review_reason"] = (
+                    f"equity={float(broker_equity):.2f} below ETF-first threshold {threshold:.2f}, asset_class={asset_class}"
+                )
+                filtered.append(row)
+                continue
+
+            blocked_row = dict(row)
+            blocked_row["status"] = "REVIEW_REQUIRED"
+            blocked_row["manual_review_status"] = "REVIEW_REQUIRED"
+            blocked_row["market_structure_review_status"] = "REVIEW_REQUIRED"
+            blocked_row["market_structure_review_reason"] = (
+                f"equity={float(broker_equity):.2f} below ETF-first threshold {threshold:.2f}; "
+                f"asset_class={asset_class or 'unknown'} not in {sorted(allowed_asset_classes)}"
+            )
+            blocked_row["manual_review_reason"] = (
+                "market structure review required: "
+                f"small-account flow prefers {', '.join(sorted(allowed_asset_classes))}"
+            )
+            blocked_row["reason"] = f"{str(row.get('reason') or '')}|market_structure_review".strip("|")
+            annotate_execution_user_explanation(blocked_row)
+            blocked.append(blocked_row)
         return filtered, blocked
 
     def _snapshot_broker_positions(self, run_id: str, positions: Dict[str, Dict[str, Any]], *, source: str, equity: float) -> None:
@@ -1358,6 +1439,7 @@ class InvestmentExecutionEngine:
             f"- Broker equity: {float(summary.get('broker_equity', 0.0) or 0.0):.2f}",
             f"- Broker cash: {float(summary.get('broker_cash', 0.0) or 0.0):.2f}",
             f"- Target equity: {float(summary.get('target_equity', 0.0) or 0.0):.2f}",
+            f"- Account profile: {str(dict(summary.get('account_profile', {}) or {}).get('summary_text', '-') or '-')}",
             f"- Target invested weight: {float(summary.get('target_invested_weight', 0.0) or 0.0):.3f}",
             f"- Target capital: {float(summary.get('target_capital', 0.0) or 0.0):.2f}",
             f"- Theoretical execution capacity: {float(summary.get('theoretical_execution_capacity', 0.0) or 0.0):.2f}",
@@ -1381,6 +1463,7 @@ class InvestmentExecutionEngine:
             f"- Deferred by hotspot: {int(summary.get('blocked_hotspot_penalty_order_count', 0) or 0)}",
             f"- Needs manual review: {int(summary.get('blocked_manual_review_order_count', 0) or 0)}",
             f"- Shadow ML review required: {int(summary.get('blocked_shadow_review_order_count', 0) or 0)}",
+            f"- Market-structure review required: {int(summary.get('blocked_market_structure_review_order_count', 0) or 0)}",
             f"- Size review required: {int(summary.get('blocked_size_review_order_count', 0) or 0)}",
             f"- Parent orders: {int(summary.get('parent_order_count', 0) or 0)}",
             f"- Split child orders: {int(summary.get('split_order_count', 0) or 0)}",
@@ -1412,8 +1495,10 @@ class InvestmentExecutionEngine:
                 lines.append(
                     f"- {row['action']} {row['symbol']} delta_qty={float(row.get('delta_qty', 0.0) or 0.0):.0f} "
                     f"ref={float(row.get('ref_price', 0.0) or 0.0):.2f} value={float(row.get('order_value', 0.0) or 0.0):.2f} "
-                    f"status={row.get('status', '')} reason={row.get('reason', '')}"
+                    f"status={row.get('status', '')} reason={row.get('user_reason_label', row.get('reason', ''))}"
                 )
+                if str(row.get("user_reason", "") or "").strip():
+                    lines.append(f"  explain: {str(row.get('user_reason', '') or '').strip()}")
                 lines.append(
                     f"  plan_cost: expected_bps={float(row.get('expected_cost_bps', 0.0) or 0.0):.1f} "
                     f"expected_cost={float(row.get('expected_cost_value', 0.0) or 0.0):.2f} "
@@ -1462,180 +1547,175 @@ class InvestmentExecutionEngine:
         account = self._account_snapshot()
         broker_equity = float(account.get("netliq", 0.0) or 0.0)
         broker_cash = float(account.get("cash", 0.0) or 0.0)
-        lot_size_map = load_lot_size_map(self.execution_cfg.lot_size_file)
-        current_positions = self._broker_positions()
-        priority_context_map = self._build_priority_context_map(candidates, plans)
-        raw_order_rows = build_investment_rebalance_orders(
-            current_positions,
-            price_map=price_map,
-            target_weights=target_weights,
-            broker_equity=broker_equity,
-            broker_cash=broker_cash,
-            cfg=self.execution_cfg,
-            lot_size_map=lot_size_map,
-            priority_context_map=priority_context_map,
-        )
-        quality_allowed, quality_blocked = self._apply_quality_gates(report_path, raw_order_rows)
-        opportunity_allowed, opportunity_blocked = self._apply_opportunity_gates(report_path, quality_allowed)
-        shadow_review_allowed, shadow_review_blocked = self._apply_shadow_ml_review_gates(report_path, opportunity_allowed)
-        risk_alert_allowed, risk_alert_blocked, risk_alert_summary = self._apply_portfolio_risk_alert_gates(
-            shadow_review_allowed,
+        base_execution_cfg = self.execution_cfg
+        effective_execution_cfg, account_profile = apply_account_profile(
+            base_execution_cfg,
+            self.account_profiles,
             broker_equity=broker_equity,
         )
-        hotspot_allowed, hotspot_blocked = self._apply_execution_hotspot_gates(risk_alert_allowed)
-        split_allowed, liquidity_blocked = self._split_execution_orders(hotspot_allowed)
-        order_rows, size_review_blocked = self._apply_manual_review_gates(
-            split_allowed,
-            broker_equity=broker_equity,
-        )
-        risk_alert_manual_review_blocked = [
-            dict(row)
-            for row in risk_alert_blocked
-            if str(row.get("manual_review_status") or "").upper() == "REVIEW_REQUIRED"
-        ]
-        risk_alert_deferred_blocked = [
-            dict(row)
-            for row in risk_alert_blocked
-            if str(row.get("status") or "").upper() == "DEFERRED_RISK_ALERT"
-        ]
-        manual_review_blocked = list(shadow_review_blocked) + list(size_review_blocked) + list(risk_alert_manual_review_blocked)
-        blocked_rows = (
-            list(quality_blocked)
-            + list(opportunity_blocked)
-            + list(risk_alert_deferred_blocked)
-            + list(hotspot_blocked)
-            + list(liquidity_blocked)
-            + list(manual_review_blocked)
-        )
+        self.execution_cfg = effective_execution_cfg
+        try:
+            lot_size_map = load_lot_size_map(self.execution_cfg.lot_size_file)
+            current_positions = self._broker_positions()
+            priority_context_map = self._build_priority_context_map(candidates, plans)
+            raw_order_rows = build_investment_rebalance_orders(
+                current_positions,
+                price_map=price_map,
+                target_weights=target_weights,
+                broker_equity=broker_equity,
+                broker_cash=broker_cash,
+                cfg=self.execution_cfg,
+                lot_size_map=lot_size_map,
+                priority_context_map=priority_context_map,
+            )
+            quality_allowed, quality_blocked = self._apply_quality_gates(report_path, raw_order_rows)
+            opportunity_allowed, opportunity_blocked = self._apply_opportunity_gates(report_path, quality_allowed)
+            shadow_review_allowed, shadow_review_blocked = self._apply_shadow_ml_review_gates(report_path, opportunity_allowed)
+            structure_review_allowed, structure_review_blocked = self._apply_market_structure_review_gates(
+                report_path,
+                shadow_review_allowed,
+                broker_equity=broker_equity,
+            )
+            risk_alert_allowed, risk_alert_blocked, risk_alert_summary = self._apply_portfolio_risk_alert_gates(
+                structure_review_allowed,
+                broker_equity=broker_equity,
+            )
+            hotspot_allowed, hotspot_blocked = self._apply_execution_hotspot_gates(risk_alert_allowed)
+            split_allowed, liquidity_blocked = self._split_execution_orders(hotspot_allowed)
+            order_rows, size_review_blocked = self._apply_manual_review_gates(
+                split_allowed,
+                broker_equity=broker_equity,
+            )
+            risk_alert_manual_review_blocked = [
+                dict(row)
+                for row in risk_alert_blocked
+                if str(row.get("manual_review_status") or "").upper() == "REVIEW_REQUIRED"
+            ]
+            risk_alert_deferred_blocked = [
+                dict(row)
+                for row in risk_alert_blocked
+                if str(row.get("status") or "").upper() == "DEFERRED_RISK_ALERT"
+            ]
+            manual_review_blocked = (
+                list(shadow_review_blocked)
+                + list(structure_review_blocked)
+                + list(size_review_blocked)
+                + list(risk_alert_manual_review_blocked)
+            )
+            blocked_rows = (
+                list(quality_blocked)
+                + list(opportunity_blocked)
+                + list(risk_alert_deferred_blocked)
+                + list(hotspot_blocked)
+                + list(liquidity_blocked)
+                + list(manual_review_blocked)
+            )
+            order_rows = [annotate_execution_user_explanation(dict(row)) for row in order_rows]
+            blocked_rows = [annotate_execution_user_explanation(dict(row)) for row in blocked_rows]
 
-        run_id = f"{self.market}-exec-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid4().hex[:8]}"
-        reserve_cash = max(float(self.execution_cfg.cash_buffer_floor), broker_equity * float(self.execution_cfg.min_cash_buffer_pct))
-        account_target_capital = broker_equity * max(0.0, min(1.0, float(self.execution_cfg.account_allocation_pct)))
-        target_equity = max(0.0, min(account_target_capital, broker_equity - reserve_cash))
-        target_qty_map = self._target_qty_map(
-            target_weights=target_weights,
-            price_map=price_map,
-            investable_equity=target_equity,
-            lot_size_map=lot_size_map,
-        )
-        target_capital = self._target_capital_gap(
-            current_positions=current_positions,
-            target_qty_map=target_qty_map,
-            price_map=price_map,
-        )
-        theoretical_execution_capacity = min(
-            float(target_capital),
-            float(broker_equity) * max(0.0, float(self.execution_cfg.max_order_value_pct)) * max(0, int(self.execution_cfg.max_orders_per_run)),
-        )
-        planned_order_value = self._planned_deployment_value(order_rows)
-        idle_capital_gap = max(0.0, float(target_capital) - float(planned_order_value))
-        planned_spread_cost_total = float(sum(_to_float(row.get("expected_spread_cost"), 0.0) for row in order_rows))
-        planned_slippage_cost_total = float(sum(_to_float(row.get("expected_slippage_cost"), 0.0) for row in order_rows))
-        planned_commission_cost_total = float(sum(_to_float(row.get("expected_commission_cost"), 0.0) for row in order_rows))
-        planned_execution_cost_total = float(sum(_to_float(row.get("expected_cost_value"), 0.0) for row in order_rows))
-        parent_order_keys = {
-            str(row.get("parent_order_key") or f"fallback:{idx}")
-            for idx, row in enumerate(order_rows, start=1)
-        }
-        adv_capped_parent_keys = {
-            str(row.get("parent_order_key") or f"fallback:{idx}")
-            for idx, row in enumerate(order_rows, start=1)
-            if bool(row.get("adv_capped", False))
-        }
-        hotspot_slowed_parent_keys = {
-            str(row.get("parent_order_key") or f"fallback:{idx}")
-            for idx, row in enumerate(order_rows, start=1)
-            if bool(row.get("hotspot_penalty_applied", False))
-        }
-        risk_alert_slowed_parent_keys = {
-            str(row.get("parent_order_key") or f"fallback:{idx}")
-            for idx, row in enumerate(order_rows, start=1)
-            if bool(row.get("risk_alert_applied", False))
-        }
-        split_order_count = int(max(0, len(order_rows) - len(parent_order_keys)))
-        adv_capped_order_count = int(len(adv_capped_parent_keys))
-        hotspot_slowed_order_count = int(len(hotspot_slowed_parent_keys))
-        risk_alert_slowed_order_count = int(len(risk_alert_slowed_parent_keys))
-        session_profile = self._current_execution_session_profile()
-        self.storage.insert_investment_execution_run(
-            {
-                "run_id": run_id,
-                "market": self.market,
-                "portfolio_id": self.portfolio_id,
-                "account_id": self.account_id,
-                "report_dir": str(report_path),
-                "submitted": int(bool(submit)),
-                "order_count": int(len(order_rows)),
-                "order_value": float(sum(float(row.get("order_value") or 0.0) for row in order_rows)),
-                "broker_equity": float(broker_equity),
-                "broker_cash": float(broker_cash),
-                "target_equity": float(target_equity),
-                "details": json.dumps(
-                    {
-                        "target_weights": target_weights,
-                        "risk_overlay": risk_overlay,
-                        "blocked_order_count": int(len(blocked_rows)),
-                        "blocked_manual_review_order_count": int(len(manual_review_blocked)),
-                        "blocked_shadow_review_order_count": int(len(shadow_review_blocked)),
-                        "blocked_size_review_order_count": int(len(size_review_blocked)),
-                        "blocked_risk_alert_order_count": int(len(risk_alert_blocked)),
-                        "blocked_risk_alert_manual_review_order_count": int(len(risk_alert_manual_review_blocked)),
-                        "blocked_risk_alert_deferred_order_count": int(len(risk_alert_deferred_blocked)),
-                        "blocked_hotspot_penalty_order_count": int(len(hotspot_blocked)),
-                        "blocked_liquidity_order_count": int(len(liquidity_blocked)),
-                        "target_capital": float(target_capital),
-                        "theoretical_execution_capacity": float(theoretical_execution_capacity),
-                        "planned_order_value": float(planned_order_value),
-                        "idle_capital_gap": float(idle_capital_gap),
-                        "planned_spread_cost_total": float(planned_spread_cost_total),
-                        "planned_slippage_cost_total": float(planned_slippage_cost_total),
-                        "planned_commission_cost_total": float(planned_commission_cost_total),
-                        "planned_execution_cost_total": float(planned_execution_cost_total),
-                        "split_order_count": int(split_order_count),
-                        "adv_capped_order_count": int(adv_capped_order_count),
-                        "risk_alert_slowed_order_count": int(risk_alert_slowed_order_count),
-                        "hotspot_slowed_order_count": int(hotspot_slowed_order_count),
-                        "risk_alert_summary": dict(risk_alert_summary or {}),
-                        "execution_session_bucket": session_profile.session_bucket,
-                        "execution_session_label": session_profile.session_label,
-                        "execution_style": session_profile.execution_style,
-                    },
-                    ensure_ascii=False,
-                ),
+            run_id = f"{self.market}-exec-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid4().hex[:8]}"
+            reserve_cash = max(float(self.execution_cfg.cash_buffer_floor), broker_equity * float(self.execution_cfg.min_cash_buffer_pct))
+            account_target_capital = broker_equity * max(0.0, min(1.0, float(self.execution_cfg.account_allocation_pct)))
+            target_equity = max(0.0, min(account_target_capital, broker_equity - reserve_cash))
+            target_qty_map = self._target_qty_map(
+                target_weights=target_weights,
+                price_map=price_map,
+                investable_equity=target_equity,
+                lot_size_map=lot_size_map,
+            )
+            target_capital = self._target_capital_gap(
+                current_positions=current_positions,
+                target_qty_map=target_qty_map,
+                price_map=price_map,
+            )
+            theoretical_execution_capacity = min(
+                float(target_capital),
+                float(broker_equity) * max(0.0, float(self.execution_cfg.max_order_value_pct)) * max(0, int(self.execution_cfg.max_orders_per_run)),
+            )
+            planned_order_value = self._planned_deployment_value(order_rows)
+            idle_capital_gap = max(0.0, float(target_capital) - float(planned_order_value))
+            planned_spread_cost_total = float(sum(_to_float(row.get("expected_spread_cost"), 0.0) for row in order_rows))
+            planned_slippage_cost_total = float(sum(_to_float(row.get("expected_slippage_cost"), 0.0) for row in order_rows))
+            planned_commission_cost_total = float(sum(_to_float(row.get("expected_commission_cost"), 0.0) for row in order_rows))
+            planned_execution_cost_total = float(sum(_to_float(row.get("expected_cost_value"), 0.0) for row in order_rows))
+            parent_order_keys = {
+                str(row.get("parent_order_key") or f"fallback:{idx}")
+                for idx, row in enumerate(order_rows, start=1)
             }
-        )
-        self._snapshot_broker_positions(run_id, current_positions, source="before", equity=broker_equity)
-
-        for row in blocked_rows:
-            intent = self._intent_from_row(row)
-            row["execution_intent_json"] = json.dumps(intent.to_dict(), ensure_ascii=False)
-            details_payload = self._build_order_details_payload(row, submitted=False)
-            self.storage.insert_investment_execution_order(
+            adv_capped_parent_keys = {
+                str(row.get("parent_order_key") or f"fallback:{idx}")
+                for idx, row in enumerate(order_rows, start=1)
+                if bool(row.get("adv_capped", False))
+            }
+            hotspot_slowed_parent_keys = {
+                str(row.get("parent_order_key") or f"fallback:{idx}")
+                for idx, row in enumerate(order_rows, start=1)
+                if bool(row.get("hotspot_penalty_applied", False))
+            }
+            risk_alert_slowed_parent_keys = {
+                str(row.get("parent_order_key") or f"fallback:{idx}")
+                for idx, row in enumerate(order_rows, start=1)
+                if bool(row.get("risk_alert_applied", False))
+            }
+            split_order_count = int(max(0, len(order_rows) - len(parent_order_keys)))
+            adv_capped_order_count = int(len(adv_capped_parent_keys))
+            hotspot_slowed_order_count = int(len(hotspot_slowed_parent_keys))
+            risk_alert_slowed_order_count = int(len(risk_alert_slowed_parent_keys))
+            session_profile = self._current_execution_session_profile()
+            self.storage.insert_investment_execution_run(
                 {
                     "run_id": run_id,
                     "market": self.market,
                     "portfolio_id": self.portfolio_id,
-                    "symbol": row["symbol"],
-                    "action": row["action"],
-                    "current_qty": float(row.get("current_qty") or 0.0),
-                    "target_qty": float(row.get("target_qty") or 0.0),
-                    "delta_qty": float(row.get("delta_qty") or 0.0),
-                    "ref_price": float(row.get("ref_price") or 0.0),
-                    "target_weight": float(row.get("target_weight") or 0.0),
-                        "order_value": float(row.get("order_value") or 0.0),
-                        "order_type": str(row.get("execution_order_type") or self.execution_cfg.order_type),
-                        "broker_order_id": 0,
-                        "status": str(row.get("status") or "BLOCKED"),
-                        "reason": str(row.get("reason") or ""),
-                    "execution_intent_json": json.dumps(intent.to_dict(), ensure_ascii=False),
-                    "details": json.dumps(details_payload, ensure_ascii=False),
+                    "account_id": self.account_id,
+                    "report_dir": str(report_path),
+                    "submitted": int(bool(submit)),
+                    "order_count": int(len(order_rows)),
+                    "order_value": float(sum(float(row.get("order_value") or 0.0) for row in order_rows)),
+                    "broker_equity": float(broker_equity),
+                    "broker_cash": float(broker_cash),
+                    "target_equity": float(target_equity),
+                    "details": json.dumps(
+                        {
+                            "target_weights": target_weights,
+                            "risk_overlay": risk_overlay,
+                            "blocked_order_count": int(len(blocked_rows)),
+                            "blocked_manual_review_order_count": int(len(manual_review_blocked)),
+                            "blocked_shadow_review_order_count": int(len(shadow_review_blocked)),
+                            "blocked_market_structure_review_order_count": int(len(structure_review_blocked)),
+                            "blocked_size_review_order_count": int(len(size_review_blocked)),
+                            "blocked_risk_alert_order_count": int(len(risk_alert_blocked)),
+                            "blocked_risk_alert_manual_review_order_count": int(len(risk_alert_manual_review_blocked)),
+                            "blocked_risk_alert_deferred_order_count": int(len(risk_alert_deferred_blocked)),
+                            "blocked_hotspot_penalty_order_count": int(len(hotspot_blocked)),
+                            "blocked_liquidity_order_count": int(len(liquidity_blocked)),
+                            "target_capital": float(target_capital),
+                            "theoretical_execution_capacity": float(theoretical_execution_capacity),
+                            "planned_order_value": float(planned_order_value),
+                            "idle_capital_gap": float(idle_capital_gap),
+                            "planned_spread_cost_total": float(planned_spread_cost_total),
+                            "planned_slippage_cost_total": float(planned_slippage_cost_total),
+                            "planned_commission_cost_total": float(planned_commission_cost_total),
+                            "planned_execution_cost_total": float(planned_execution_cost_total),
+                            "split_order_count": int(split_order_count),
+                            "adv_capped_order_count": int(adv_capped_order_count),
+                            "risk_alert_slowed_order_count": int(risk_alert_slowed_order_count),
+                            "hotspot_slowed_order_count": int(hotspot_slowed_order_count),
+                            "risk_alert_summary": dict(risk_alert_summary or {}),
+                            "execution_session_bucket": session_profile.session_bucket,
+                            "execution_session_label": session_profile.session_label,
+                            "execution_style": session_profile.execution_style,
+                            "account_profile": dict(account_profile or {}),
+                        },
+                        ensure_ascii=False,
+                    ),
                 }
             )
+            self._snapshot_broker_positions(run_id, current_positions, source="before", equity=broker_equity)
 
-        for row in order_rows:
-            row["market"] = self.market
-            intent = self._intent_from_row(row)
-            if not submit:
+            for row in blocked_rows:
+                intent = self._intent_from_row(row)
+                row["execution_intent_json"] = json.dumps(intent.to_dict(), ensure_ascii=False)
                 details_payload = self._build_order_details_payload(row, submitted=False)
                 self.storage.insert_investment_execution_order(
                     {
@@ -1652,198 +1732,229 @@ class InvestmentExecutionEngine:
                         "order_value": float(row.get("order_value") or 0.0),
                         "order_type": str(row.get("execution_order_type") or self.execution_cfg.order_type),
                         "broker_order_id": 0,
-                        "status": "PLANNED",
+                        "status": str(row.get("status") or "BLOCKED"),
                         "reason": str(row.get("reason") or ""),
                         "execution_intent_json": json.dumps(intent.to_dict(), ensure_ascii=False),
                         "details": json.dumps(details_payload, ensure_ascii=False),
                     }
                 )
-                row["status"] = "PLANNED"
+
+            for row in order_rows:
+                row["market"] = self.market
+                intent = self._intent_from_row(row)
+                if not submit:
+                    details_payload = self._build_order_details_payload(row, submitted=False)
+                    self.storage.insert_investment_execution_order(
+                        {
+                            "run_id": run_id,
+                            "market": self.market,
+                            "portfolio_id": self.portfolio_id,
+                            "symbol": row["symbol"],
+                            "action": row["action"],
+                            "current_qty": float(row.get("current_qty") or 0.0),
+                            "target_qty": float(row.get("target_qty") or 0.0),
+                            "delta_qty": float(row.get("delta_qty") or 0.0),
+                            "ref_price": float(row.get("ref_price") or 0.0),
+                            "target_weight": float(row.get("target_weight") or 0.0),
+                            "order_value": float(row.get("order_value") or 0.0),
+                            "order_type": str(row.get("execution_order_type") or self.execution_cfg.order_type),
+                            "broker_order_id": 0,
+                            "status": "PLANNED",
+                            "reason": str(row.get("reason") or ""),
+                            "execution_intent_json": json.dumps(intent.to_dict(), ensure_ascii=False),
+                            "details": json.dumps(details_payload, ensure_ascii=False),
+                        }
+                    )
+                    row["status"] = "PLANNED"
+                    row["execution_intent_json"] = json.dumps(intent.to_dict(), ensure_ascii=False)
+                    continue
+
+                contract = make_stock_contract(row["symbol"])
+                trade = self.order_service.place_rebalance_order(
+                    contract,
+                    symbol=row["symbol"],
+                    action=row["action"],
+                    qty=float(row.get("delta_qty") or 0.0),
+                    params=InvestmentOrderParams(
+                        order_type=str(row.get("execution_order_type") or self.execution_cfg.order_type),
+                        ref_price=float(row.get("ref_price") or 0.0),
+                        limit_price_buffer_bps=float(row.get("limit_price_buffer_bps_effective") or self.execution_cfg.limit_price_buffer_bps),
+                        tif=str(self.execution_cfg.tif or "DAY"),
+                        outside_rth=bool(self.execution_cfg.outside_rth),
+                        route_exchange=str(self.execution_cfg.route_exchange or ""),
+                        include_overnight=bool(self.execution_cfg.include_overnight),
+                    ),
+                    portfolio_id=self.portfolio_id,
+                    execution_run_id=run_id,
+                    plan_row=row,
+                )
+                row["broker_order_id"] = int(trade.order.orderId)
+                row["status"] = "SUBMITTED"
                 row["execution_intent_json"] = json.dumps(intent.to_dict(), ensure_ascii=False)
-                continue
+                if (
+                    int(row.get("slice_count", 1) or 1) > 1
+                    and int(row.get("slice_index", 1) or 1) < int(row.get("slice_count", 1) or 1)
+                    and float(self.execution_cfg.split_order_pause_sec or 0.0) > 0.0
+                ):
+                    self.ib.sleep(float(self.execution_cfg.split_order_pause_sec))
 
-            contract = make_stock_contract(row["symbol"])
-            trade = self.order_service.place_rebalance_order(
-                contract,
-                symbol=row["symbol"],
-                action=row["action"],
-                qty=float(row.get("delta_qty") or 0.0),
-                params=InvestmentOrderParams(
-                    order_type=str(row.get("execution_order_type") or self.execution_cfg.order_type),
-                    ref_price=float(row.get("ref_price") or 0.0),
-                    limit_price_buffer_bps=float(row.get("limit_price_buffer_bps_effective") or self.execution_cfg.limit_price_buffer_bps),
-                    tif=str(self.execution_cfg.tif or "DAY"),
-                    outside_rth=bool(self.execution_cfg.outside_rth),
-                    route_exchange=str(self.execution_cfg.route_exchange or ""),
-                    include_overnight=bool(self.execution_cfg.include_overnight),
+            if submit and order_rows:
+                deadline = datetime.now(timezone.utc).timestamp() + float(self.execution_cfg.wait_fill_sec)
+                while datetime.now(timezone.utc).timestamp() < deadline:
+                    self.ib.sleep(float(self.execution_cfg.poll_interval_sec))
+
+            positions_after = self._broker_positions()
+            self._snapshot_broker_positions(run_id, positions_after, source="after", equity=broker_equity)
+            gap_symbols = 0
+            gap_notional = 0.0
+            for symbol in sorted(set(target_qty_map) | set(positions_after)):
+                actual_qty = _to_float(positions_after.get(symbol, {}).get("qty"), 0.0)
+                target_qty = _to_float(target_qty_map.get(symbol), 0.0)
+                if abs(actual_qty - target_qty) < 1e-9:
+                    continue
+                gap_symbols += 1
+                ref_price = _to_float(price_map.get(symbol), _to_float(positions_after.get(symbol, {}).get("market_price"), 0.0))
+                gap_notional += abs(actual_qty - target_qty) * max(0.0, ref_price)
+
+            summary = {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "run_id": run_id,
+                "market": self.market,
+                "portfolio_id": self.portfolio_id,
+                "report_dir": str(report_path),
+                "submitted": bool(submit),
+                "broker_equity": float(broker_equity),
+                "broker_cash": float(broker_cash),
+                "target_equity": float(target_equity),
+                "target_invested_weight": float(sum(abs(float(v)) for v in target_weights.values())),
+                "target_net_weight": float(sum(float(v) for v in target_weights.values())),
+                "account_profile": dict(account_profile or {}),
+                "target_capital": float(target_capital),
+                "theoretical_execution_capacity": float(theoretical_execution_capacity),
+                "planned_order_value": float(planned_order_value),
+                "idle_capital_gap": float(idle_capital_gap),
+                "risk_overlay_enabled": bool(risk_overlay.get("enabled", False)),
+                "risk_dynamic_scale": float(risk_overlay.get("dynamic_scale", 1.0) or 1.0),
+                "risk_dynamic_net_exposure": float(risk_overlay.get("dynamic_net_exposure", 0.0) or 0.0),
+                "risk_dynamic_gross_exposure": float(risk_overlay.get("dynamic_gross_exposure", 0.0) or 0.0),
+                "risk_dynamic_short_exposure": float(risk_overlay.get("dynamic_short_exposure", 0.0) or 0.0),
+                "risk_applied_net_exposure": float(risk_overlay.get("applied_net_exposure", 0.0) or 0.0),
+                "risk_applied_gross_exposure": float(risk_overlay.get("applied_gross_exposure", 0.0) or 0.0),
+                "risk_avg_pair_correlation": float(risk_overlay.get("final_avg_pair_correlation", risk_overlay.get("avg_pair_correlation", 0.0)) or 0.0),
+                "risk_max_pair_correlation": float(risk_overlay.get("final_max_pair_correlation", risk_overlay.get("max_pair_correlation", 0.0)) or 0.0),
+                "risk_stress_index_drop_loss": float(
+                    dict(risk_overlay.get("final_stress_scenarios", {}) or risk_overlay.get("stress_scenarios", {})).get("index_drop", {}).get("loss", 0.0) or 0.0
                 ),
-                portfolio_id=self.portfolio_id,
-                execution_run_id=run_id,
-                plan_row=row,
+                "risk_stress_volatility_spike_loss": float(
+                    dict(risk_overlay.get("final_stress_scenarios", {}) or risk_overlay.get("stress_scenarios", {})).get("volatility_spike", {}).get("loss", 0.0) or 0.0
+                ),
+                "risk_stress_liquidity_shock_loss": float(
+                    dict(risk_overlay.get("final_stress_scenarios", {}) or risk_overlay.get("stress_scenarios", {})).get("liquidity_shock", {}).get("loss", 0.0) or 0.0
+                ),
+                "risk_stress_worst_loss": float(risk_overlay.get("final_stress_worst_loss", risk_overlay.get("stress_worst_loss", 0.0)) or 0.0),
+                "risk_stress_worst_scenario": str(risk_overlay.get("final_stress_worst_scenario", risk_overlay.get("stress_worst_scenario", "")) or ""),
+                "risk_stress_worst_scenario_label": str(
+                    risk_overlay.get("final_stress_worst_scenario_label", risk_overlay.get("stress_worst_scenario_label", "")) or ""
+                ),
+                "risk_returns_based_enabled": bool(risk_overlay.get("final_returns_based_enabled", risk_overlay.get("returns_based_enabled", False))),
+                "risk_returns_based_symbol_count": int(risk_overlay.get("final_returns_based_symbol_count", risk_overlay.get("returns_based_symbol_count", 0)) or 0),
+                "risk_returns_based_sample_size": int(risk_overlay.get("final_returns_based_sample_size", risk_overlay.get("returns_based_sample_size", 0)) or 0),
+                "risk_returns_based_var_95_1d": float(
+                    risk_overlay.get("final_returns_based_var_95_1d", risk_overlay.get("returns_based_var_95_1d", 0.0)) or 0.0
+                ),
+                "risk_returns_based_portfolio_vol_1d": float(
+                    risk_overlay.get("final_returns_based_portfolio_vol_1d", risk_overlay.get("returns_based_portfolio_vol_1d", 0.0)) or 0.0
+                ),
+                "risk_returns_based_downside_vol_1d": float(
+                    risk_overlay.get("final_returns_based_downside_vol_1d", risk_overlay.get("returns_based_downside_vol_1d", 0.0)) or 0.0
+                ),
+                "risk_correlation_source": str(risk_overlay.get("correlation_source", "") or ""),
+                "risk_top_sector_share": float(risk_overlay.get("top_sector_share", 0.0) or 0.0),
+                "risk_notes": list(risk_overlay.get("notes", []) or []),
+                "risk_correlation_reduced_symbols": list(risk_overlay.get("correlation_reduced_symbols", []) or []),
+                "order_count": int(len(order_rows)),
+                "blocked_order_count": int(len(blocked_rows)),
+                "blocked_quality_order_count": int(len(quality_blocked)),
+                "blocked_opportunity_order_count": int(len(opportunity_blocked)),
+                "blocked_liquidity_order_count": int(len(liquidity_blocked)),
+                "blocked_hotspot_penalty_order_count": int(len(hotspot_blocked)),
+                "blocked_manual_review_order_count": int(len(manual_review_blocked)),
+                "blocked_shadow_review_order_count": int(len(shadow_review_blocked)),
+                "blocked_market_structure_review_order_count": int(len(structure_review_blocked)),
+                "blocked_size_review_order_count": int(len(size_review_blocked)),
+                "blocked_risk_alert_order_count": int(len(risk_alert_blocked)),
+                "blocked_risk_alert_manual_review_order_count": int(len(risk_alert_manual_review_blocked)),
+                "blocked_risk_alert_deferred_order_count": int(len(risk_alert_deferred_blocked)),
+                "parent_order_count": int(len(raw_order_rows)),
+                "split_order_count": int(split_order_count),
+                "adv_capped_order_count": int(adv_capped_order_count),
+                "risk_alert_slowed_order_count": int(risk_alert_slowed_order_count),
+                "hotspot_slowed_order_count": int(hotspot_slowed_order_count),
+                "risk_alert_level": str(risk_alert_summary.get("alert_level", "") or ""),
+                "risk_alert_trend_label": str(risk_alert_summary.get("trend_label", "") or ""),
+                "risk_alert_source_label": str(risk_alert_summary.get("source_label", "") or ""),
+                "risk_alert_diagnosis": str(risk_alert_summary.get("diagnosis", "") or ""),
+                "execution_session_bucket": str(session_profile.session_bucket),
+                "execution_session_label": str(session_profile.session_label),
+                "execution_style": str(session_profile.execution_style),
+                "planned_spread_cost_total": float(planned_spread_cost_total),
+                "planned_slippage_cost_total": float(planned_slippage_cost_total),
+                "planned_commission_cost_total": float(planned_commission_cost_total),
+                "planned_execution_cost_total": float(planned_execution_cost_total),
+                "order_value": float(sum(float(row.get("order_value") or 0.0) for row in order_rows)),
+                "gap_symbols": int(gap_symbols),
+                "gap_notional": float(gap_notional),
+            }
+            self.storage.update_investment_execution_run(
+                run_id,
+                details=json.dumps({"target_weights": target_weights, "risk_overlay": risk_overlay, "summary": summary}, ensure_ascii=False),
             )
-            row["broker_order_id"] = int(trade.order.orderId)
-            row["status"] = "SUBMITTED"
-            row["execution_intent_json"] = json.dumps(intent.to_dict(), ensure_ascii=False)
-            # lite 版本不做真正的时间加权调度器，只在同一母单的子单之间插入短暂停顿，减少一次性打满。
-            if (
-                int(row.get("slice_count", 1) or 1) > 1
-                and int(row.get("slice_index", 1) or 1) < int(row.get("slice_count", 1) or 1)
-                and float(self.execution_cfg.split_order_pause_sec or 0.0) > 0.0
-            ):
-                self.ib.sleep(float(self.execution_cfg.split_order_pause_sec))
-
-        if submit and order_rows:
-            deadline = datetime.now(timezone.utc).timestamp() + float(self.execution_cfg.wait_fill_sec)
-            while datetime.now(timezone.utc).timestamp() < deadline:
-                self.ib.sleep(float(self.execution_cfg.poll_interval_sec))
-
-        positions_after = self._broker_positions()
-        self._snapshot_broker_positions(run_id, positions_after, source="after", equity=broker_equity)
-        gap_symbols = 0
-        gap_notional = 0.0
-        for symbol in sorted(set(target_qty_map) | set(positions_after)):
-            actual_qty = _to_float(positions_after.get(symbol, {}).get("qty"), 0.0)
-            target_qty = _to_float(target_qty_map.get(symbol), 0.0)
-            if abs(actual_qty - target_qty) < 1e-9:
-                continue
-            gap_symbols += 1
-            ref_price = _to_float(price_map.get(symbol), _to_float(positions_after.get(symbol, {}).get("market_price"), 0.0))
-            gap_notional += abs(actual_qty - target_qty) * max(0.0, ref_price)
-
-        summary = {
-            "ts": datetime.now(timezone.utc).isoformat(),
-            "run_id": run_id,
-            "market": self.market,
-            "portfolio_id": self.portfolio_id,
-            "report_dir": str(report_path),
-            "submitted": bool(submit),
-            "broker_equity": float(broker_equity),
-            "broker_cash": float(broker_cash),
-            "target_equity": float(target_equity),
-            "target_invested_weight": float(sum(abs(float(v)) for v in target_weights.values())),
-            "target_net_weight": float(sum(float(v) for v in target_weights.values())),
-            "target_capital": float(target_capital),
-            "theoretical_execution_capacity": float(theoretical_execution_capacity),
-            "planned_order_value": float(planned_order_value),
-            "idle_capital_gap": float(idle_capital_gap),
-            "risk_overlay_enabled": bool(risk_overlay.get("enabled", False)),
-            "risk_dynamic_scale": float(risk_overlay.get("dynamic_scale", 1.0) or 1.0),
-            "risk_dynamic_net_exposure": float(risk_overlay.get("dynamic_net_exposure", 0.0) or 0.0),
-            "risk_dynamic_gross_exposure": float(risk_overlay.get("dynamic_gross_exposure", 0.0) or 0.0),
-            "risk_dynamic_short_exposure": float(risk_overlay.get("dynamic_short_exposure", 0.0) or 0.0),
-            "risk_applied_net_exposure": float(risk_overlay.get("applied_net_exposure", 0.0) or 0.0),
-            "risk_applied_gross_exposure": float(risk_overlay.get("applied_gross_exposure", 0.0) or 0.0),
-            "risk_avg_pair_correlation": float(risk_overlay.get("final_avg_pair_correlation", risk_overlay.get("avg_pair_correlation", 0.0)) or 0.0),
-            "risk_max_pair_correlation": float(risk_overlay.get("final_max_pair_correlation", risk_overlay.get("max_pair_correlation", 0.0)) or 0.0),
-            "risk_stress_index_drop_loss": float(
-                dict(risk_overlay.get("final_stress_scenarios", {}) or risk_overlay.get("stress_scenarios", {})).get("index_drop", {}).get("loss", 0.0) or 0.0
-            ),
-            "risk_stress_volatility_spike_loss": float(
-                dict(risk_overlay.get("final_stress_scenarios", {}) or risk_overlay.get("stress_scenarios", {})).get("volatility_spike", {}).get("loss", 0.0) or 0.0
-            ),
-            "risk_stress_liquidity_shock_loss": float(
-                dict(risk_overlay.get("final_stress_scenarios", {}) or risk_overlay.get("stress_scenarios", {})).get("liquidity_shock", {}).get("loss", 0.0) or 0.0
-            ),
-            "risk_stress_worst_loss": float(risk_overlay.get("final_stress_worst_loss", risk_overlay.get("stress_worst_loss", 0.0)) or 0.0),
-            "risk_stress_worst_scenario": str(risk_overlay.get("final_stress_worst_scenario", risk_overlay.get("stress_worst_scenario", "")) or ""),
-            "risk_stress_worst_scenario_label": str(
-                risk_overlay.get("final_stress_worst_scenario_label", risk_overlay.get("stress_worst_scenario_label", "")) or ""
-            ),
-            "risk_returns_based_enabled": bool(risk_overlay.get("final_returns_based_enabled", risk_overlay.get("returns_based_enabled", False))),
-            "risk_returns_based_symbol_count": int(risk_overlay.get("final_returns_based_symbol_count", risk_overlay.get("returns_based_symbol_count", 0)) or 0),
-            "risk_returns_based_sample_size": int(risk_overlay.get("final_returns_based_sample_size", risk_overlay.get("returns_based_sample_size", 0)) or 0),
-            "risk_returns_based_var_95_1d": float(
-                risk_overlay.get("final_returns_based_var_95_1d", risk_overlay.get("returns_based_var_95_1d", 0.0)) or 0.0
-            ),
-            "risk_returns_based_portfolio_vol_1d": float(
-                risk_overlay.get("final_returns_based_portfolio_vol_1d", risk_overlay.get("returns_based_portfolio_vol_1d", 0.0)) or 0.0
-            ),
-            "risk_returns_based_downside_vol_1d": float(
-                risk_overlay.get("final_returns_based_downside_vol_1d", risk_overlay.get("returns_based_downside_vol_1d", 0.0)) or 0.0
-            ),
-            "risk_correlation_source": str(risk_overlay.get("correlation_source", "") or ""),
-            "risk_top_sector_share": float(risk_overlay.get("top_sector_share", 0.0) or 0.0),
-            "risk_notes": list(risk_overlay.get("notes", []) or []),
-            "risk_correlation_reduced_symbols": list(risk_overlay.get("correlation_reduced_symbols", []) or []),
-            "order_count": int(len(order_rows)),
-            "blocked_order_count": int(len(blocked_rows)),
-            "blocked_quality_order_count": int(len(quality_blocked)),
-            "blocked_opportunity_order_count": int(len(opportunity_blocked)),
-            "blocked_liquidity_order_count": int(len(liquidity_blocked)),
-            "blocked_hotspot_penalty_order_count": int(len(hotspot_blocked)),
-            "blocked_manual_review_order_count": int(len(manual_review_blocked)),
-            "blocked_shadow_review_order_count": int(len(shadow_review_blocked)),
-            "blocked_size_review_order_count": int(len(size_review_blocked)),
-            "blocked_risk_alert_order_count": int(len(risk_alert_blocked)),
-            "blocked_risk_alert_manual_review_order_count": int(len(risk_alert_manual_review_blocked)),
-            "blocked_risk_alert_deferred_order_count": int(len(risk_alert_deferred_blocked)),
-            "parent_order_count": int(len(raw_order_rows)),
-            "split_order_count": int(split_order_count),
-            "adv_capped_order_count": int(adv_capped_order_count),
-            "risk_alert_slowed_order_count": int(risk_alert_slowed_order_count),
-            "hotspot_slowed_order_count": int(hotspot_slowed_order_count),
-            "risk_alert_level": str(risk_alert_summary.get("alert_level", "") or ""),
-            "risk_alert_trend_label": str(risk_alert_summary.get("trend_label", "") or ""),
-            "risk_alert_source_label": str(risk_alert_summary.get("source_label", "") or ""),
-            "risk_alert_diagnosis": str(risk_alert_summary.get("diagnosis", "") or ""),
-            "execution_session_bucket": str(session_profile.session_bucket),
-            "execution_session_label": str(session_profile.session_label),
-            "execution_style": str(session_profile.execution_style),
-            "planned_spread_cost_total": float(planned_spread_cost_total),
-            "planned_slippage_cost_total": float(planned_slippage_cost_total),
-            "planned_commission_cost_total": float(planned_commission_cost_total),
-            "planned_execution_cost_total": float(planned_execution_cost_total),
-            "order_value": float(sum(float(row.get("order_value") or 0.0) for row in order_rows)),
-            "gap_symbols": int(gap_symbols),
-            "gap_notional": float(gap_notional),
-        }
-        self.storage.update_investment_execution_run(
-            run_id,
-            details=json.dumps({"target_weights": target_weights, "risk_overlay": risk_overlay, "summary": summary}, ensure_ascii=False),
-        )
-        # execution 风险轨迹单独落盘，方便 dashboard/周报直接查“真实执行时采用了哪一版风险预算”。
-        self.storage.insert_investment_risk_history(
-            build_investment_risk_history_row(
+            self.storage.insert_investment_risk_history(
+                build_investment_risk_history_row(
+                    run_id=run_id,
+                    ts=summary["ts"],
+                    market=self.market,
+                    portfolio_id=self.portfolio_id,
+                    source_kind="execution",
+                    source_label="执行",
+                    report_dir=str(report_path),
+                    account_id=str(self.account_id or ""),
+                    risk_overlay=risk_overlay,
+                    details={
+                        "submitted": bool(submit),
+                        "order_count": int(len(order_rows)),
+                        "blocked_order_count": int(len(blocked_rows)),
+                        "execution_session_bucket": str(summary.get("execution_session_bucket") or ""),
+                        "execution_style": str(summary.get("execution_style") or ""),
+                    },
+                )
+            )
+            plan_rows = list(order_rows) + list(blocked_rows)
+            write_csv(str(report_path / "investment_execution_plan.csv"), plan_rows)
+            write_json(str(report_path / "investment_execution_summary.json"), summary)
+            self._write_md(report_path / "investment_execution_report.md", summary, plan_rows)
+            log.info(
+                "Investment execution complete: submitted=%s orders=%s gap_symbols=%s gap_notional=%.2f",
+                submit,
+                len(order_rows),
+                gap_symbols,
+                gap_notional,
+            )
+            return InvestmentExecutionResult(
                 run_id=run_id,
-                ts=summary["ts"],
-                market=self.market,
                 portfolio_id=self.portfolio_id,
-                source_kind="execution",
-                source_label="执行",
+                market=self.market,
                 report_dir=str(report_path),
-                account_id=str(self.account_id or ""),
-                risk_overlay=risk_overlay,
-                details={
-                    "submitted": bool(submit),
-                    "order_count": int(len(order_rows)),
-                    "blocked_order_count": int(len(blocked_rows)),
-                    "execution_session_bucket": str(summary.get("execution_session_bucket") or ""),
-                    "execution_style": str(summary.get("execution_style") or ""),
-                },
+                submitted=bool(submit),
+                broker_equity=float(broker_equity),
+                broker_cash=float(broker_cash),
+                target_equity=float(target_equity),
+                order_count=int(len(order_rows)),
+                order_value=float(sum(float(row.get("order_value") or 0.0) for row in order_rows)),
+                gap_symbols=int(gap_symbols),
+                gap_notional=float(gap_notional),
+                account_profile_name=str(dict(account_profile or {}).get("name", "") or ""),
+                account_profile_label=str(dict(account_profile or {}).get("label", "") or ""),
             )
-        )
-        plan_rows = list(order_rows) + list(blocked_rows)
-        write_csv(str(report_path / "investment_execution_plan.csv"), plan_rows)
-        write_json(str(report_path / "investment_execution_summary.json"), summary)
-        self._write_md(report_path / "investment_execution_report.md", summary, plan_rows)
-        log.info(
-            "Investment execution complete: submitted=%s orders=%s gap_symbols=%s gap_notional=%.2f",
-            submit,
-            len(order_rows),
-            gap_symbols,
-            gap_notional,
-        )
-        return InvestmentExecutionResult(
-            run_id=run_id,
-            portfolio_id=self.portfolio_id,
-            market=self.market,
-            report_dir=str(report_path),
-            submitted=bool(submit),
-            broker_equity=float(broker_equity),
-            broker_cash=float(broker_cash),
-            target_equity=float(target_equity),
-            order_count=int(len(order_rows)),
-            order_value=float(sum(float(row.get("order_value") or 0.0) for row in order_rows)),
-            gap_symbols=int(gap_symbols),
-            gap_notional=float(gap_notional),
-        )
+        finally:
+            self.execution_cfg = base_execution_cfg

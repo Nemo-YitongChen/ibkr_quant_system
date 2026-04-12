@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from src.tools.review_investment_weekly import _weekly_strategy_note
 from src.tools.review_weekly_io import read_csv_rows
 from src.tools.review_weekly_markdown import write_weekly_review_markdown
 from src.tools.review_weekly_thresholds import (
@@ -52,7 +53,25 @@ def test_read_csv_rows_and_markdown_writer(tmp_path: Path):
     out_path = tmp_path / "weekly_review.md"
     write_weekly_review_markdown(
         out_path,
-        summary_rows=[],
+        summary_rows=[
+            {
+                "portfolio_id": "US:watchlist",
+                "market": "US",
+                "weekly_return": 0.01,
+                "max_drawdown": -0.02,
+                "executed_rebalances": 1,
+                "turnover": 0.12,
+                "latest_equity": 100000.0,
+                "cash_after": 10000.0,
+                "holdings_count": 5,
+                "account_profile_label": "小资金",
+                "account_profile_summary": "先做 ETF 和高流动性基础工具，减少小额高频调仓。",
+                "market_rules_summary": "settlement=T+1 | buy_lot=1 | ETF-first below 25000.00",
+                "adaptive_strategy_name": "ACM-RS",
+                "adaptive_strategy_summary": "ACM-RS | RS=126/63/20 | rebalance=weekly | entry_delay=15-30m",
+                "weekly_strategy_note": "本周有 2 个新开仓机会因防守环境被降级为观察，先不把回撤信号直接转成加仓动作。",
+            }
+        ],
         trade_rows=[],
         broker_summary_rows=[],
         broker_diff_rows=[],
@@ -81,3 +100,18 @@ def test_read_csv_rows_and_markdown_writer(tmp_path: Path):
     text = out_path.read_text(encoding="utf-8")
     assert "# Weekly Investment Review" in text
     assert "## Broker Execution Summary" in text
+    assert "账户档位: 小资金" in text
+    assert "市场约束: settlement=T+1" in text
+    assert "策略框架: ACM-RS" in text
+    assert "周度解释: 本周有 2 个新开仓机会因防守环境被降级为观察" in text
+
+
+def test_weekly_strategy_note_prefers_defensive_cap_message() -> None:
+    note = _weekly_strategy_note(
+        market_rules={"research_only": False, "small_account_rule_active": True, "small_account_preferred_asset_classes": ["etf"]},
+        account_profile={"label": "小资金", "summary": "先做 ETF"},
+        adaptive_strategy={"name": "ACM-RS"},
+        opportunity_summary={"adaptive_strategy_wait_count": 2},
+        market_sentiment={"label": "DEFENSIVE"},
+    )
+    assert "2 个新开仓机会" in note

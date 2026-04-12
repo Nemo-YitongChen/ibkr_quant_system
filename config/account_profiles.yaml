@@ -1,0 +1,48 @@
+account_profiles:
+  default_profile: medium
+  profiles:
+    - name: small
+      label: 小资金
+      min_equity: 0
+      max_equity: 25000
+      summary: 先做 ETF 和高流动性基础工具，减少小额高频调仓。
+      preferred_instruments:
+        - ETF
+        - Large Cap
+      execution:
+        min_trade_value: 1000
+        max_order_value_pct: 0.12
+        max_orders_per_run: 5
+        account_allocation_pct: 0.25
+      notes:
+        - 适合低频、低换手、先验证闭环。
+        - 小资金优先控制订单数量和过小单笔。
+    - name: medium
+      label: 中等资金
+      min_equity: 25000
+      max_equity: 150000
+      summary: ETF + 高流动性大盘股并行，允许更均衡的组合展开。
+      preferred_instruments:
+        - ETF
+        - Large Cap
+      execution:
+        min_trade_value: 1500
+        max_order_value_pct: 0.08
+        max_orders_per_run: 8
+        account_allocation_pct: 0.35
+      notes:
+        - 适合 ETF baseline 扩展到高流动性股票。
+    - name: large
+      label: 大资金
+      min_equity: 150000
+      summary: 允许更分散的 basket，但单笔占比继续保守。
+      preferred_instruments:
+        - ETF
+        - Large Cap Basket
+      execution:
+        min_trade_value: 2500
+        max_order_value_pct: 0.05
+        max_orders_per_run: 12
+        account_allocation_pct: 0.45
+      notes:
+        - 更适合分批执行和容量约束。

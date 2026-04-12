@@ -2003,6 +2003,8 @@ class InvestmentModuleTests(unittest.TestCase):
             self.assertEqual(blocked[0]["status"], "REVIEW_REQUIRED")
             self.assertEqual(blocked[0]["manual_review_status"], "REVIEW_REQUIRED")
             self.assertIn("exceeds auto-submit threshold", blocked[0]["manual_review_reason"])
+            self.assertEqual(blocked[0]["user_reason_label"], "大额订单待人工确认")
+            self.assertIn("自动提交阈值", blocked[0]["user_reason"])
 
     def test_investment_execution_engine_routes_low_shadow_ml_order_to_manual_review(self):
         class DummyEvent:
@@ -2062,6 +2064,8 @@ class InvestmentModuleTests(unittest.TestCase):
             self.assertEqual(blocked[0]["manual_review_status"], "REVIEW_REQUIRED")
             self.assertEqual(blocked[0]["shadow_review_status"], "REVIEW_REQUIRED")
             self.assertIn("shadow ML burn-in requires review", blocked[0]["manual_review_reason"])
+            self.assertEqual(blocked[0]["user_reason_label"], "模型保护期复核")
+            self.assertIn("模型仍在保护期", blocked[0]["user_reason"])
             self.assertIn("shadow_ml_review", blocked[0]["reason"])
 
     def test_investment_execution_engine_defers_hotspot_symbol_in_open_session(self):

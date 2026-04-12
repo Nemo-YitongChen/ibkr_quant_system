@@ -9,7 +9,10 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from ..analysis.report import write_csv, write_json
+from ..common.account_profile import load_account_profiles, resolved_account_profile_summary
+from ..common.adaptive_strategy import adaptive_strategy_context, load_adaptive_strategy
 from ..common.cli import build_cli_parser, emit_cli_summary
+from ..common.market_structure import load_market_structure, market_structure_summary
 from .review_weekly_io import (
     load_json_file as _load_json_file,
     load_yaml_file as _load_yaml_file,
@@ -2470,6 +2473,118 @@ def _load_market_sentiment(report_dir: str) -> Dict[str, Any]:
         return {}
 
 
+def _report_json(report_dir: str, name: str) -> Dict[str, Any]:
+    if not report_dir:
+        return {}
+    return _load_json_file(_resolve_project_path(report_dir) / name)
+
+
+def _runtime_config_paths_for_market(market: str) -> Dict[str, Path]:
+    market_code = resolve_market_code(str(market or ""))
+    ibkr_cfg = _load_yaml_file(market_config_path(BASE_DIR, market_code)) if market_code else {}
+    return {
+        "market_structure": _resolve_project_path(
+            str(ibkr_cfg.get("market_structure_config", f"config/market_structure_{market_code.lower()}.yaml" if market_code else "config/market_structure.yaml"))
+        ),
+        "account_profile": _resolve_project_path(
+            str(ibkr_cfg.get("account_profile_config", "config/account_profiles.yaml"))
+        ),
+        "adaptive_strategy": _resolve_project_path(
+            str(ibkr_cfg.get("adaptive_strategy_config", "config/adaptive_strategy_framework.yaml"))
+        ),
+    }
+
+
+def _weekly_strategy_note(
+    *,
+    market_rules: Dict[str, Any],
+    account_profile: Dict[str, Any],
+    adaptive_strategy: Dict[str, Any],
+    opportunity_summary: Dict[str, Any],
+    market_sentiment: Dict[str, Any],
+) -> str:
+    if bool(market_rules.get("research_only", False)):
+        return "当前市场仍以研究为主，周度结论优先用于研究跟踪，不直接放大自动交易动作。"
+    defensive_wait_count = int(opportunity_summary.get("adaptive_strategy_wait_count", 0) or 0)
+    if defensive_wait_count > 0:
+        return f"本周有 {defensive_wait_count} 个新开仓机会因防守环境被降级为观察，先不把回撤信号直接转成加仓动作。"
+    sentiment_label = str(market_sentiment.get("label", "") or "").strip().upper()
+    if sentiment_label == "DEFENSIVE":
+        return "本周市场处于防守环境，周报应优先解释仓位保护、减速加仓和执行保守化。"
+    if bool(market_rules.get("small_account_rule_active", False)):
+        preferred = "/".join(str(item).upper() for item in list(market_rules.get("small_account_preferred_asset_classes", []) or []) if str(item).strip()) or "ETF"
+        return f"当前账户仍在小资金规则范围内，本周先按 {preferred} 优先级解释机会与执行，不扩展到低流动性单股。"
+    profile_label = str(account_profile.get("label", "") or account_profile.get("name", "") or "").strip()
+    if profile_label:
+        return f"当前按 {profile_label} 档位运行，周报优先关注这档账户适配的仓位节奏、持仓数和执行密度。"
+    strategy_name = str(adaptive_strategy.get("name", "") or "ACM-RS").strip()
+    return f"当前按 {strategy_name} 自适应中频框架运行，周报优先复盘市场状态、执行成本和信号质量。"
+
+
+def _augment_summary_rows_with_strategy_context(
+    summary_rows: List[Dict[str, Any]],
+    *,
+    broker_summary_rows: List[Dict[str, Any]],
+    runs_by_portfolio: Dict[str, List[Dict[str, Any]]],
+) -> List[Dict[str, Any]]:
+    broker_summary_map = {str(row.get("portfolio_id") or ""): dict(row) for row in list(broker_summary_rows or [])}
+    market_cache: Dict[str, Dict[str, Any]] = {}
+    context_rows: List[Dict[str, Any]] = []
+    for row in list(summary_rows or []):
+        portfolio_id = str(row.get("portfolio_id") or "")
+        market = resolve_market_code(str(row.get("market") or ""))
+        report_dir = _latest_report_dir(runs_by_portfolio, portfolio_id)
+        market_sentiment = _load_market_sentiment(report_dir)
+        opportunity_summary = _report_json(report_dir, "investment_opportunity_summary.json")
+        if market not in market_cache:
+            runtime_paths = _runtime_config_paths_for_market(market)
+            market_cache[market] = {
+                "market_structure": load_market_structure(BASE_DIR, market, str(runtime_paths["market_structure"])),
+                "account_profiles": load_account_profiles(BASE_DIR, str(runtime_paths["account_profile"])),
+                "adaptive_strategy": load_adaptive_strategy(BASE_DIR, str(runtime_paths["adaptive_strategy"])),
+            }
+        cached = market_cache[market]
+        broker_summary = dict(broker_summary_map.get(portfolio_id) or {})
+        broker_equity = float(
+            broker_summary.get("latest_broker_equity")
+            or row.get("latest_equity")
+            or row.get("start_equity")
+            or 0.0
+        )
+        market_rules = market_structure_summary(cached["market_structure"], broker_equity=broker_equity)
+        account_profile = resolved_account_profile_summary(cached["account_profiles"], broker_equity=broker_equity) if broker_equity > 0.0 else {}
+        adaptive_strategy = adaptive_strategy_context(cached["adaptive_strategy"])
+        strategy_note = _weekly_strategy_note(
+            market_rules=market_rules,
+            account_profile=account_profile,
+            adaptive_strategy=adaptive_strategy,
+            opportunity_summary=opportunity_summary,
+            market_sentiment=market_sentiment,
+        )
+        row["market_rules_summary"] = str(market_rules.get("summary_text", "") or "")
+        row["account_profile_label"] = str(account_profile.get("label", "") or account_profile.get("name", "") or "")
+        row["account_profile_summary"] = str(account_profile.get("summary", "") or "")
+        row["adaptive_strategy_name"] = str(adaptive_strategy.get("name", "") or "")
+        row["adaptive_strategy_summary"] = str(adaptive_strategy.get("summary_text", "") or "")
+        row["weekly_strategy_note"] = strategy_note
+        context_rows.append(
+            {
+                "portfolio_id": portfolio_id,
+                "market": market,
+                "report_dir": report_dir,
+                "market_rules_summary": row["market_rules_summary"],
+                "account_profile_label": row["account_profile_label"],
+                "account_profile_summary": row["account_profile_summary"],
+                "adaptive_strategy_name": row["adaptive_strategy_name"],
+                "adaptive_strategy_summary": row["adaptive_strategy_summary"],
+                "weekly_strategy_note": row["weekly_strategy_note"],
+                "market_sentiment_label": str(market_sentiment.get("label", "") or ""),
+                "adaptive_strategy_wait_count": int(opportunity_summary.get("adaptive_strategy_wait_count", 0) or 0),
+            }
+        )
+    return context_rows
+
+
 def _sector_top_weight(rows: List[Dict[str, Any]], portfolio_id: str) -> tuple[str, float]:
     ordered = [row for row in rows if str(row.get("portfolio_id") or "") == portfolio_id]
     ordered.sort(key=lambda row: float(row.get("weight") or 0.0), reverse=True)
@@ -4070,6 +4185,11 @@ def main(argv: List[str] | None = None) -> None:
         )
 
     summary_rows.sort(key=lambda row: float(row.get("weekly_return", 0.0) or 0.0), reverse=True)
+    strategy_context_rows = _augment_summary_rows_with_strategy_context(
+        summary_rows,
+        broker_summary_rows=broker_summary_rows,
+        runs_by_portfolio=runs_by_portfolio,
+    )
     attribution_rows = _build_attribution_rows(
         summary_rows,
         sector_rows=sector_rows,
@@ -4232,6 +4352,7 @@ def main(argv: List[str] | None = None) -> None:
         "gross_sell_value_total": float(sell_value_total),
         "best_portfolio": best_portfolio,
         "worst_portfolio": worst_portfolio,
+        "portfolio_strategy_context": strategy_context_rows,
     }
     write_json(
         str(out_dir / "weekly_review_summary.json"),

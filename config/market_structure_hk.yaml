@@ -1,0 +1,36 @@
+market_structure:
+  market: "HK"
+  market_scope: "hk_cash_equities"
+  benchmark_symbol: "2800.HK"
+  research_only: false
+  strategy_bias: "low_turnover_large_cap_and_etf_bias"
+  costs:
+    broker_commission_bps: 0.0
+    stamp_duty_bps_per_side: 10.0
+    trading_fee_bps_per_side: 0.565
+    sfc_levy_bps_per_side: 0.27
+    afrc_levy_bps_per_side: 0.015
+    settlement_fee_bps_per_side: 0.42
+    notes:
+      - "ETF transactions can be exempt from stamp duty, but single-name equities should assume the full one-side fee stack."
+  order_rules:
+    buy_lot_multiple: 1
+    day_turnaround_allowed: true
+    odd_lot_auto_match: false
+    odd_lot_discount_risk: true
+    price_limit_pct: 0.0
+    notes:
+      - "Board-lot sizes vary by instrument, so the lot-size reference file remains the operational source of truth."
+  account_rules:
+    standard_settlement_cycle: "T+2"
+    pdt_margin_equity_min: 0.0
+    prefer_etf_only_below_equity: 0.0
+    small_account_equity_label: ""
+  portfolio_preferences:
+    preferred_instruments: ["ETF", "LARGE_CAP"]
+    small_account_preferred_asset_classes: ["etf"]
+    recommended_signal_frequency: "daily"
+    recommended_rebalance_frequency: "weekly"
+    max_rebalances_per_week: 1
+  notes:
+    - "Because of board lots, odd-lot friction, and tax/fee drag, HK should prefer low-turnover allocation changes and ETF-first onboarding."

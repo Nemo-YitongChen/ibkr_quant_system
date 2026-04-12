@@ -30,10 +30,13 @@ def test_primary_cli_parse_args_accepts_explicit_argv() -> None:
     assert dashboard_args.config == "config/supervisor.yaml"
     assert dashboard_args.out_dir == "reports_supervisor_test"
 
-    report_args = generate_investment_report.parse_args(["--market", "HK", "--top_n", "12", "--use_audit_recent"])
+    report_args = generate_investment_report.parse_args(
+        ["--market", "HK", "--top_n", "12", "--use_audit_recent", "--adaptive_strategy_config", "config/adaptive_strategy_framework.yaml"]
+    )
     assert report_args.market == "HK"
     assert report_args.top_n == 12
     assert report_args.use_audit_recent is True
+    assert report_args.adaptive_strategy_config == "config/adaptive_strategy_framework.yaml"
 
 
 def test_preflight_cli_summary_payload() -> None:

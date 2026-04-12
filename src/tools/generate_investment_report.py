@@ -26,8 +26,14 @@ from ..analysis.investment_short import InvestmentShortBookConfig, build_short_b
 from ..analysis.investment_backtest import InvestmentBacktestConfig, compute_investment_backtest_from_bars
 from ..analysis.report import write_csv, write_investment_md, write_json
 from ..analysis.universe import build_candidates
+from ..common.adaptive_strategy import (
+    adaptive_strategy_context,
+    apply_adaptive_defensive_rank_cap,
+    load_adaptive_strategy,
+)
 from ..common.cli import build_cli_parser, emit_cli_summary
 from ..common.logger import get_logger
+from ..common.market_structure import MarketStructureConfig, load_market_structure
 from ..common.markets import (
     add_market_args,
     infer_market_from_config_path,
@@ -76,6 +82,8 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--watchlist_yaml", default="", help="YAML with {symbols: [...]} used to build candidates.")
     ap.add_argument("--db", default="audit.db", help="SQLite audit database used for recent symbols.")
     ap.add_argument("--symbol_master_db", default="", help="SQLite symbol master database used for market universe candidates.")
+    ap.add_argument("--market_structure_config", default="", help="Optional path to market structure constraints yaml.")
+    ap.add_argument("--adaptive_strategy_config", default="", help="Optional path to adaptive strategy framework yaml.")
     ap.add_argument("--use_audit_recent", action="store_true", default=False, help="Include recent symbols from audit snapshots.")
     ap.add_argument("--audit_limit", type=int, default=500, help="Maximum recent audit symbols to include.")
     ap.add_argument("--request_timeout_sec", type=float, default=15.0, help="Per-request timeout for enrichment requests in seconds.")
@@ -604,7 +612,9 @@ def _bar_float(bar: Any, field: str) -> float:
         return 0.0
 
 
-def _commission_proxy_bps(market: str) -> float:
+def _commission_proxy_bps(market: str, market_structure: MarketStructureConfig | None = None) -> float:
+    if market_structure is not None:
+        return float(market_structure.costs.total_one_side_bps())
     market_code = str(market or "").upper().strip()
     if market_code == "US":
         return 1.0
@@ -624,6 +634,7 @@ def _compute_cost_metrics(
     *,
     daily_bars: List[Any],
     market: str,
+    market_structure: MarketStructureConfig | None = None,
 ) -> Dict[str, Any]:
     window = list(daily_bars[-20:])
     if not window:
@@ -636,8 +647,8 @@ def _compute_cost_metrics(
             "liquidity_score": 0.0,
             "spread_proxy_bps": 0.0,
             "slippage_proxy_bps": 0.0,
-            "commission_proxy_bps": round(_commission_proxy_bps(market), 6),
-            "expected_cost_bps": round(_commission_proxy_bps(market), 6),
+            "commission_proxy_bps": round(_commission_proxy_bps(market, market_structure), 6),
+            "expected_cost_bps": round(_commission_proxy_bps(market, market_structure), 6),
         }
 
     closes = [_bar_float(bar, "close") for bar in window if _bar_float(bar, "close") > 0.0]
@@ -671,7 +682,7 @@ def _compute_cost_metrics(
     volatility_multiplier = max(0.40, 1.10 - 0.55 * liquidity_score)
     spread_proxy_bps = max(2.0, min(90.0, 3.0 + atr_pct * 900.0 * volatility_multiplier))
     slippage_proxy_bps = max(3.0, min(140.0, 4.0 + atr_pct * 1600.0 * volatility_multiplier))
-    commission_proxy_bps = _commission_proxy_bps(market)
+    commission_proxy_bps = _commission_proxy_bps(market, market_structure)
     expected_cost_bps = spread_proxy_bps + slippage_proxy_bps + commission_proxy_bps
     return {
         "symbol": str(symbol).upper(),
@@ -832,6 +843,7 @@ def _compute_symbol_features_from_daily_bars(
     daily_bars: List[Any],
     history_source: str,
     market: str,
+    market_structure: MarketStructureConfig | None,
     mid_lookback_days: int,
     long_years: int,
     regime_cfg: RegimeConfig,
@@ -862,6 +874,7 @@ def _compute_symbol_features_from_daily_bars(
             symbol,
             daily_bars=daily_bars,
             market=market,
+            market_structure=market_structure,
         )
     )
     quality_metrics.update(_compute_returns_risk_metrics(symbol, daily_bars=daily_bars))
@@ -915,6 +928,7 @@ def _collect_symbol_feature_results(
     *,
     data_adapter: Any,
     market: str,
+    market_structure: MarketStructureConfig | None,
     shared_days: int,
     mid_lookback_days: int,
     long_years: int,
@@ -942,6 +956,7 @@ def _collect_symbol_feature_results(
                     daily_bars=list(payload.get("daily_bars", []) or []),
                     history_source=str(payload.get("history_source", "") or ""),
                     market=market,
+                    market_structure=market_structure,
                     mid_lookback_days=mid_lookback_days,
                     long_years=long_years,
                     regime_cfg=regime_cfg,
@@ -964,6 +979,7 @@ def _collect_symbol_feature_results(
                     daily_bars=list(dict(prefetched.get(symbol, {}) or {}).get("daily_bars", []) or []),
                     history_source=str(dict(prefetched.get(symbol, {}) or {}).get("history_source", "") or ""),
                     market=market,
+                    market_structure=market_structure,
                     mid_lookback_days=mid_lookback_days,
                     long_years=long_years,
                     regime_cfg=regime_cfg,
@@ -992,6 +1008,7 @@ def _collect_symbol_feature_results(
                 symbol,
                 data_adapter=data_adapter,
                 market=market,
+                market_structure=market_structure,
                 shared_days=shared_days,
                 mid_lookback_days=mid_lookback_days,
                 long_years=long_years,
@@ -1459,6 +1476,7 @@ def _compute_symbol_features(
     *,
     data_adapter: Any,
     market: str,
+    market_structure: MarketStructureConfig | None,
     shared_days: int,
     mid_lookback_days: int,
     long_years: int,
@@ -1486,7 +1504,7 @@ def _compute_symbol_features(
         history_source=history_source,
         shared_days=shared_days,
     )
-    quality_metrics.update(_compute_cost_metrics(symbol, daily_bars=daily_bars, market=market))
+    quality_metrics.update(_compute_cost_metrics(symbol, daily_bars=daily_bars, market=market, market_structure=market_structure))
     quality_metrics.update(_compute_returns_risk_metrics(symbol, daily_bars=daily_bars))
     return {
         "symbol": symbol,
@@ -1495,6 +1513,24 @@ def _compute_symbol_features(
         "long_row": long_row,
         "history_error": history_error,
         "quality_metrics": quality_metrics,
+    }
+
+
+def _market_structure_context(structure: MarketStructureConfig) -> Dict[str, Any]:
+    return {
+        "market": str(structure.market or ""),
+        "market_scope": str(structure.market_scope or ""),
+        "benchmark_symbol": str(structure.benchmark_symbol or ""),
+        "research_only": bool(structure.research_only),
+        "strategy_bias": str(structure.strategy_bias or ""),
+        "costs": {
+            **structure.costs.__dict__,
+            "total_one_side_bps": float(structure.costs.total_one_side_bps()),
+        },
+        "order_rules": dict(structure.order_rules.__dict__),
+        "account_rules": dict(structure.account_rules.__dict__),
+        "portfolio_preferences": dict(structure.portfolio_preferences.__dict__),
+        "notes": list(structure.notes),
     }
 
 
@@ -1550,12 +1586,29 @@ def main(argv: List[str] | None = None) -> None:
     investment_cfg = _load_yaml(investment_cfg_path)
     strategy_cfg_path = _resolve_project_path(str(ibkr_cfg.get("strategy_config", "config/strategy_defaults.yaml")))
     regime_adaptor_cfg_path = _resolve_project_path(str(ibkr_cfg.get("regime_adaptor_config", "config/regime_adaptor.yaml")))
+    market_structure_cfg_path = _resolve_project_path(
+        str(
+            args.market_structure_config
+            or ibkr_cfg.get(
+                "market_structure_config",
+                f"config/market_structure_{resolved_market.lower()}.yaml" if resolved_market != "DEFAULT" else "config/market_structure.yaml",
+            )
+        )
+    )
+    adaptive_strategy_cfg_path = _resolve_project_path(
+        str(
+            args.adaptive_strategy_config
+            or ibkr_cfg.get("adaptive_strategy_config", "config/adaptive_strategy_framework.yaml")
+        )
+    )
     strategy_cfg = _load_yaml(strategy_cfg_path)
     report_cfg_path = _resolve_project_path(str(ibkr_cfg.get("report_config", "config/report_scoring.yaml")))
     report_cfg = _load_yaml(report_cfg_path)
     risk_cfg_path = _resolve_project_path(str(ibkr_cfg.get("risk_config", "config/risk.yaml")))
     risk_cfg = _load_yaml(risk_cfg_path)
     regime_adaptor_cfg_raw = _load_yaml(regime_adaptor_cfg_path)
+    market_structure = load_market_structure(BASE_DIR, resolved_market, market_structure_cfg_path)
+    adaptive_strategy = load_adaptive_strategy(BASE_DIR, adaptive_strategy_cfg_path)
     scoring_cfg = InvestmentScoringConfig.from_dict(investment_cfg.get("scoring"))
     plan_cfg = InvestmentPlanConfig.from_dict(investment_cfg.get("plan"))
     backtest_cfg = InvestmentBacktestConfig.from_dict(investment_cfg.get("backtest"))
@@ -1573,7 +1626,14 @@ def main(argv: List[str] | None = None) -> None:
     )
     watchlist_yaml = _resolve_project_path(args.watchlist_yaml or default_watchlist_yaml) if (args.watchlist_yaml or default_watchlist_yaml) else ""
     out_dir_arg = args.out_dir or f"reports_investment_{(resolved_market or 'default').lower()}"
-    log.info("Using market=%s IBKR config=%s investment_config=%s", resolved_market, ibkr_cfg_path, investment_cfg_path)
+    log.info(
+        "Using market=%s IBKR config=%s investment_config=%s market_structure_config=%s adaptive_strategy_config=%s",
+        resolved_market,
+        ibkr_cfg_path,
+        investment_cfg_path,
+        market_structure_cfg_path,
+        adaptive_strategy_cfg_path,
+    )
 
     research_only_yfinance = bool(
         ibkr_cfg.get("research_only_yfinance", False)
@@ -1731,6 +1791,7 @@ def main(argv: List[str] | None = None) -> None:
                 candidates,
                 data_adapter=data_adapter,
                 market=resolved_market,
+                market_structure=market_structure,
                 shared_days=shared_days,
                 mid_lookback_days=mid_lookback_days,
                 long_years=long_years,
@@ -1846,6 +1907,10 @@ def main(argv: List[str] | None = None) -> None:
             deep_ranked,
             scoring_cfg=scoring_cfg,
             weekly_feedback_cfg=weekly_feedback_cfg,
+        )
+        deep_ranked, adaptive_strategy_summary = apply_adaptive_defensive_rank_cap(
+            deep_ranked,
+            adaptive_strategy,
         )
         for row in deep_ranked:
             symbol = str(row["symbol"]).upper()
@@ -2025,6 +2090,13 @@ def main(argv: List[str] | None = None) -> None:
                 "deep_summary": shadow_deep_summary,
             },
         )
+        write_json(
+            str(out_dir / "investment_adaptive_strategy_summary.json"),
+            {
+                "adaptive_strategy": adaptive_strategy_context(adaptive_strategy),
+                "summary": adaptive_strategy_summary,
+            },
+        )
 
         plans = [make_investment_plan(row, vix=vix, cfg=plan_cfg) for row in ranked]
         for plan in plans:
@@ -2152,6 +2224,8 @@ def main(argv: List[str] | None = None) -> None:
                 "weekly_feedback_signal_penalty_symbols": int(weekly_feedback_summary.get("configured_signal_penalty_symbols", 0) or 0),
                 "weekly_feedback_execution_penalty_symbols": int(weekly_feedback_summary.get("configured_execution_penalty_symbols", 0) or 0),
                 "weekly_feedback_applied_candidates": int(weekly_feedback_summary.get("applied_candidate_count", 0) or 0),
+                "adaptive_strategy_enabled": bool(adaptive_strategy_summary.get("enabled", False)),
+                "adaptive_strategy_defensive_caps": int(adaptive_strategy_summary.get("defensive_cap_count", 0) or 0),
                 "avg_microstructure_score": float(_avg_defined([row.get("microstructure_score") for row in ranked]) or 0.0),
                 "avg_micro_breakout_5m": float(_avg_defined([row.get("micro_breakout_5m") for row in ranked]) or 0.0),
                 "avg_micro_reversal_5m": float(_avg_defined([row.get("micro_reversal_5m") for row in ranked]) or 0.0),
@@ -2170,6 +2244,8 @@ def main(argv: List[str] | None = None) -> None:
             },
             "investment_config": investment_cfg,
             "market_profile": dict(investment_cfg.get("market_profile", {}) or {}),
+            "market_structure": _market_structure_context(market_structure),
+            "adaptive_strategy": adaptive_strategy_context(adaptive_strategy),
         }
         write_investment_md(
             str(out_dir / "investment_report.md"),

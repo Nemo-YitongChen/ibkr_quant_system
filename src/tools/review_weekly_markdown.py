@@ -72,6 +72,20 @@ def write_weekly_review_markdown(
                 lines.append(f"  行业暴露: {row['top_sectors']}")
             if row.get("holdings_change_summary"):
                 lines.append(f"  持仓变化: {row['holdings_change_summary']}")
+            if row.get("account_profile_label") or row.get("account_profile_summary"):
+                profile_text = str(row.get("account_profile_label") or "-")
+                if row.get("account_profile_summary"):
+                    profile_text = f"{profile_text} / {row.get('account_profile_summary')}"
+                lines.append(f"  账户档位: {profile_text}")
+            if row.get("market_rules_summary"):
+                lines.append(f"  市场约束: {row['market_rules_summary']}")
+            if row.get("adaptive_strategy_name") or row.get("adaptive_strategy_summary"):
+                strategy_text = str(row.get("adaptive_strategy_name") or "-")
+                if row.get("adaptive_strategy_summary"):
+                    strategy_text = f"{strategy_text} / {row.get('adaptive_strategy_summary')}"
+                lines.append(f"  策略框架: {strategy_text}")
+            if row.get("weekly_strategy_note"):
+                lines.append(f"  周度解释: {row['weekly_strategy_note']}")
             lines.append(
                 f"  交易拆分: buys={int(row.get('buy_count', 0) or 0)} "
                 f"sells={int(row.get('sell_count', 0) or 0)} "

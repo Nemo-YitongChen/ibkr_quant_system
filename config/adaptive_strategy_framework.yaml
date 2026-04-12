@@ -1,0 +1,61 @@
+adaptive_strategy:
+  meta:
+    name: "ACM-RS"
+    display_name: "Adaptive Cross-Market Relative Strength"
+    objective: "Use one market-aware framework for research, paper trading, and execution gating across markets with different trading rules and account sizes."
+    primary_alpha: "medium-term trend and relative strength"
+    secondary_alpha: "pullback entries during high-volatility sideways regimes"
+    implementation_bias: "ETF-first, low-turnover, market-constraint-aware"
+  regime:
+    long_ma_window: 120
+    short_ma_window: 20
+    near_long_ma_band_pct: 0.03
+    high_vol_multiple_vs_long: 1.20
+    long_vol_window: 120
+    short_vol_window: 20
+  relative_strength:
+    lookback_long: 126
+    lookback_mid: 63
+    volatility_window: 20
+    long_weight: 0.50
+    mid_weight: 0.30
+    volatility_penalty_weight: 0.20
+    price_filter_ma_window: 60
+    liquidity_window: 60
+    liquidity_percentile_floor: 0.80
+  pullback:
+    trend_ma_window: 120
+    long_strength_lookback: 63
+    short_pullback_lookback: 5
+    long_strength_top_pct: 0.40
+    short_pullback_bottom_pct: 0.20
+    max_volatility_percentile: 0.80
+    size_scale_vs_trend: 0.50
+  defensive:
+    small_max_gross: 0.20
+    medium_max_gross: 0.30
+    large_max_gross: 0.40
+    raise_entry_threshold_pct: 0.20
+  execution:
+    signal_frequency: "daily_close"
+    rebalance_frequency: "weekly"
+    max_rebalances_per_week_high_vol: 2
+    entry_delay_min_minutes: 15
+    entry_delay_max_minutes: 30
+  rollout:
+    - name: "stage_1"
+      scope: "ETF-only baseline across US / HK / CN research"
+      notes:
+        - "Use ETF-first onboarding before expanding to single-name equities."
+        - "CN remains research-only until execution support is formalized."
+    - name: "stage_2"
+      scope: "add liquid large-cap equities"
+      notes:
+        - "US expands first, HK only adds very liquid leaders, CN remains conservative."
+    - name: "stage_3"
+      scope: "capacity-aware execution and advanced hedging"
+      notes:
+        - "Only after ETF baseline, account profiles, and market constraints are stable."
+  notes:
+    - "This framework is an implementation policy for the project, not a claim that fixed thresholds are universally optimal."
+    - "Market-specific trading rules, taxes, and turnover drag remain first-class inputs through market_structure."

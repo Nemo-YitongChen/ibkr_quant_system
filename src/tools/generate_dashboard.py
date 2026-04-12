@@ -12,7 +12,10 @@ from typing import Any, Dict, List
 import yaml
 
 from ..analysis.tracking import STATUS_LABELS
+from ..common.account_profile import load_account_profiles, resolved_account_profile_summary
+from ..common.adaptive_strategy import adaptive_strategy_context, load_adaptive_strategy
 from ..common.cli import build_cli_parser, emit_cli_summary
+from ..common.market_structure import load_market_structure, market_structure_summary
 from ..common.markets import market_config_path, resolve_market_code, symbol_matches_market
 from ..common.runtime_paths import resolve_repo_path, resolve_scoped_runtime_path, scope_from_ibkr_config
 from ..common.storage import Storage
@@ -99,7 +102,41 @@ def _dashboard_account_mode_label(account_mode: str) -> str:
         return "混合模式"
     return raw or "未识别"
 
+
+def _market_structure_config_path(market_cfg: Dict[str, Any], item: Dict[str, Any], market: str) -> str:
+    explicit_cfg = str(item.get("market_structure_config", "") or "").strip()
+    if explicit_cfg:
+        return explicit_cfg
+    ibkr_cfg = _load_yaml(_ibkr_config_path(market_cfg, item))
+    return str(ibkr_cfg.get("market_structure_config", f"config/market_structure_{market.lower()}.yaml"))
+
+
+def _account_profile_config_path(market_cfg: Dict[str, Any], item: Dict[str, Any]) -> str:
+    explicit_cfg = str(item.get("account_profile_config", "") or "").strip()
+    if explicit_cfg:
+        return explicit_cfg
+    ibkr_cfg = _load_yaml(_ibkr_config_path(market_cfg, item))
+    return str(ibkr_cfg.get("account_profile_config", "config/account_profiles.yaml"))
+
+
+def _adaptive_strategy_config_path(market_cfg: Dict[str, Any], item: Dict[str, Any]) -> str:
+    explicit_cfg = str(item.get("adaptive_strategy_config", "") or "").strip()
+    if explicit_cfg:
+        return explicit_cfg
+    ibkr_cfg = _load_yaml(_ibkr_config_path(market_cfg, item))
+    return str(ibkr_cfg.get("adaptive_strategy_config", "config/adaptive_strategy_framework.yaml"))
+
 DASHBOARD_TRANSLATIONS_EN.update({
+    "市场约束": "Market Rules",
+    "账户档位": "Account Profile",
+    "策略框架": "Strategy Framework",
+    "策略提醒": "Strategy Note",
+    "本周策略解释": "Weekly Strategy Context",
+    "周度解释": "Weekly Note",
+    "结算 / 回转": "Settlement / Turnaround",
+    "买入单位": "Buy Lot",
+    "小资金规则": "Small-Account Rule",
+    "优先标的": "Preferred Instruments",
     "只做研究": "Research Only",
     "模拟闭环": "Simulation Loop",
     "可执行": "Ready to Execute",
@@ -505,6 +542,14 @@ def _load_weekly_execution_feedback_rows(review_dir: Path) -> List[Dict[str, Any
     if isinstance(summary_rows, list) and summary_rows:
         return [dict(row) for row in summary_rows if isinstance(row, dict)]
     return _read_all_csv_rows(review_dir / "weekly_execution_feedback_summary.csv")
+
+
+def _load_weekly_portfolio_strategy_context_rows(review_dir: Path) -> List[Dict[str, Any]]:
+    summary_json = _load_json(review_dir / "weekly_review_summary.json")
+    summary_rows = summary_json.get("portfolio_strategy_context")
+    if isinstance(summary_rows, list) and summary_rows:
+        return [dict(row) for row in summary_rows if isinstance(row, dict)]
+    return []
 
 
 def _load_weekly_execution_session_rows(review_dir: Path) -> List[Dict[str, Any]]:
@@ -2594,6 +2639,9 @@ def _build_report_card(
     report_dir = _report_dir(market_cfg, item, market_code)
     paper_config_path = _base_paper_config_path(market_cfg, item, market_code)
     execution_config_path = _base_execution_config_path(market_cfg, item, market_code)
+    market_structure_cfg_path = _resolve_path(_market_structure_config_path(market_cfg, item, market_code))
+    account_profile_cfg_path = _resolve_path(_account_profile_config_path(market_cfg, item))
+    adaptive_strategy_cfg_path = _resolve_path(_adaptive_strategy_config_path(market_cfg, item))
     portfolio_id = _portfolio_id(item, market_code)
     dashboard_db = (
         _resolve_path(dashboard_db_raw)
@@ -2608,6 +2656,23 @@ def _build_report_card(
     exec_summary = _load_json(report_dir / "investment_execution_summary.json")
     guard_summary = _load_json(report_dir / "investment_guard_summary.json")
     opp_summary = _load_json(report_dir / "investment_opportunity_summary.json")
+    broker_equity = _safe_float(
+        exec_summary.get("broker_equity")
+        or guard_summary.get("broker_equity")
+        or paper_summary.get("equity_after"),
+        0.0,
+    )
+    market_structure = load_market_structure(BASE_DIR, market_code, str(market_structure_cfg_path))
+    market_structure_card_summary = market_structure_summary(market_structure, broker_equity=broker_equity)
+    account_profiles = load_account_profiles(BASE_DIR, str(account_profile_cfg_path))
+    account_profile_card_summary = dict(exec_summary.get("account_profile", {}) or {})
+    if not account_profile_card_summary and broker_equity > 0.0:
+        account_profile_card_summary = resolved_account_profile_summary(account_profiles, broker_equity=broker_equity)
+    adaptive_strategy_payload = _load_json(report_dir / "investment_adaptive_strategy_summary.json")
+    adaptive_strategy_card_summary = dict(adaptive_strategy_payload.get("adaptive_strategy", {}) or {})
+    if not adaptive_strategy_card_summary:
+        adaptive_strategy_card_summary = adaptive_strategy_context(load_adaptive_strategy(BASE_DIR, str(adaptive_strategy_cfg_path)))
+    adaptive_strategy_runtime_summary = dict(adaptive_strategy_payload.get("summary", {}) or {})
     data_quality_summary = _load_json(report_dir / "investment_data_quality_summary.json")
     cost_summary = _load_json(report_dir / "investment_cost_summary.json")
     shadow_model_summary = _load_json(report_dir / "investment_shadow_model_summary.json")
@@ -2690,6 +2755,9 @@ def _build_report_card(
         "report_dir": display_report_dir,
         "paper_config_path": str(paper_config_path),
         "execution_config_path": str(execution_config_path),
+        "market_structure_config_path": str(market_structure_cfg_path),
+        "account_profile_config_path": str(account_profile_cfg_path),
+        "adaptive_strategy_config_path": str(adaptive_strategy_cfg_path),
         "dashboard_db_path": str(dashboard_db),
         "exchange_open": bool(market_summary.get("exchange_open", False)),
         "priority_order": int(market_summary.get("priority_order", 0) or 0),
@@ -2698,6 +2766,10 @@ def _build_report_card(
         "market_summary_lines": market_summary_lines,
         "report_data_warning": report_data_warning,
         "research_only_yfinance": research_only_yfinance,
+        "market_structure_summary": market_structure_card_summary,
+        "account_profile_summary": account_profile_card_summary,
+        "adaptive_strategy_summary": adaptive_strategy_card_summary,
+        "adaptive_strategy_runtime_summary": adaptive_strategy_runtime_summary,
         "action_distribution": _action_distribution(candidates),
         "sector_theme_distribution": _sector_theme_distribution(candidates),
         "paper_summary": paper_summary,
@@ -4735,7 +4807,7 @@ def _render_card(card: Dict[str, Any]) -> str:
             row.get("status", ""),
             row.get("execution_style", "") or "-",
             f"{float(row.get('expected_cost_bps', 0.0) or 0.0):.1f}" if str(row.get("expected_cost_bps", "")).strip() else "-",
-            row.get("reason", "")[:70],
+            str(row.get("user_reason", "") or row.get("manual_review_reason", "") or row.get("opportunity_reason", "") or row.get("reason", ""))[:70],
         ]
         for row in list(card.get("execution_plan", []) or [])[:6]
     ]
@@ -4753,9 +4825,9 @@ def _render_card(card: Dict[str, Any]) -> str:
     opp_rows = [
         [
             row.get("symbol", ""),
-            row.get("status", ""),
+            row.get("user_reason_label", "") or row.get("entry_status", "") or row.get("status", ""),
             row.get("action", ""),
-            row.get("reason", "")[:70],
+            str(row.get("user_reason", "") or row.get("entry_reason", "") or row.get("reason", ""))[:70],
         ]
         for row in list(card.get("opportunity_scan", []) or [])[:6]
     ]
@@ -5635,6 +5707,8 @@ def _render_card(card: Dict[str, Any]) -> str:
     execution_badge = _dashboard_execution_badge_label(mode, is_dry_run_view)
     gateway_status_label = str(health.get("status", "OK") or "OK").strip() or "OK"
     gateway_status_text = _simple_gateway_status_text(health)
+    market_structure_summary = dict(card.get("market_structure_summary", {}) or {})
+    account_profile_summary = dict(card.get("account_profile_summary", {}) or {})
     simple_status_text = (
         f"{_dashboard_market_state_label(open_flag)} | {execution_badge} | "
         f"{_dashboard_report_freshness_label(report_fresh)}"
@@ -5692,6 +5766,8 @@ def _render_card(card: Dict[str, Any]) -> str:
       <div class="meta"><strong>数据质量</strong> {html.escape(data_quality_label)}</div>
       <div class="meta"><strong>交易成本代理</strong> {html.escape(cost_label)}</div>
       <div class="meta"><strong>风险覆盖</strong> {html.escape(risk_label)}</div>
+      <div class="meta"><strong>账户档位</strong> {html.escape(str(account_profile_summary.get('summary_text', '-') or '-'))}</div>
+      <div class="meta"><strong>市场约束</strong> {html.escape(str(market_structure_summary.get('summary_text', '-') or '-'))}</div>
       <div class="meta"><strong>自动风险反馈</strong> {html.escape(risk_feedback_label)}</div>
       <div class="meta"><strong>自动执行反馈</strong> {html.escape(execution_feedback_label)}</div>
       <div class="meta"><strong>风险备注</strong> {html.escape(risk_notes or '-')}</div>
@@ -5719,6 +5795,22 @@ def _render_card(card: Dict[str, Any]) -> str:
   </div>
 
   {holdings_grid}
+  <div>
+    <h3>市场约束</h3>
+    <div class="simple-only" data-simple-section="market-structure">
+    {_render_table(["问题", "答案"], _simple_market_structure_rows(card))}
+    </div>
+    <div class="advanced-only">
+    <div class="meta">{html.escape(str(market_structure_summary.get("summary_text", "-") or "-"))}</div>
+    {_render_table(["item", "value"], _market_structure_detail_rows(card))}
+    </div>
+  </div>
+  <div class="simple-only">
+    <h3>本周策略解释</h3>
+    <div data-simple-section="weekly-strategy-context">
+    {_render_table(["问题", "答案"], _simple_weekly_strategy_context_rows(card))}
+    </div>
+  </div>
   <div class="advanced-only">
   {dry_run_sections}
   </div>
@@ -5852,6 +5944,12 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
         for row in weekly_execution_feedback_rows
         if str(row.get("portfolio_id", "") or "").strip()
     }
+    weekly_portfolio_strategy_context_rows = _load_weekly_portfolio_strategy_context_rows(weekly_review_dir)
+    weekly_portfolio_strategy_context_map: Dict[str, Dict[str, Any]] = {
+        str(row.get("portfolio_id", "") or ""): dict(row)
+        for row in weekly_portfolio_strategy_context_rows
+        if str(row.get("portfolio_id", "") or "").strip()
+    }
     weekly_execution_session_rows = _load_weekly_execution_session_rows(weekly_review_dir)
     weekly_execution_session_map: Dict[str, List[Dict[str, Any]]] = {}
     for row in weekly_execution_session_rows:
@@ -5905,6 +6003,7 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
         card["weekly_execution_sessions"] = list(weekly_execution_session_map.get(str(card.get("portfolio_id", "") or ""), []))
         card["weekly_execution_hotspots"] = list(weekly_execution_hotspot_map.get(str(card.get("portfolio_id", "") or ""), []))
         card["weekly_execution_feedback"] = dict(weekly_execution_feedback_map.get(str(card.get("portfolio_id", "") or ""), {}))
+        card["weekly_strategy_context"] = dict(weekly_portfolio_strategy_context_map.get(str(card.get("portfolio_id", "") or ""), {}))
         card["weekly_feedback_calibration"] = dict(weekly_feedback_calibration_map.get(str(card.get("portfolio_id", "") or ""), {}))
         card["weekly_feedback_automation_map"] = dict(weekly_feedback_automation_map.get(str(card.get("portfolio_id", "") or ""), {}))
         card["weekly_labeling_skips"] = list(weekly_labeling_skip_map.get(str(card.get("portfolio_id", "") or ""), []))
@@ -6127,6 +6226,169 @@ def _runtime_status_detail_text(runtime_status: Dict[str, Any]) -> str:
         f"账户模式：{_dashboard_account_mode_label(str(runtime_status.get('account_mode', '') or ''))} | "
         f"运行范围：{str(runtime_status.get('runtime_scope', '') or '-')}"
     )
+
+
+def _market_structure_settlement_text(summary: Dict[str, Any]) -> str:
+    settlement = str(summary.get("settlement_cycle", "") or "N/A")
+    turnaround = "可日内回转" if bool(summary.get("day_turnaround_allowed", False)) else "不支持当日回转"
+    return f"{settlement} / {turnaround}"
+
+
+def _market_structure_small_account_text(summary: Dict[str, Any]) -> str:
+    if bool(summary.get("research_only", False)):
+        return "当前市场在本项目中只保留研究结论，不会提交交易。"
+    threshold = float(summary.get("small_account_threshold", 0.0) or 0.0)
+    if threshold <= 0.0:
+        if float(summary.get("price_limit_pct", 0.0) or 0.0) > 0.0:
+            return f"涨跌幅限制 {float(summary.get('price_limit_pct', 0.0) or 0.0):.1f}%，先按低频调仓理解。"
+        return "当前没有额外的小资金限制。"
+    preferred = "/".join(str(item).upper() for item in list(summary.get("small_account_preferred_asset_classes", []) or []) if str(item).strip()) or "ETF"
+    if bool(summary.get("small_account_rule_active", False)):
+        return f"当前权益处于小资金档，先优先 {preferred}。"
+    return f"低于 {threshold:,.0f} 时先优先 {preferred}。"
+
+
+def _account_profile_text(summary: Dict[str, Any]) -> str:
+    if not summary:
+        return "-"
+    label = str(summary.get("label", "") or summary.get("name", "") or "-")
+    short_summary = str(summary.get("summary", "") or "").strip()
+    if short_summary:
+        return f"{label}：{short_summary}"
+    return label
+
+
+def _adaptive_strategy_text(summary: Dict[str, Any]) -> str:
+    if not summary:
+        return "-"
+    execution = dict(summary.get("execution", {}) or {})
+    rebalance = str(execution.get("rebalance_frequency", "") or "").strip()
+    rebalance_text = "周调仓" if rebalance == "weekly" else (rebalance or "-")
+    name = str(summary.get("name", "") or summary.get("display_name", "") or "ACM-RS").strip()
+    return f"{name}：上涨做相对强弱，高波动看回撤，下跌先防守；{rebalance_text}。"
+
+
+def _adaptive_strategy_runtime_text(card: Dict[str, Any]) -> str:
+    adaptive_summary = dict(card.get("adaptive_strategy_summary", {}) or {})
+    adaptive_runtime = dict(card.get("adaptive_strategy_runtime_summary", {}) or {})
+    opp_summary = dict(card.get("opportunity_summary", {}) or {})
+    defensive_cap_count = max(
+        int(adaptive_runtime.get("defensive_cap_count", 0) or 0),
+        int(opp_summary.get("adaptive_strategy_wait_count", 0) or 0),
+    )
+    if defensive_cap_count > 0:
+        return f"当前防守环境已把 {defensive_cap_count} 个新开仓机会降级为观察。"
+    defensive = dict(adaptive_summary.get("defensive", {}) or {})
+    raise_pct = float(defensive.get("raise_entry_threshold_pct", 0.0) or 0.0) * 100.0
+    if raise_pct > 0:
+        return f"下跌阶段会把入场阈值提高约 {raise_pct:.0f}%，并放慢新增仓位。"
+    return "当前按自适应中频框架运行，优先用市场状态来决定进场和防守。"
+
+
+def _weekly_strategy_framework_text(card: Dict[str, Any]) -> str:
+    weekly_context = dict(card.get("weekly_strategy_context", {}) or {})
+    adaptive_summary = dict(card.get("adaptive_strategy_summary", {}) or {})
+    name = str(
+        weekly_context.get("adaptive_strategy_name")
+        or adaptive_summary.get("name")
+        or adaptive_summary.get("display_name")
+        or "ACM-RS"
+    ).strip()
+    summary = str(weekly_context.get("adaptive_strategy_summary", "") or "").strip()
+    if summary and summary not in name:
+        return f"{name}（{summary}）"
+    if summary:
+        return summary
+    return _adaptive_strategy_text(adaptive_summary)
+
+
+def _weekly_strategy_note_text(card: Dict[str, Any]) -> str:
+    weekly_context = dict(card.get("weekly_strategy_context", {}) or {})
+    note = str(weekly_context.get("weekly_strategy_note", "") or "").strip()
+    if note:
+        return note
+    return _adaptive_strategy_runtime_text(card)
+
+
+def _simple_weekly_strategy_context_rows(card: Dict[str, Any]) -> List[List[str]]:
+    weekly_context = dict(card.get("weekly_strategy_context", {}) or {})
+    market_structure = dict(card.get("market_structure_summary", {}) or {})
+    profile_summary = dict(card.get("account_profile_summary", {}) or {})
+    return [
+        [
+            "账户档位",
+            str(weekly_context.get("account_profile_label") or _account_profile_text(profile_summary) or "-"),
+        ],
+        [
+            "市场约束",
+            str(weekly_context.get("market_rules_summary") or market_structure.get("summary_text") or "-"),
+        ],
+        [
+            "策略框架",
+            _weekly_strategy_framework_text(card),
+        ],
+        [
+            "周度解释",
+            _weekly_strategy_note_text(card),
+        ],
+    ]
+
+
+def _simple_market_structure_rows(card: Dict[str, Any]) -> List[List[str]]:
+    summary = dict(card.get("market_structure_summary", {}) or {})
+    profile_summary = dict(card.get("account_profile_summary", {}) or {})
+    adaptive_summary = dict(card.get("adaptive_strategy_summary", {}) or {})
+    if not summary:
+        return [
+            ["账户档位", _account_profile_text(profile_summary)],
+            ["策略框架", _adaptive_strategy_text(adaptive_summary)],
+            ["结算 / 回转", "-"],
+            ["买入单位", "-"],
+            ["小资金规则", "-"],
+            ["策略提醒", _adaptive_strategy_runtime_text(card)],
+            ["优先标的", "-"],
+        ]
+    preferred = "/".join(str(item) for item in list(summary.get("preferred_instruments", []) or []) if str(item).strip()) or "-"
+    rebalance = str(summary.get("rebalance_frequency", "") or "-")
+    buy_lot = int(summary.get("buy_lot_multiple", 1) or 1)
+    lot_text = f"{buy_lot} 股/份起买" if buy_lot > 1 else "1 股/份起买"
+    return [
+        ["账户档位", _account_profile_text(profile_summary)],
+        ["策略框架", _adaptive_strategy_text(adaptive_summary)],
+        ["结算 / 回转", _market_structure_settlement_text(summary)],
+        ["买入单位", lot_text],
+        ["小资金规则", _market_structure_small_account_text(summary)],
+        ["策略提醒", _adaptive_strategy_runtime_text(card)],
+        ["优先标的", f"{preferred} / {rebalance}"],
+    ]
+
+
+def _market_structure_detail_rows(card: Dict[str, Any]) -> List[List[str]]:
+    summary = dict(card.get("market_structure_summary", {}) or {})
+    profile_summary = dict(card.get("account_profile_summary", {}) or {})
+    adaptive_summary = dict(card.get("adaptive_strategy_summary", {}) or {})
+    if not summary:
+        return [
+            ["account_profile", _account_profile_text(profile_summary)],
+            ["adaptive_strategy", _adaptive_strategy_text(adaptive_summary)],
+            ["item", "-"],
+            ["value", "-"],
+        ]
+    price_limit = float(summary.get("price_limit_pct", 0.0) or 0.0)
+    fee_floor = float(summary.get("fee_floor_one_side_bps", 0.0) or 0.0)
+    return [
+        ["account_profile", _account_profile_text(profile_summary)],
+        ["adaptive_strategy", _adaptive_strategy_text(adaptive_summary)],
+        ["adaptive_status", _adaptive_strategy_runtime_text(card)],
+        ["scope", str(summary.get("market_scope", "") or "-")],
+        ["bias", str(summary.get("strategy_bias", "") or "-")],
+        ["settlement", _market_structure_settlement_text(summary)],
+        ["buy_lot", str(int(summary.get("buy_lot_multiple", 1) or 1))],
+        ["price_limit", f"{price_limit:.1f}%" if price_limit > 0 else "-"],
+        ["fee_floor", f"{fee_floor:.2f} bps"],
+        ["preferred", "/".join(str(item) for item in list(summary.get("preferred_instruments", []) or []) if str(item).strip()) or "-"],
+        ["rebalance", str(summary.get("rebalance_frequency", "") or "-")],
+    ]
 
 
 def _simple_dry_run_attribution_text(rows: List[List[str]]) -> str:

@@ -1,0 +1,25 @@
+market_structure:
+  market: "XETRA"
+  market_scope: "xetra_cash_equities"
+  benchmark_symbol: "EXS1.DE"
+  research_only: false
+  strategy_bias: "mid_frequency_large_cap_quality_bias"
+  costs:
+    broker_commission_bps: 5.0
+  order_rules:
+    buy_lot_multiple: 1
+    day_turnaround_allowed: true
+    odd_lot_auto_match: true
+    odd_lot_discount_risk: false
+    price_limit_pct: 0.0
+  account_rules:
+    standard_settlement_cycle: "T+2"
+    pdt_margin_equity_min: 0.0
+    prefer_etf_only_below_equity: 0.0
+    small_account_equity_label: ""
+  portfolio_preferences:
+    preferred_instruments: ["ETF", "LARGE_CAP"]
+    small_account_preferred_asset_classes: ["etf"]
+    recommended_signal_frequency: "daily"
+    recommended_rebalance_frequency: "weekly"
+    max_rebalances_per_week: 1

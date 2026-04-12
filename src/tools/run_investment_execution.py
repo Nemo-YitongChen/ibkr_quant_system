@@ -6,8 +6,10 @@ from typing import Any, Dict
 
 from ..analysis.investment_portfolio import InvestmentPaperConfig
 from ..app.investment_engine import InvestmentExecutionEngine
+from ..common.account_profile import load_account_profiles
 from ..common.cli import build_cli_parser, emit_cli_summary
 from ..common.logger import get_logger
+from ..common.market_structure import load_market_structure
 from ..common.markets import add_market_args, market_config_path, resolve_market_code
 from ..common.runtime_paths import resolve_repo_path
 from ..common.storage import Storage
@@ -34,6 +36,8 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--ibkr_config", default="", help="Path to the IBKR runtime config yaml.")
     ap.add_argument("--execution_config", default="", help="Path to the investment execution config yaml.")
     ap.add_argument("--paper_config", default="", help="Path to investment paper config yaml.")
+    ap.add_argument("--market_structure_config", default="", help="Path to market structure constraint yaml.")
+    ap.add_argument("--account_profile_config", default="", help="Path to account profile yaml.")
     ap.add_argument("--db", default="audit.db", help="SQLite audit database used for execution snapshots.")
     ap.add_argument("--report_dir", default="", help="Explicit report directory that contains investment_candidates.csv.")
     ap.add_argument("--reports_root", default="reports_investment", help="Root directory used by investment reports.")
@@ -81,6 +85,7 @@ def _cli_summary_payload(result: Any, report_dir: Path) -> tuple[Dict[str, Any],
             "market": str(getattr(result, "market", "") or "DEFAULT"),
             "portfolio_id": str(getattr(result, "portfolio_id", "") or "-"),
             "submitted": bool(getattr(result, "submitted", False)),
+            "account_profile": str(getattr(result, "account_profile_label", "") or "-"),
             "order_count": int(getattr(result, "order_count", 0) or 0),
             "gap_symbols": int(getattr(result, "gap_symbols", 0) or 0),
             "gap_notional": f"{float(getattr(result, 'gap_notional', 0.0) or 0.0):.2f}",
@@ -116,6 +121,20 @@ def main(argv: list[str] | None = None) -> None:
     )
     paper_cfg = InvestmentPaperConfig.from_dict(_load_yaml(paper_cfg_path).get("paper"))
     execution_cfg = InvestmentExecutionConfig.from_dict(_load_yaml(execution_cfg_path).get("execution"))
+    market_structure = load_market_structure(
+        BASE_DIR,
+        market,
+        str(
+            args.market_structure_config
+            or ibkr_cfg.get("market_structure_config", f"config/market_structure_{market.lower()}.yaml")
+        ),
+    )
+    account_profiles = load_account_profiles(
+        BASE_DIR,
+        str(args.account_profile_config or ibkr_cfg.get("account_profile_config", "config/account_profiles.yaml")),
+    )
+    if not str(execution_cfg.lot_size_file or "").strip():
+        execution_cfg.lot_size = max(int(execution_cfg.lot_size or 1), int(market_structure.order_rules.buy_lot_multiple or 1))
 
     report_dir = _infer_report_dir(args, market)
     portfolio_id = str(args.portfolio_id or f"{market}:{report_dir.name}")
@@ -135,6 +154,8 @@ def main(argv: list[str] | None = None) -> None:
             portfolio_id=portfolio_id,
             paper_cfg=paper_cfg,
             execution_cfg=execution_cfg,
+            market_structure=market_structure,
+            account_profiles=account_profiles,
         )
         try:
             result = engine.run(report_dir=str(report_dir), submit=bool(args.submit))

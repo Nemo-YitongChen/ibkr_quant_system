@@ -3501,6 +3501,8 @@ class SupervisorCliTests(unittest.TestCase):
                         '      - kind: "investment"',
                         f'        out_dir: "{report_root}"',
                         '        watchlist_yaml: "config/watchlist.yaml"',
+                        "        run_investment_execution: true",
+                        "        submit_investment_execution: true",
                     ]
                 ),
                 encoding="utf-8",
@@ -3944,6 +3946,190 @@ class SupervisorCliTests(unittest.TestCase):
             self.assertIn("Paper 账户", html_text)
             self.assertIn("Paper 模拟运行", html_text)
             self.assertNotIn("market_modes=", html_text)
+
+    def test_dashboard_simple_mode_shows_market_structure_rules(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            cfg_path = base / "supervisor.yaml"
+            summary_dir = base / "reports_supervisor"
+            report_root = base / "reports_investment"
+            watchlist_dir = report_root / "watchlist"
+            watchlist_dir.mkdir(parents=True, exist_ok=True)
+            (watchlist_dir / "investment_paper_summary.json").write_text("{}", encoding="utf-8")
+            (watchlist_dir / "investment_execution_summary.json").write_text(
+                json.dumps({"broker_equity": 10000.0}),
+                encoding="utf-8",
+            )
+            (watchlist_dir / "investment_guard_summary.json").write_text("{}", encoding="utf-8")
+            (watchlist_dir / "investment_opportunity_summary.json").write_text(
+                json.dumps({"adaptive_strategy_wait_count": 2}),
+                encoding="utf-8",
+            )
+            (watchlist_dir / "investment_adaptive_strategy_summary.json").write_text(
+                json.dumps(
+                    {
+                        "adaptive_strategy": {
+                            "name": "ACM-RS",
+                            "execution": {"rebalance_frequency": "weekly"},
+                            "defensive": {"raise_entry_threshold_pct": 0.2},
+                        },
+                        "summary": {"defensive_cap_count": 2},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        f'summary_out_dir: "{summary_dir}"',
+                        "poll_sec: 30",
+                        "markets:",
+                        '  - name: "us"',
+                        '    market: "US"',
+                        "    enabled: true",
+                        "    reports:",
+                        '      - kind: "investment"',
+                        f'        out_dir: "{report_root}"',
+                        '        watchlist_yaml: "config/watchlist.yaml"',
+                        "        run_investment_execution: true",
+                        "        submit_investment_execution: true",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            payload = build_dashboard(str(cfg_path), str(summary_dir))
+            card = payload["cards"][0]
+            self.assertTrue(card["market_structure_summary"]["small_account_rule_active"])
+            self.assertEqual(card["account_profile_summary"]["name"], "small")
+            self.assertEqual(card["adaptive_strategy_summary"]["name"], "ACM-RS")
+            write_dashboard(payload, str(summary_dir))
+            html_text = (summary_dir / "dashboard.html").read_text(encoding="utf-8")
+            self.assertIn('data-simple-section="market-structure"', html_text)
+            self.assertIn("市场约束", html_text)
+            self.assertIn("账户档位", html_text)
+            self.assertIn("策略框架", html_text)
+            self.assertIn("策略提醒", html_text)
+            self.assertIn("小资金规则", html_text)
+            self.assertIn("当前权益处于小资金档，先优先 ETF。", html_text)
+            self.assertIn("当前防守环境已把 2 个新开仓机会降级为观察。", html_text)
+
+    def test_dashboard_simple_mode_shows_weekly_strategy_context(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            cfg_path = base / "supervisor.yaml"
+            summary_dir = base / "reports_supervisor"
+            report_root = base / "reports_investment"
+            weekly_dir = base / "reports_investment_weekly"
+            watchlist_dir = report_root / "watchlist"
+            watchlist_dir.mkdir(parents=True, exist_ok=True)
+            weekly_dir.mkdir(parents=True, exist_ok=True)
+            for name in (
+                "investment_paper_summary.json",
+                "investment_execution_summary.json",
+                "investment_guard_summary.json",
+                "investment_opportunity_summary.json",
+            ):
+                (watchlist_dir / name).write_text("{}", encoding="utf-8")
+            (weekly_dir / "weekly_review_summary.json").write_text(
+                json.dumps(
+                    {
+                        "portfolio_strategy_context": [
+                            {
+                                "portfolio_id": "US:watchlist",
+                                "account_profile_label": "小资金",
+                                "market_rules_summary": "settlement=T+1 / no same-day round trip",
+                                "adaptive_strategy_name": "ACM-RS",
+                                "adaptive_strategy_summary": "上涨做相对强弱，高波动看回撤，下跌先防守；周调仓。",
+                                "weekly_strategy_note": "本周有 2 个新开仓机会因防守环境被降级为观察，先不把回撤信号直接转成加仓动作。",
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        f'summary_out_dir: "{summary_dir}"',
+                        f'dashboard_weekly_review_dir: "{weekly_dir}"',
+                        "poll_sec: 30",
+                        "markets:",
+                        '  - name: "us"',
+                        '    market: "US"',
+                        "    enabled: true",
+                        "    reports:",
+                        '      - kind: "investment"',
+                        f'        out_dir: "{report_root}"',
+                        '        watchlist_yaml: "config/watchlist.yaml"',
+                        "        run_investment_execution: true",
+                        "        submit_investment_execution: true",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            payload = build_dashboard(str(cfg_path), str(summary_dir))
+            card = payload["cards"][0]
+            self.assertEqual(card["weekly_strategy_context"]["account_profile_label"], "小资金")
+            self.assertIn("防守环境被降级为观察", card["weekly_strategy_context"]["weekly_strategy_note"])
+            write_dashboard(payload, str(summary_dir))
+            html_text = (summary_dir / "dashboard.html").read_text(encoding="utf-8")
+            self.assertIn('data-simple-section="weekly-strategy-context"', html_text)
+            self.assertIn("本周策略解释", html_text)
+            self.assertIn("周度解释", html_text)
+            self.assertIn("settlement=T+1 / no same-day round trip", html_text)
+            self.assertIn("本周有 2 个新开仓机会因防守环境被降级为观察", html_text)
+
+    def test_dashboard_execution_plan_prefers_user_reason(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            cfg_path = base / "supervisor.yaml"
+            summary_dir = base / "reports_supervisor"
+            report_root = base / "reports_investment"
+            watchlist_dir = report_root / "watchlist"
+            watchlist_dir.mkdir(parents=True, exist_ok=True)
+            for name in (
+                "investment_paper_summary.json",
+                "investment_execution_summary.json",
+                "investment_guard_summary.json",
+                "investment_opportunity_summary.json",
+            ):
+                (watchlist_dir / name).write_text("{}", encoding="utf-8")
+            (watchlist_dir / "investment_execution_plan.csv").write_text(
+                "\n".join(
+                    [
+                        "symbol,action,status,execution_style,expected_cost_bps,reason,user_reason_label,user_reason",
+                        "AAPL,BUY,PLANNED,VWAP_LITE_MIDDAY,18.4,rebalance_up|manual_review,大额订单待人工确认,单笔订单超出自动提交阈值，先人工确认。",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        f'summary_out_dir: "{summary_dir}"',
+                        "poll_sec: 30",
+                        "markets:",
+                        '  - name: "us"',
+                        '    market: "US"',
+                        "    enabled: true",
+                        "    reports:",
+                        '      - kind: "investment"',
+                        f'        out_dir: "{report_root}"',
+                        '        watchlist_yaml: "config/watchlist.yaml"',
+                        "        run_investment_execution: true",
+                        "        submit_investment_execution: true",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            payload = build_dashboard(str(cfg_path), str(summary_dir))
+            write_dashboard(payload, str(summary_dir))
+            html_text = (summary_dir / "dashboard.html").read_text(encoding="utf-8")
+            self.assertIn("单笔订单超出自动提交阈值，先人工确认。", html_text)
+            self.assertNotIn("rebalance_up|manual_review", html_text)
 
     def test_dashboard_prefers_ibkr_paper_snapshot_before_local_ledger_in_paper_mode(self):
         with tempfile.TemporaryDirectory() as tmp:

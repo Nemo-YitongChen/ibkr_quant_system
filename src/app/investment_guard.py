@@ -10,8 +10,11 @@ from uuid import uuid4
 from ..analysis.investment_portfolio import InvestmentPaperConfig
 from ..app.investment_engine import InvestmentExecutionEngine, _to_float
 from ..analysis.report import write_csv, write_json
+from ..common.adaptive_strategy import AdaptiveStrategyConfig, adaptive_strategy_context
 from ..common.logger import get_logger
+from ..common.market_structure import MarketStructureConfig, market_structure_summary
 from ..common.storage import Storage
+from ..common.user_explanations import annotate_guard_user_explanation
 from ..data import MarketDataAdapter
 from ..ibkr.contracts import make_stock_contract
 from ..ibkr.investment_orders import InvestmentOrderParams
@@ -188,6 +191,8 @@ class InvestmentGuardResult:
     order_count: int
     stop_count: int
     take_profit_count: int
+    market_rules: str = ""
+    adaptive_guard_status: str = ""
 
 
 class InvestmentGuardEngine:
@@ -201,6 +206,8 @@ class InvestmentGuardEngine:
         portfolio_id: str,
         execution_cfg: InvestmentExecutionConfig,
         guard_cfg: InvestmentGuardConfig,
+        market_structure: MarketStructureConfig | None = None,
+        adaptive_strategy: AdaptiveStrategyConfig | None = None,
     ):
         self.ib = ib
         self.storage = storage
@@ -208,6 +215,8 @@ class InvestmentGuardEngine:
         self.portfolio_id = str(portfolio_id)
         self.execution_cfg = execution_cfg
         self.guard_cfg = guard_cfg
+        self.market_structure = market_structure or MarketStructureConfig(market=self.market)
+        self.adaptive_strategy = adaptive_strategy
         self.execution_engine = InvestmentExecutionEngine(
             ib=ib,
             account_id=account_id,
@@ -216,6 +225,7 @@ class InvestmentGuardEngine:
             portfolio_id=portfolio_id,
             paper_cfg=InvestmentPaperConfig(),
             execution_cfg=execution_cfg,
+            market_structure=self.market_structure,
         )
         self.md = MarketDataService(ib)
         self.data_adapter = MarketDataAdapter(self.md)
@@ -276,7 +286,42 @@ class InvestmentGuardEngine:
         return out
 
     @staticmethod
+    def _read_json(path: Path) -> Dict[str, Any]:
+        if not path.exists():
+            return {}
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+
+    def _adaptive_guard_runtime_summary(self, report_path: Path) -> Dict[str, Any]:
+        if self.adaptive_strategy is None:
+            return {}
+        market_sentiment = self._read_json(report_path / "market_sentiment.json")
+        label = str(market_sentiment.get("label", "") or "").strip().upper()
+        guard_status = "CLEAR"
+        reason = "当前未检测到需要额外解释的防守环境。"
+        if label == "DEFENSIVE":
+            guard_status = "DEFENSIVE_REGIME"
+            reason = "当前市场处于防守阶段；guard 动作优先按去风险或锁定利润来理解，不应把它视为重新加仓信号。"
+        elif label == "BALANCED":
+            guard_status = "BALANCED_REGIME"
+            reason = "当前市场中性偏谨慎；guard 结果主要用于保守保护已有仓位。"
+        elif label == "RISK_ON":
+            guard_status = "RISK_ON"
+            reason = "当前市场偏积极；guard 结果仍以保护收益和控制回撤为主。"
+        return {
+            "label": label or "-",
+            "guard_status": guard_status,
+            "reason": reason,
+            "market_sentiment_score": float(market_sentiment.get("score", 0.0) or 0.0),
+        }
+
+    @staticmethod
     def _write_md(path: Path, summary: Dict[str, Any], order_rows: List[Dict[str, Any]]) -> None:
+        market_rules = dict(summary.get("market_structure", {}) or {})
+        adaptive_strategy = dict(summary.get("adaptive_strategy", {}) or {})
+        adaptive_guard = dict(summary.get("adaptive_guard", {}) or {})
         lines = [
             "# Investment Guard Report",
             "",
@@ -288,8 +333,34 @@ class InvestmentGuardEngine:
             f"- Stop actions: {int(summary.get('stop_count', 0) or 0)}",
             f"- Take-profit actions: {int(summary.get('take_profit_count', 0) or 0)}",
             "",
-            "## Guard Orders",
         ]
+        if market_rules:
+            lines.extend(
+                [
+                    "## Market Rules",
+                    "",
+                    f"- Summary: {market_rules.get('summary_text', '-')}",
+                    f"- Settlement: {market_rules.get('settlement_cycle', 'N/A')} | day_turnaround_allowed={bool(market_rules.get('day_turnaround_allowed', False))}",
+                    f"- Buy lot: {int(market_rules.get('buy_lot_multiple', 1) or 1)} | fee_floor_one_side_bps={float(market_rules.get('fee_floor_one_side_bps', 0.0) or 0.0):.2f}",
+                    "",
+                ]
+            )
+        if adaptive_strategy:
+            lines.extend(
+                [
+                    "## Adaptive Strategy",
+                    "",
+                    f"- Summary: {adaptive_strategy.get('summary_text', '-')}",
+                    f"- Guard status: {adaptive_guard.get('guard_status', '-')}",
+                    f"- Reason: {adaptive_guard.get('reason', '-')}",
+                    "",
+                ]
+            )
+        lines.extend(
+            [
+            "## Guard Orders",
+            ]
+        )
         if not order_rows:
             lines.append("- (no guard actions)")
         else:
@@ -297,9 +368,12 @@ class InvestmentGuardEngine:
                 lines.append(
                     f"- {row['action']} {row['symbol']} qty={float(row.get('delta_qty', 0.0) or 0.0):.0f} "
                     f"ref={float(row.get('ref_price', 0.0) or 0.0):.2f} ref_source={row.get('ref_price_source', '')} "
-                    f"reason={row.get('reason', '')} "
+                    f"reason={row.get('user_reason_label', row.get('reason', ''))} "
                     f"pnl_pct={float(row.get('pnl_pct', 0.0) or 0.0):.3f}"
                 )
+                detail = str(row.get("user_reason", "") or row.get("adaptive_strategy_note", "") or "").strip()
+                if detail:
+                    lines.append(f"  {detail}")
         path.write_text("\n".join(lines), encoding="utf-8")
 
     def run(self, *, report_dir: str, submit: bool = False) -> InvestmentGuardResult:
@@ -307,6 +381,8 @@ class InvestmentGuardEngine:
         broker_account = self.execution_engine._account_snapshot()
         broker_equity = float(broker_account.get("netliq", 0.0) or 0.0)
         broker_cash = float(broker_account.get("cash", 0.0) or 0.0)
+        market_rules = market_structure_summary(self.market_structure, broker_equity=broker_equity)
+        adaptive_guard = self._adaptive_guard_runtime_summary(report_path)
         positions_before = self.execution_engine._broker_positions()
         lot_size_map = load_lot_size_map(self.execution_cfg.lot_size_file)
         metrics = self._position_metrics(positions_before)
@@ -351,6 +427,12 @@ class InvestmentGuardEngine:
             row["ref_price_source"] = str(metric.get("ref_price_source") or "")
             row["intraday_bars_5m"] = int(metric.get("intraday_bars_5m") or 0)
             row["intraday_close_5m"] = float(metric.get("intraday_close_5m") or 0.0)
+            if str(adaptive_guard.get("guard_status", "") or "") == "DEFENSIVE_REGIME":
+                if str(row.get("reason", "") or "").startswith("guard_take_profit"):
+                    row["adaptive_strategy_note"] = "防守环境下优先锁定部分利润，避免把已有浮盈重新暴露给回撤。"
+                else:
+                    row["adaptive_strategy_note"] = "防守环境下保护性止损优先，先控制已有仓位风险。"
+            annotate_guard_user_explanation(row)
             self.storage.insert_risk_event(
                 "INVESTMENT_GUARD_TRIGGER",
                 float(row.get("pnl_pct") or 0.0),
@@ -425,6 +507,9 @@ class InvestmentGuardEngine:
             "order_value": float(sum(float(row.get("order_value") or 0.0) for row in order_rows)),
             "stop_count": int(stop_count),
             "take_profit_count": int(take_profit_count),
+            "market_structure": market_rules,
+            "adaptive_strategy": adaptive_strategy_context(self.adaptive_strategy) if self.adaptive_strategy is not None else {},
+            "adaptive_guard": adaptive_guard,
         }
         self.storage.update_investment_execution_run(
             run_id,
@@ -450,4 +535,6 @@ class InvestmentGuardEngine:
             order_count=int(len(order_rows)),
             stop_count=int(stop_count),
             take_profit_count=int(take_profit_count),
+            market_rules=str(market_rules.get("summary_text", "") or ""),
+            adaptive_guard_status=str(adaptive_guard.get("guard_status", "") or ""),
         )

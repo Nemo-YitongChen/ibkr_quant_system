@@ -5,8 +5,10 @@ from pathlib import Path
 from typing import Any, Dict
 
 from ..app.investment_guard import InvestmentGuardConfig, InvestmentGuardEngine
+from ..common.adaptive_strategy import load_adaptive_strategy
 from ..common.cli import build_cli_parser, emit_cli_summary
 from ..common.logger import get_logger
+from ..common.market_structure import load_market_structure
 from ..common.markets import add_market_args, market_config_path, resolve_market_code
 from ..common.runtime_paths import resolve_repo_path
 from ..common.storage import Storage
@@ -33,6 +35,8 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--ibkr_config", default="", help="Path to the IBKR runtime config yaml.")
     ap.add_argument("--execution_config", default="", help="Path to the investment execution config yaml.")
     ap.add_argument("--guard_config", default="", help="Path to the investment guard config yaml.")
+    ap.add_argument("--market_structure_config", default="", help="Path to market structure constraint yaml.")
+    ap.add_argument("--adaptive_strategy_config", default="", help="Path to adaptive strategy framework yaml.")
     ap.add_argument("--db", default="audit.db", help="SQLite audit database used for guard state and broker snapshots.")
     ap.add_argument("--report_dir", default="", help="Explicit report directory used for output artifacts.")
     ap.add_argument("--reports_root", default="reports_investment", help="Root directory used by investment reports.")
@@ -83,6 +87,7 @@ def _cli_summary_payload(result: Any, report_dir: Path) -> tuple[Dict[str, Any],
             "order_count": int(getattr(result, "order_count", 0) or 0),
             "stop_count": int(getattr(result, "stop_count", 0) or 0),
             "take_profit_count": int(getattr(result, "take_profit_count", 0) or 0),
+            "market_rules": str(getattr(result, "market_rules", "") or "-"),
         },
         {
             "summary_json": report_dir / "investment_guard_summary.json",
@@ -112,6 +117,23 @@ def main(argv: list[str] | None = None) -> None:
     )
     execution_cfg = InvestmentExecutionConfig.from_dict(_load_yaml(execution_cfg_path).get("execution"))
     guard_cfg = InvestmentGuardConfig.from_dict(_load_yaml(guard_cfg_path).get("guard"))
+    market_structure = load_market_structure(
+        BASE_DIR,
+        market,
+        str(
+            args.market_structure_config
+            or ibkr_cfg.get("market_structure_config", f"config/market_structure_{market.lower()}.yaml")
+        ),
+    )
+    adaptive_strategy = load_adaptive_strategy(
+        BASE_DIR,
+        str(
+            args.adaptive_strategy_config
+            or ibkr_cfg.get("adaptive_strategy_config", "config/adaptive_strategy_framework.yaml")
+        ),
+    )
+    if not str(execution_cfg.lot_size_file or "").strip():
+        execution_cfg.lot_size = max(int(execution_cfg.lot_size or 1), int(market_structure.order_rules.buy_lot_multiple or 1))
 
     report_dir = _infer_report_dir(args, market)
     portfolio_id = str(args.portfolio_id or f"{market}:{report_dir.name}")
@@ -131,6 +153,8 @@ def main(argv: list[str] | None = None) -> None:
             portfolio_id=portfolio_id,
             execution_cfg=execution_cfg,
             guard_cfg=guard_cfg,
+            market_structure=market_structure,
+            adaptive_strategy=adaptive_strategy,
         )
         result = engine.run(report_dir=str(report_dir), submit=bool(args.submit))
         summary_fields, artifact_fields = _cli_summary_payload(result, report_dir)

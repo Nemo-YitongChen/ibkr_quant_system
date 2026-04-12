@@ -1,0 +1,31 @@
+market_structure:
+  market: "CN"
+  market_scope: "cn_cash_equities_and_northbound"
+  benchmark_symbol: "510300.SS"
+  research_only: true
+  strategy_bias: "slow_frequency_etf_and_large_cap_only"
+  costs:
+    broker_commission_bps: 8.0
+    notes:
+      - "This proxy is intentionally conservative while CN remains research-only in the current project."
+  order_rules:
+    buy_lot_multiple: 100
+    day_turnaround_allowed: false
+    odd_lot_auto_match: false
+    odd_lot_discount_risk: true
+    price_limit_pct: 10.0
+    notes:
+      - "Northbound buy orders should be treated as 100-share board lots, and same-day turnaround trading is not allowed."
+  account_rules:
+    standard_settlement_cycle: "T+1"
+    pdt_margin_equity_min: 0.0
+    prefer_etf_only_below_equity: 0.0
+    small_account_equity_label: ""
+  portfolio_preferences:
+    preferred_instruments: ["ETF", "LARGE_CAP"]
+    small_account_preferred_asset_classes: ["etf"]
+    recommended_signal_frequency: "daily"
+    recommended_rebalance_frequency: "weekly"
+    max_rebalances_per_week: 1
+  notes:
+    - "CN currently stays research-only in this project, so market_structure is advisory until the execution chain is formally enabled."
