@@ -2,11 +2,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from src.common.cli import emit_cli_summary
 from src.tools import generate_trade_report
 from src.tools import label_investment_snapshots
 from src.tools import review_investment_execution
 from src.tools import sync_short_safety_from_ibkr
+
+pytestmark = pytest.mark.guardrail
 
 
 def test_emit_cli_summary_formats_sections(capsys) -> None:

@@ -15,6 +15,7 @@ from ..analysis.tracking import STATUS_LABELS
 from ..common.account_profile import load_account_profiles, resolved_account_profile_summary
 from ..common.adaptive_strategy import adaptive_strategy_context, load_adaptive_strategy
 from ..common.cli import build_cli_parser, emit_cli_summary
+from ..common.cli_contracts import ArtifactBundle, DashboardSummary
 from ..common.market_structure import load_market_structure, market_structure_summary
 from ..common.markets import market_config_path, resolve_market_code, symbol_matches_market
 from ..common.runtime_paths import resolve_repo_path, resolve_scoped_runtime_path, scope_from_ibkr_config
@@ -8692,19 +8693,18 @@ def _cli_summary_payload(payload: Dict[str, Any], out_dir: Path) -> tuple[Dict[s
     trade_cards = list(payload.get("trade_cards", []) or [])
     dry_run_cards = list(payload.get("dry_run_cards", []) or [])
     ops_overview = dict(payload.get("ops_overview", {}) or {})
-    return (
-        {
-            "market_cards": int(len(list(payload.get("cards", []) or []))),
-            "trade_cards": int(len(trade_cards)),
-            "dry_run_cards": int(len(dry_run_cards)),
-            "preflight_warn_count": int(ops_overview.get("preflight_warn_count", 0) or 0),
-            "preflight_fail_count": int(ops_overview.get("preflight_fail_count", 0) or 0),
-        },
-        {
-            "dashboard_json": out_dir / "dashboard.json",
-            "dashboard_html": out_dir / "dashboard.html",
-        },
+    summary_contract = DashboardSummary(
+        market_cards=int(len(list(payload.get("cards", []) or []))),
+        trade_cards=int(len(trade_cards)),
+        dry_run_cards=int(len(dry_run_cards)),
+        preflight_warn_count=int(ops_overview.get("preflight_warn_count", 0) or 0),
+        preflight_fail_count=int(ops_overview.get("preflight_fail_count", 0) or 0),
     )
+    artifacts = ArtifactBundle(
+        dashboard_json=out_dir / "dashboard.json",
+        dashboard_html=out_dir / "dashboard.html",
+    )
+    return summary_contract.to_dict(), artifacts.to_dict()
 
 
 def main(argv: List[str] | None = None) -> None:

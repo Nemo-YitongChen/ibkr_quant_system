@@ -16,6 +16,7 @@ from ..analysis.investment_portfolio import (
 )
 from ..analysis.report import write_csv, write_json
 from ..common.cli import build_cli_parser, emit_cli_summary
+from ..common.cli_contracts import ArtifactBundle, InvestmentPaperSummary
 from ..common.logger import get_logger
 from ..common.markets import add_market_args, resolve_market_code
 from ..common.runtime_paths import resolve_repo_path
@@ -144,22 +145,21 @@ def _write_md(path: Path, summary: Dict[str, Any], trades: List[Dict[str, Any]],
 
 
 def _cli_summary_payload(summary: Dict[str, Any], report_dir: Path, *, trade_count: int, position_count: int) -> tuple[Dict[str, Any], Dict[str, Path]]:
-    return (
-        {
-            "market": str(summary.get("market") or "DEFAULT"),
-            "portfolio_id": str(summary.get("portfolio_id") or "-"),
-            "rebalance_due": bool(summary.get("rebalance_due", False)),
-            "executed": bool(summary.get("executed", False)),
-            "trade_count": int(trade_count),
-            "position_count": int(position_count),
-        },
-        {
-            "summary_json": report_dir / "investment_paper_summary.json",
-            "portfolio_csv": report_dir / "investment_portfolio.csv",
-            "trades_csv": report_dir / "investment_rebalance_trades.csv",
-            "report_md": report_dir / "investment_paper_report.md",
-        },
+    summary_contract = InvestmentPaperSummary(
+        market=str(summary.get("market") or "DEFAULT"),
+        portfolio_id=str(summary.get("portfolio_id") or "-"),
+        rebalance_due=bool(summary.get("rebalance_due", False)),
+        executed=bool(summary.get("executed", False)),
+        trade_count=int(trade_count),
+        position_count=int(position_count),
     )
+    artifacts = ArtifactBundle(
+        summary_json=report_dir / "investment_paper_summary.json",
+        portfolio_csv=report_dir / "investment_portfolio.csv",
+        trades_csv=report_dir / "investment_rebalance_trades.csv",
+        report_md=report_dir / "investment_paper_report.md",
+    )
+    return summary_contract.to_dict(), artifacts.to_dict()
 
 
 def main(argv: List[str] | None = None) -> None:

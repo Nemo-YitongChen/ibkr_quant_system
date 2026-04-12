@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from ..analysis.report import write_csv, write_json
 from ..common.cli import build_cli_parser, emit_cli_summary
+from ..common.cli_contracts import ArtifactBundle, BrokerSyncSummary
 from ..common.logger import get_logger
 from ..common.markets import add_market_args, resolve_market_code
 from ..common.runtime_paths import resolve_repo_path
@@ -83,20 +84,19 @@ def _write_md(path: Path, summary: Dict[str, Any], rows: List[Dict[str, Any]]) -
 
 
 def _cli_summary_payload(summary: Dict[str, Any], out_dir: Path) -> tuple[Dict[str, Any], Dict[str, Path]]:
-    return (
-        {
-            "market": str(summary.get("market") or "DEFAULT"),
-            "portfolio_id": str(summary.get("portfolio_id") or "-"),
-            "account_id": str(summary.get("account_id") or "-"),
-            "position_count": int(summary.get("position_count") or 0),
-            "equity_after": f"{float(summary.get('equity_after', 0.0) or 0.0):.2f}",
-        },
-        {
-            "positions_csv": out_dir / "broker_sync_positions.csv",
-            "summary_json": out_dir / "broker_sync_summary.json",
-            "report_md": out_dir / "broker_sync_report.md",
-        },
+    summary_contract = BrokerSyncSummary(
+        market=str(summary.get("market") or "DEFAULT"),
+        portfolio_id=str(summary.get("portfolio_id") or "-"),
+        account_id=str(summary.get("account_id") or "-"),
+        position_count=int(summary.get("position_count") or 0),
+        equity_after=f"{float(summary.get('equity_after', 0.0) or 0.0):.2f}",
     )
+    artifacts = ArtifactBundle(
+        positions_csv=out_dir / "broker_sync_positions.csv",
+        summary_json=out_dir / "broker_sync_summary.json",
+        report_md=out_dir / "broker_sync_report.md",
+    )
+    return summary_contract.to_dict(), artifacts.to_dict()
 
 
 def main(argv: List[str] | None = None) -> None:

@@ -8,6 +8,7 @@ from ..analysis.investment_portfolio import InvestmentPaperConfig
 from ..app.investment_engine import InvestmentExecutionEngine
 from ..common.account_profile import load_account_profiles
 from ..common.cli import build_cli_parser, emit_cli_summary
+from ..common.cli_contracts import ArtifactBundle, InvestmentExecutionSummary
 from ..common.logger import get_logger
 from ..common.market_structure import load_market_structure
 from ..common.markets import add_market_args, market_config_path, resolve_market_code
@@ -80,22 +81,21 @@ def _infer_report_dir(args: argparse.Namespace, market: str) -> Path:
 
 
 def _cli_summary_payload(result: Any, report_dir: Path) -> tuple[Dict[str, Any], Dict[str, Path]]:
-    return (
-        {
-            "market": str(getattr(result, "market", "") or "DEFAULT"),
-            "portfolio_id": str(getattr(result, "portfolio_id", "") or "-"),
-            "submitted": bool(getattr(result, "submitted", False)),
-            "account_profile": str(getattr(result, "account_profile_label", "") or "-"),
-            "order_count": int(getattr(result, "order_count", 0) or 0),
-            "gap_symbols": int(getattr(result, "gap_symbols", 0) or 0),
-            "gap_notional": f"{float(getattr(result, 'gap_notional', 0.0) or 0.0):.2f}",
-        },
-        {
-            "summary_json": report_dir / "investment_execution_summary.json",
-            "plan_csv": report_dir / "investment_execution_plan.csv",
-            "report_md": report_dir / "investment_execution_report.md",
-        },
+    summary_contract = InvestmentExecutionSummary(
+        market=str(getattr(result, "market", "") or "DEFAULT"),
+        portfolio_id=str(getattr(result, "portfolio_id", "") or "-"),
+        submitted=bool(getattr(result, "submitted", False)),
+        account_profile=str(getattr(result, "account_profile_label", "") or "-"),
+        order_count=int(getattr(result, "order_count", 0) or 0),
+        gap_symbols=int(getattr(result, "gap_symbols", 0) or 0),
+        gap_notional=f"{float(getattr(result, 'gap_notional', 0.0) or 0.0):.2f}",
     )
+    artifacts = ArtifactBundle(
+        summary_json=report_dir / "investment_execution_summary.json",
+        plan_csv=report_dir / "investment_execution_plan.csv",
+        report_md=report_dir / "investment_execution_report.md",
+    )
+    return summary_contract.to_dict(), artifacts.to_dict()
 
 
 def main(argv: list[str] | None = None) -> None:

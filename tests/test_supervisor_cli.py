@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 import subprocess
 import json
+import pytest
 import re
 import shutil
 import time
@@ -18,8 +19,19 @@ from src.common.runtime_paths import resolve_scoped_runtime_path, scope_from_ibk
 from src.tools.generate_dashboard import build_dashboard, write_dashboard
 from src.common.storage import Storage, build_investment_risk_history_row
 
+pytestmark = [pytest.mark.integration, pytest.mark.slow]
+
 
 class SupervisorCliTests(unittest.TestCase):
+    def setUp(self):
+        self._broker_snapshot_sync_patcher = patch.object(
+            Supervisor,
+            "_run_investment_broker_snapshot_sync",
+            return_value=False,
+        )
+        self._broker_snapshot_sync_patcher.start()
+        self.addCleanup(self._broker_snapshot_sync_patcher.stop)
+
     def test_managed_process_stop_clears_handle_after_graceful_shutdown(self):
         proc = unittest.mock.Mock()
         proc.poll.side_effect = [None]
@@ -1510,7 +1522,7 @@ class SupervisorCliTests(unittest.TestCase):
                 result = supervisor._dashboard_control_run_preflight()
                 self.assertTrue(result["ok"])
                 for _ in range(40):
-                    if (preflight_dir / "supervisor_preflight_summary.json").exists():
+                    if (preflight_dir / "supervisor_preflight_summary.json").exists() and mock_refresh.called:
                         break
                     time.sleep(0.01)
             self.assertTrue((preflight_dir / "supervisor_preflight_summary.json").exists())
@@ -5250,17 +5262,18 @@ class SupervisorCliTests(unittest.TestCase):
                 cfg_path = base / "supervisor.yaml"
                 summary_dir = base / "reports_supervisor"
                 ibkr_cfg_path = base / "ibkr_test.yaml"
+                account_id = f"DU_SCOPE_{base.name}".upper().replace("-", "_")
                 ibkr_cfg = {
                     "mode": "paper",
                     "execution_mode": "investment_only",
-                    "account_id": "DU_SCOPE_TEST",
+                    "account_id": account_id,
                 }
                 ibkr_cfg_path.write_text(
                     "\n".join(
                         [
                             'mode: "paper"',
                             'execution_mode: "investment_only"',
-                            'account_id: "DU_SCOPE_TEST"',
+                            f'account_id: "{account_id}"',
                         ]
                     ),
                     encoding="utf-8",
@@ -5279,7 +5292,7 @@ class SupervisorCliTests(unittest.TestCase):
                         "ts": "2026-03-12T08:00:00+00:00",
                         "market": "US",
                         "portfolio_id": "US:watchlist",
-                        "account_id": "DU_SCOPE_TEST",
+                        "account_id": account_id,
                         "report_dir": str(report_dir),
                         "submitted": 0,
                         "order_count": 0,

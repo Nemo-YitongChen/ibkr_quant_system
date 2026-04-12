@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from src.tools import reconcile_investment_broker
 from src.tools import review_investment_weekly
 from src.tools import run_investment_execution
@@ -10,6 +12,8 @@ from src.tools import run_investment_guard
 from src.tools import run_investment_opportunity
 from src.tools import run_investment_paper
 from src.tools import sync_investment_paper_from_broker
+
+pytestmark = pytest.mark.guardrail
 
 
 def test_remaining_cli_help_includes_commands_and_examples() -> None:

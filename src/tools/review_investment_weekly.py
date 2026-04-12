@@ -12,6 +12,7 @@ from ..analysis.report import write_csv, write_json
 from ..common.account_profile import load_account_profiles, resolved_account_profile_summary
 from ..common.adaptive_strategy import adaptive_strategy_context, load_adaptive_strategy
 from ..common.cli import build_cli_parser, emit_cli_summary
+from ..common.cli_contracts import ArtifactBundle, WeeklyReviewSummary
 from ..common.market_structure import load_market_structure, market_structure_summary
 from .review_weekly_io import (
     load_json_file as _load_json_file,
@@ -3889,23 +3890,22 @@ def _build_broker_local_diff_rows(
 
 
 def _cli_summary_payload(summary: Dict[str, Any], out_dir: Path) -> tuple[Dict[str, Any], Dict[str, Path]]:
-    return (
-        {
-            "market_filter": str(summary.get("market_filter") or "ALL"),
-            "portfolio_filter": str(summary.get("portfolio_filter") or "ALL"),
-            "portfolio_count": int(summary.get("portfolio_count") or 0),
-            "trade_count": int(summary.get("trade_count") or 0),
-            "execution_run_count": int(summary.get("execution_run_count") or 0),
-            "best_portfolio": str(summary.get("best_portfolio") or "-"),
-            "worst_portfolio": str(summary.get("worst_portfolio") or "-"),
-        },
-        {
-            "summary_json": out_dir / "weekly_review_summary.json",
-            "summary_csv": out_dir / "weekly_portfolio_summary.csv",
-            "trade_log_csv": out_dir / "weekly_trade_log.csv",
-            "report_md": out_dir / "weekly_review.md",
-        },
+    summary_contract = WeeklyReviewSummary(
+        market_filter=str(summary.get("market_filter") or "ALL"),
+        portfolio_filter=str(summary.get("portfolio_filter") or "ALL"),
+        portfolio_count=int(summary.get("portfolio_count") or 0),
+        trade_count=int(summary.get("trade_count") or 0),
+        execution_run_count=int(summary.get("execution_run_count") or 0),
+        best_portfolio=str(summary.get("best_portfolio") or "-"),
+        worst_portfolio=str(summary.get("worst_portfolio") or "-"),
     )
+    artifacts = ArtifactBundle(
+        summary_json=out_dir / "weekly_review_summary.json",
+        summary_csv=out_dir / "weekly_portfolio_summary.csv",
+        trade_log_csv=out_dir / "weekly_trade_log.csv",
+        report_md=out_dir / "weekly_review.md",
+    )
+    return summary_contract.to_dict(), artifacts.to_dict()
 
 
 def main(argv: List[str] | None = None) -> None:

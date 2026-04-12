@@ -928,7 +928,7 @@ def _collect_symbol_feature_results(
     *,
     data_adapter: Any,
     market: str,
-    market_structure: MarketStructureConfig | None,
+    market_structure: MarketStructureConfig | None = None,
     shared_days: int,
     mid_lookback_days: int,
     long_years: int,

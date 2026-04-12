@@ -11,6 +11,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from ..analysis.report import write_csv, write_json
 from ..common.cli import build_cli_parser, emit_cli_summary
+from ..common.cli_contracts import ArtifactBundle, ExecutionReviewSummary
 from ..common.logger import get_logger
 from ..common.markets import add_market_args, resolve_market_code, symbol_matches_market
 from ..common.runtime_paths import resolve_repo_path
@@ -839,24 +840,23 @@ def _write_md(path: Path, report: Dict[str, Any]) -> None:
 
 def _cli_summary_payload(report: Dict[str, Any], out_dir: Path) -> tuple[Dict[str, Any], Dict[str, Path]]:
     summary = dict(report.get("summary") or {})
-    return (
-        {
-            "market": str(summary.get("market") or "ALL"),
-            "portfolio_id": str(summary.get("portfolio_id") or "ALL"),
-            "execution_runs": int(summary.get("execution_run_rows") or 0),
-            "planned_orders": int(summary.get("planned_order_rows") or 0),
-            "fills": int(summary.get("fill_rows") or 0),
-            "realized_net_pnl": f"{float(summary.get('realized_net_pnl', 0.0) or 0.0):.2f}",
-        },
-        {
-            "summary_json": out_dir / "investment_execution_summary.json",
-            "runs_csv": out_dir / "investment_execution_runs.csv",
-            "weekly_csv": out_dir / "investment_execution_weekly_summary.csv",
-            "orders_csv": out_dir / "investment_execution_orders.csv",
-            "fills_csv": out_dir / "investment_execution_fills.csv",
-            "markdown": out_dir / "investment_execution_kpi.md",
-        },
+    summary_contract = ExecutionReviewSummary(
+        market=str(summary.get("market") or "ALL"),
+        portfolio_id=str(summary.get("portfolio_id") or "ALL"),
+        execution_runs=int(summary.get("execution_run_rows") or 0),
+        planned_orders=int(summary.get("planned_order_rows") or 0),
+        fills=int(summary.get("fill_rows") or 0),
+        realized_net_pnl=f"{float(summary.get('realized_net_pnl', 0.0) or 0.0):.2f}",
     )
+    artifacts = ArtifactBundle(
+        summary_json=out_dir / "investment_execution_summary.json",
+        runs_csv=out_dir / "investment_execution_runs.csv",
+        weekly_csv=out_dir / "investment_execution_weekly_summary.csv",
+        orders_csv=out_dir / "investment_execution_orders.csv",
+        fills_csv=out_dir / "investment_execution_fills.csv",
+        markdown=out_dir / "investment_execution_kpi.md",
+    )
+    return summary_contract.to_dict(), artifacts.to_dict()
 
 
 def main() -> None:

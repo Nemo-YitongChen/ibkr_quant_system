@@ -42,8 +42,31 @@ If a runtime artifact is needed for regression or investigation, save a purpose-
 
 ## CI baseline
 
-This repository now includes a basic GitHub Actions workflow that runs `pytest`.
-That is the minimum baseline; the next step should be adding targeted smoke checks for supervisor and report generation paths.
+This repository now includes a GitHub Actions baseline with:
+
+- a `compile-check` job that catches import / syntax / packaging-shape regressions before pytest starts
+- a `core-guardrails` job for startup smoke, CLI contract checks, execution audit persistence, fill audit chain, and the minimal investment workflow smoke path
+- an `integration-suite` job for cross-tool workflow and supervisor/dashboard contract coverage
+- a `full-suite` job that runs the remaining tests after the earlier tiers have already covered guardrails and integration paths
+
+These now live in one Python CI workflow instead of separate compile-only and pytest-only workflows, and the failure ladder is explicit: `compile-check -> core-guardrails -> integration-suite -> full-suite`.
+
+The workflow also uses GitHub Actions `concurrency` so older runs on the same branch or PR are cancelled when a newer push arrives. That keeps the signal current and avoids wasting CI time on superseded runs.
+
+For local verification, the same guardrail set can be run with `pytest -q -p no:cacheprovider -m guardrail`.
+
+The test suite now has three practical local tiers:
+
+- `guardrail`: startup smoke, CLI contract checks, audit persistence, and the minimal investment workflow path
+- `integration`: cross-tool workflow and supervisor/dashboard contract tests
+- `slow`: the heavier supervisor-cycle coverage that still belongs in the suite but is useful to skip during fast iteration
+
+Useful local commands:
+
+- `pytest -q -p no:cacheprovider -m guardrail`
+- `pytest -q -p no:cacheprovider -m integration`
+- `pytest -q -p no:cacheprovider -m "not guardrail and not integration"`
+- `pytest -q -p no:cacheprovider -m "not slow"`
 
 ## Suggested next controls
 

@@ -2,9 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from src.tools import generate_dashboard
 from src.tools import generate_investment_report
 from src.tools import preflight_supervisor
+
+pytestmark = pytest.mark.guardrail
 
 
 def test_primary_cli_help_includes_examples_and_command_names() -> None:

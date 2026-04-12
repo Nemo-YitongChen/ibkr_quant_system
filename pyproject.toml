@@ -42,3 +42,10 @@ ibkr-quant-short-safety-sync = "src.tools.sync_short_safety_from_ibkr:main"
 
 [tool.setuptools.packages.find]
 include = ["src", "src.*"]
+
+[tool.pytest.ini_options]
+markers = [
+    "guardrail: high-signal startup, CLI contract, audit-chain, and workflow smoke regression checks",
+    "integration: multi-module workflow, supervisor, or dashboard tests that validate cross-tool contracts",
+    "slow: longer-running tests kept in the suite but useful to filter during rapid local iteration",
+]
