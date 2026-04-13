@@ -103,6 +103,8 @@ class InvestmentPlanConfig:
     rebalance_window_days: int = 30
     review_window_days: int = 90
     trim_fraction: float = 0.25
+    turnover_penalty_scale: float = 0.18
+    no_trade_band_pct: float = 0.04
 
     @classmethod
     def from_dict(cls, raw: Dict[str, Any] | None) -> "InvestmentPlanConfig":
@@ -420,6 +422,10 @@ def score_investment_candidate(
         "avg_daily_dollar_volume": float(avg_daily_dollar_volume),
         "avg_daily_volume": float(avg_daily_volume),
         "atr_pct": float(atr_pct),
+        "accumulate_threshold": float(cfg.accumulate_threshold),
+        "hold_threshold": float(cfg.hold_threshold),
+        "reduce_threshold": float(cfg.reduce_threshold),
+        "execution_ready_threshold": float(cfg.execution_ready_threshold),
         "micro_breakout_5m": float(micro_breakout_5m),
         "micro_reversal_5m": float(micro_reversal_5m),
         "micro_volume_burst_5m": float(micro_volume_burst_5m),
@@ -500,6 +506,9 @@ def make_investment_plan(
         float(cfg.min_allocation_mult),
         float(cfg.max_allocation_mult),
     )
+    score = float(row.get("score", 0.0) or 0.0)
+    accumulate_threshold = float(row.get("accumulate_threshold", 0.35) or 0.35)
+    hold_threshold = float(row.get("hold_threshold", 0.10) or 0.10)
     allocation_mult = 0.0
     entry_style = "WAIT"
     notes = []
@@ -541,6 +550,38 @@ def make_investment_plan(
             else "No allocation change until trend and regime quality improve."
         )
 
+    allocation_mult_before_plan_controls = float(allocation_mult)
+    no_trade_band_scale = 1.0
+    turnover_scale = 1.0
+    no_trade_band_threshold = 0.0
+    no_trade_band_applied = False
+    turnover_penalty_applied = False
+    expected_edge_threshold = 0.0
+    expected_edge_score = 0.0
+    if action in {"ACCUMULATE", "HOLD"} and allocation_mult > 0.0:
+        no_trade_band_pct = max(0.0, float(cfg.no_trade_band_pct))
+        threshold_anchor = accumulate_threshold if action == "ACCUMULATE" else hold_threshold
+        no_trade_band_threshold = float(threshold_anchor)
+        expected_edge_threshold = float(threshold_anchor)
+        expected_edge_score = max(0.0, float(row.get("score_before_cost", score) or score) - threshold_anchor)
+        if no_trade_band_pct > 1e-9:
+            edge_above_threshold = max(0.0, score - threshold_anchor)
+            if edge_above_threshold < no_trade_band_pct:
+                edge_ratio = _clamp(edge_above_threshold / no_trade_band_pct, 0.0, 1.0)
+                scale_floor = 0.35 if action == "ACCUMULATE" else 0.60
+                no_trade_band_scale = _clamp(scale_floor + (1.0 - scale_floor) * edge_ratio, scale_floor, 1.0)
+                no_trade_band_applied = no_trade_band_scale < 1.0 - 1e-9
+                if no_trade_band_applied:
+                    notes.append(
+                        "Signal is only marginally above the action threshold; no-trade band scales sizing down to reduce churn."
+                    )
+        if int(row.get("rebalance_flag", 0) or 0) == 1 and float(cfg.turnover_penalty_scale) > 1e-9:
+            turnover_scale = _clamp(1.0 - float(cfg.turnover_penalty_scale), 0.35, 1.0)
+            turnover_penalty_applied = turnover_scale < 1.0 - 1e-9
+            if turnover_penalty_applied:
+                notes.append("Recent rebalance pressure is elevated; turnover penalty scales sizing down until the edge widens.")
+        allocation_mult = round(float(allocation_mult) * no_trade_band_scale * turnover_scale, 2)
+
     if str(row.get("regime_state", "")).upper() in {"RISK_OFF", "HARD_RISK_OFF"}:
         notes.append("Market regime is defensive; keep pacing conservative.")
     if bool(row.get("earnings_in_14d", False)):
@@ -566,7 +607,19 @@ def make_investment_plan(
         "action": action,
         "entry_style": entry_style,
         "allocation_mult": float(allocation_mult),
-        "score": float(row.get("score", 0.0) or 0.0),
+        "allocation_mult_before_plan_controls": float(allocation_mult_before_plan_controls),
+        "no_trade_band_scale": float(no_trade_band_scale),
+        "turnover_scale": float(turnover_scale),
+        "plan_no_trade_band_pct": float(cfg.no_trade_band_pct),
+        "plan_turnover_penalty_scale": float(cfg.turnover_penalty_scale),
+        "plan_no_trade_band_threshold": float(no_trade_band_threshold),
+        "plan_no_trade_band_applied": int(no_trade_band_applied),
+        "plan_turnover_penalty_applied": int(turnover_penalty_applied),
+        "expected_edge_threshold": float(expected_edge_threshold),
+        "expected_edge_score": float(expected_edge_score),
+        "adaptive_strategy_market_profile": str(row.get("adaptive_strategy_market_profile", "") or ""),
+        "adaptive_strategy_market_profile_label": str(row.get("adaptive_strategy_market_profile_label", "") or ""),
+        "score": float(score),
         "score_before_cost": float(row.get("score_before_cost", row.get("score", 0.0)) or 0.0),
         "model_recommendation_score": float(row.get("model_recommendation_score", row.get("score", 0.0)) or 0.0),
         "execution_score": float(row.get("execution_score", 0.0) or 0.0),

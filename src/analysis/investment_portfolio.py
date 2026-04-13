@@ -537,6 +537,9 @@ def _build_risk_overlay(
     return {
         "enabled": True,
         "candidate_count": int(len(chosen)),
+        "base_net_exposure": float(cfg.max_net_exposure),
+        "base_gross_exposure": float(cfg.max_gross_exposure),
+        "base_short_exposure": float(cfg.max_short_exposure),
         "returns_based_enabled": bool(returns_metrics.get("enabled", False)),
         "returns_based_symbol_count": int(returns_metrics.get("symbol_count", 0) or 0),
         "returns_based_sample_size": int(returns_metrics.get("sample_size", 0) or 0),

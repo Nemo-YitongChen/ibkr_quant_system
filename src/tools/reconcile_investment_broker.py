@@ -8,6 +8,11 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from ..analysis.report import write_csv, write_json
+from ..common.adaptive_strategy import (
+    adaptive_strategy_effective_controls_human_note,
+    adaptive_strategy_summary_fields,
+    load_report_adaptive_strategy_payload,
+)
 from ..common.cli import build_cli_parser, emit_cli_summary
 from ..common.cli_contracts import ArtifactBundle, ReconciliationSummary
 from ..common.logger import get_logger
@@ -54,6 +59,55 @@ def _rows_to_symbol_map(rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]
     return out
 
 
+def _load_report_json(report_dir: str, name: str) -> Dict[str, Any]:
+    if not str(report_dir or "").strip():
+        return {}
+    path = Path(report_dir) / name
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return dict(data) if isinstance(data, dict) else {}
+
+
+def _strategy_effective_controls_note(*summaries: Dict[str, Any]) -> str:
+    for summary in summaries:
+        payload = dict(summary or {})
+        note = str(
+            payload.get("strategy_effective_controls_human_note")
+            or payload.get("strategy_effective_controls_note")
+            or ""
+        ).strip()
+        if note:
+            return note
+        controls = dict(payload.get("strategy_effective_controls") or {})
+        note = adaptive_strategy_effective_controls_human_note(controls)
+        if note:
+            return note
+    return ""
+
+
+def _execution_gate_summary(execution_summary: Dict[str, Any]) -> str:
+    execution_summary = dict(execution_summary or {})
+    blocked_total = int(execution_summary.get("blocked_order_count", 0) or 0)
+    if blocked_total <= 0:
+        return ""
+    labels = [
+        ("流动性", int(execution_summary.get("blocked_liquidity_order_count", 0) or 0)),
+        ("风险告警", int(execution_summary.get("blocked_risk_alert_order_count", 0) or 0)),
+        ("人工复核", int(execution_summary.get("blocked_manual_review_order_count", 0) or 0)),
+        ("机会过滤", int(execution_summary.get("blocked_opportunity_order_count", 0) or 0)),
+        ("质量过滤", int(execution_summary.get("blocked_quality_order_count", 0) or 0)),
+        ("热点惩罚", int(execution_summary.get("blocked_hotspot_penalty_order_count", 0) or 0)),
+    ]
+    detail = "，".join(f"{label} {count}" for label, count in labels if count > 0)
+    if detail:
+        return f"另外有 {blocked_total} 笔计划单因执行 gate 暂未下发（{detail}）。"
+    return f"另外有 {blocked_total} 笔计划单因执行 gate 暂未下发。"
+
+
 def build_reconciliation_rows(local_rows: List[Dict[str, Any]], broker_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     local_map = _rows_to_symbol_map(local_rows)
     broker_map = _rows_to_symbol_map(broker_rows)
@@ -88,6 +142,11 @@ def build_reconciliation_rows(local_rows: List[Dict[str, Any]], broker_rows: Lis
 
 
 def _write_md(path: Path, summary: Dict[str, Any], rows: List[Dict[str, Any]]) -> None:
+    strategy_name = str(summary.get("adaptive_strategy_display_name") or summary.get("adaptive_strategy_name") or "").strip()
+    strategy_summary = str(summary.get("adaptive_strategy_summary") or "").strip()
+    strategy_runtime_note = str(summary.get("adaptive_strategy_runtime_note") or "").strip()
+    strategy_controls_note = str(summary.get("strategy_effective_controls_note") or "").strip()
+    execution_gate_summary = str(summary.get("execution_gate_summary") or "").strip()
     lines = [
         "# Investment Broker Reconciliation",
         "",
@@ -102,8 +161,24 @@ def _write_md(path: Path, summary: Dict[str, Any], rows: List[Dict[str, Any]]) -
         f"- Only broker rows: {int(summary.get('only_broker_rows', 0) or 0)}",
         f"- Qty mismatch rows: {int(summary.get('qty_mismatch_rows', 0) or 0)}",
         "",
-        "## Reconciliation",
     ]
+    if strategy_name or strategy_summary or strategy_runtime_note:
+        lines.extend(
+            [
+                "## Strategy",
+                f"- Framework: {strategy_name or '-'}",
+            ]
+        )
+        if strategy_summary:
+            lines.append(f"- Summary: {strategy_summary}")
+        if strategy_runtime_note:
+            lines.append(f"- Runtime: {strategy_runtime_note}")
+        if strategy_controls_note:
+            lines.append(f"- Effective controls: {strategy_controls_note}")
+        if execution_gate_summary:
+            lines.append(f"- Execution gates: {execution_gate_summary}")
+        lines.append("")
+    lines.append("## Reconciliation")
     if not rows:
         lines.append("- (no rows)")
     else:
@@ -181,6 +256,18 @@ def main(argv: List[str] | None = None) -> None:
         conn.close()
 
     rows = build_reconciliation_rows(local_rows, broker_rows)
+    report_dir = ""
+    if local_run is not None:
+        report_dir = str(local_run["report_dir"] or "").strip()
+    if not report_dir and broker_run is not None:
+        report_dir = str(broker_run["report_dir"] or "").strip()
+    strategy_fields = adaptive_strategy_summary_fields(
+        load_report_adaptive_strategy_payload(Path(report_dir)) if report_dir else {}
+    )
+    paper_summary = _load_report_json(report_dir, "investment_paper_summary.json")
+    execution_summary = _load_report_json(report_dir, "investment_execution_summary.json")
+    strategy_controls_note = _strategy_effective_controls_note(execution_summary, paper_summary)
+    execution_gate_summary = _execution_gate_summary(execution_summary)
     summary = {
         "ts": datetime.now(timezone.utc).isoformat(),
         "market": market,
@@ -188,11 +275,26 @@ def main(argv: List[str] | None = None) -> None:
         "account_id": str(broker_run["account_id"]) if broker_run is not None else "",
         "local_run_id": str(local_run["run_id"]) if local_run is not None else "",
         "broker_run_id": str(broker_run["run_id"]) if broker_run is not None else "",
+        "report_dir": report_dir,
         "match_rows": int(sum(1 for row in rows if row["status"] == "MATCH")),
         "only_local_rows": int(sum(1 for row in rows if row["status"] == "ONLY_LOCAL")),
         "only_broker_rows": int(sum(1 for row in rows if row["status"] == "ONLY_BROKER")),
         "qty_mismatch_rows": int(sum(1 for row in rows if row["status"] == "QTY_MISMATCH")),
+        "strategy_effective_controls_applied": bool(
+            execution_summary.get("strategy_effective_controls_applied")
+            or paper_summary.get("strategy_effective_controls_applied")
+        ),
+        "strategy_effective_controls_note": strategy_controls_note,
+        "execution_gate_summary": execution_gate_summary,
+        "execution_blocked_order_count": int(execution_summary.get("blocked_order_count", 0) or 0),
+        "execution_blocked_liquidity_order_count": int(execution_summary.get("blocked_liquidity_order_count", 0) or 0),
+        "execution_blocked_risk_alert_order_count": int(execution_summary.get("blocked_risk_alert_order_count", 0) or 0),
+        "execution_blocked_manual_review_order_count": int(execution_summary.get("blocked_manual_review_order_count", 0) or 0),
+        "execution_blocked_opportunity_order_count": int(execution_summary.get("blocked_opportunity_order_count", 0) or 0),
+        "execution_gap_symbols": int(execution_summary.get("gap_symbols", 0) or 0),
+        "execution_gap_notional": float(execution_summary.get("gap_notional", 0.0) or 0.0),
     }
+    summary.update(strategy_fields)
 
     write_csv(str(out_dir / "broker_reconciliation.csv"), rows)
     write_json(str(out_dir / "broker_reconciliation_summary.json"), summary)

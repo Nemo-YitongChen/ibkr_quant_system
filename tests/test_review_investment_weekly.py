@@ -22,6 +22,7 @@ from src.tools.review_investment_weekly import (
     _build_execution_hotspot_penalties,
     _build_execution_hotspot_rows,
     _build_execution_session_rows,
+    _build_execution_gate_rows,
     _build_risk_feedback_rows,
     _build_risk_review_rows,
     _build_broker_summary_rows,
@@ -305,6 +306,45 @@ class ReviewInvestmentWeeklyTests(unittest.TestCase):
         self.assertGreater(int(rows[0]["execution_max_slices_per_symbol_delta"]), 0)
         self.assertGreater(float(rows[0]["feedback_confidence"]), 0.0)
         self.assertIn(str(rows[0]["feedback_confidence_label"]), {"LOW", "MEDIUM", "HIGH"})
+
+    def test_execution_feedback_rows_hold_when_gate_blocking_is_primary_driver(self):
+        rows = _build_execution_feedback_rows(
+            [
+                {
+                    "portfolio_id": "P1",
+                    "market": "US",
+                    "planned_execution_cost_total": 20.0,
+                    "execution_cost_total": 20.0,
+                    "execution_cost_gap": 0.0,
+                    "avg_expected_cost_bps": 18.0,
+                    "avg_actual_slippage_bps": 18.0,
+                    "execution_style_breakdown": "VWAP_LITE_MIDDAY:2",
+                    "strategy_control_weight_delta": 0.0,
+                    "risk_overlay_weight_delta": 0.01,
+                    "execution_gate_blocked_weight": 0.08,
+                    "execution_gate_blocked_order_ratio": 0.60,
+                    "execution_gate_blocked_order_value": 8000.0,
+                    "control_split_text": "策略 0.0% | 风险 1.0% | 执行 8.0%（blocked 8000.00 / 60%）",
+                }
+            ],
+            [
+                {
+                    "portfolio_id": "P1",
+                    "market": "US",
+                    "submitted_order_rows": 4,
+                    "error_order_rows": 0,
+                    "latest_gap_symbols": 0,
+                }
+            ],
+        )
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row["execution_feedback_action"], "HOLD")
+        self.assertEqual(float(row["execution_adv_max_participation_pct_delta"]), 0.0)
+        self.assertEqual(float(row["execution_adv_split_trigger_pct_delta"]), 0.0)
+        self.assertEqual(int(row["execution_max_slices_per_symbol_delta"]), 0)
+        self.assertEqual(str(row["feedback_control_driver"]), "EXECUTION")
+        self.assertIn("执行 gate 阻断", str(row["feedback_reason"]))
 
     def test_feedback_calibration_rows_build_support_scores_from_recent_outcomes(self):
         outcome_rows = []
@@ -1434,10 +1474,41 @@ class ReviewInvestmentWeeklyTests(unittest.TestCase):
                 }
             ],
         )
+        execution_gate_rows = _build_execution_gate_rows(
+            [
+                {
+                    "portfolio_id": "US:watchlist",
+                    "market": "US",
+                    "symbol": "AAPL",
+                    "status": "BLOCKED_LIQUIDITY",
+                    "order_value": 1500.0,
+                },
+                {
+                    "portfolio_id": "US:watchlist",
+                    "market": "US",
+                    "symbol": "MSFT",
+                    "status": "PLANNED",
+                    "order_value": 2000.0,
+                },
+            ]
+        )
         with tempfile.TemporaryDirectory() as tmp:
             report_dir = Path(tmp)
             (report_dir / "market_sentiment.json").write_text(
                 json.dumps({"benchmark_ret5d": 0.03}),
+                encoding="utf-8",
+            )
+            (report_dir / "investment_execution_summary.json").write_text(
+                json.dumps(
+                    {
+                        "strategy_effective_controls": {
+                            "base_effective_target_invested_weight": 0.70,
+                            "effective_target_invested_weight": 0.55,
+                        },
+                        "risk_base_gross_exposure": 0.90,
+                        "risk_dynamic_gross_exposure": 0.72,
+                    }
+                ),
                 encoding="utf-8",
             )
             runs_by_portfolio = {
@@ -1454,6 +1525,7 @@ class ReviewInvestmentWeeklyTests(unittest.TestCase):
                 sector_rows=sector_rows,
                 latest_rows_by_portfolio=latest_rows,
                 execution_effect_rows=execution_effect_rows,
+                execution_gate_rows=execution_gate_rows,
                 runs_by_portfolio=runs_by_portfolio,
             )
         self.assertEqual(len(rows), 1)
@@ -1468,7 +1540,46 @@ class ReviewInvestmentWeeklyTests(unittest.TestCase):
         self.assertAlmostEqual(total, float(row["weekly_return"]), places=6)
         self.assertEqual(row["top_sector"], "Technology")
         self.assertEqual(row["attribution_mode"], "proxy_v1")
+        self.assertAlmostEqual(float(row["strategy_control_weight_delta"]), 0.15, places=6)
+        self.assertAlmostEqual(float(row["risk_overlay_weight_delta"]), 0.18, places=6)
+        self.assertAlmostEqual(float(row["execution_gate_blocked_order_value"]), 1500.0, places=6)
+        self.assertAlmostEqual(float(row["execution_gate_blocked_order_ratio"]), 0.5, places=6)
+        self.assertAlmostEqual(float(row["execution_gate_blocked_weight"]), 0.015, places=6)
+        self.assertIn("策略 15.0%", str(row["control_split_text"]))
         self.assertTrue(str(row["diagnosis"]))
+
+    def test_execution_gate_rows_summarize_blocked_counts_and_values(self):
+        rows = _build_execution_gate_rows(
+            [
+                {
+                    "portfolio_id": "US:watchlist",
+                    "market": "US",
+                    "symbol": "AAPL",
+                    "status": "BLOCKED_OPPORTUNITY",
+                    "order_value": 1200.0,
+                },
+                {
+                    "portfolio_id": "US:watchlist",
+                    "market": "US",
+                    "symbol": "MSFT",
+                    "status": "REVIEW_REQUIRED",
+                    "order_value": 1800.0,
+                },
+                {
+                    "portfolio_id": "US:watchlist",
+                    "market": "US",
+                    "symbol": "NVDA",
+                    "status": "PLANNED",
+                    "order_value": 3000.0,
+                },
+            ]
+        )
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row["blocked_order_count"], 2)
+        self.assertAlmostEqual(float(row["blocked_order_value"]), 3000.0, places=6)
+        self.assertAlmostEqual(float(row["blocked_order_ratio"]), 2.0 / 3.0, places=6)
+        self.assertAlmostEqual(float(row["blocked_order_value_ratio"]), 0.5, places=6)
 
     def test_risk_review_rows_summarize_dynamic_exposure_and_stress(self):
         runs_by_portfolio = {
@@ -1633,6 +1744,40 @@ class ReviewInvestmentWeeklyTests(unittest.TestCase):
         self.assertEqual(hk_row["risk_feedback_action"], "RELAX")
         self.assertGreater(float(hk_row["paper_max_net_exposure_delta"]), 0.0)
         self.assertGreater(float(hk_row["paper_max_gross_exposure_delta"]), 0.0)
+
+    def test_risk_feedback_rows_hold_when_strategy_de_risking_is_primary_driver(self):
+        rows = _build_risk_feedback_rows(
+            [
+                {
+                    "portfolio_id": "US:watchlist",
+                    "market": "US",
+                    "dominant_risk_driver": "CORRELATION",
+                    "latest_avg_pair_correlation": 0.66,
+                    "latest_stress_worst_loss": 0.071,
+                    "latest_top_sector_share": 0.47,
+                    "latest_dynamic_net_exposure": 0.70,
+                    "latest_dynamic_gross_exposure": 0.78,
+                    "risk_diagnosis": "组合拥挤度偏高，优先增加跨行业/跨市场分散度，再考虑放宽仓位。",
+                }
+            ],
+            attribution_rows=[
+                {
+                    "portfolio_id": "US:watchlist",
+                    "strategy_control_weight_delta": 0.18,
+                    "risk_overlay_weight_delta": 0.03,
+                    "execution_gate_blocked_weight": 0.0,
+                    "execution_gate_blocked_order_ratio": 0.0,
+                    "execution_gate_blocked_order_value": 0.0,
+                }
+            ],
+        )
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row["risk_feedback_action"], "HOLD")
+        self.assertEqual(float(row["paper_max_net_exposure_delta"]), 0.0)
+        self.assertEqual(float(row["paper_max_gross_exposure_delta"]), 0.0)
+        self.assertEqual(str(row["feedback_control_driver"]), "STRATEGY")
+        self.assertIn("策略主动控仓", str(row["feedback_reason"]))
 
 
 if __name__ == "__main__":

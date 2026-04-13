@@ -372,6 +372,7 @@ def write_investment_md(
         pullback = dict(adaptive_strategy.get("pullback", {}) or {})
         defensive = dict(adaptive_strategy.get("defensive", {}) or {})
         execution = dict(adaptive_strategy.get("execution", {}) or {})
+        market_profiles = dict(adaptive_strategy.get("market_profiles", {}) or {})
         lines.append(
             f"- 策略框架: {adaptive_strategy.get('name', '') or 'N/A'}；"
             f"{adaptive_strategy.get('display_name', '') or 'N/A'}；"
@@ -416,6 +417,23 @@ def write_investment_md(
             f"entry_delay={int(execution.get('entry_delay_min_minutes', 0) or 0)}-"
             f"{int(execution.get('entry_delay_max_minutes', 0) or 0)}m after open"
         )
+        if market_profiles:
+            profile_bits = []
+            for code in sorted(market_profiles):
+                profile = dict(market_profiles.get(code) or {})
+                label = str(profile.get("label", "") or code)
+                band = float(profile.get("no_trade_band_pct", 0.0) or 0.0)
+                turnover = float(profile.get("turnover_penalty_scale", 0.0) or 0.0)
+                risk_on = float(profile.get("regime_risk_on_threshold", 0.0) or 0.0)
+                hard_off = float(profile.get("regime_hard_risk_off_threshold", 0.0) or 0.0)
+                min_edge = float(profile.get("min_expected_edge_bps", 0.0) or 0.0)
+                edge_buffer = float(profile.get("edge_cost_buffer_bps", 0.0) or 0.0)
+                profile_bits.append(
+                    f"{code}:{label} risk_on={risk_on:.2f} hard_off={hard_off:.2f} "
+                    f"no_trade_band={band:.1%} turnover_penalty={turnover:.2f} "
+                    f"edge_gate={min_edge:.0f}+{edge_buffer:.0f}bps"
+                )
+            lines.append("- 市场化参数: " + " | ".join(profile_bits[:6]))
         rollout = [dict(item) for item in list(adaptive_strategy.get("rollout", []) or []) if isinstance(item, dict)]
         if rollout:
             lines.append("- 实施顺序: " + " | ".join(f"{row.get('name', '')}:{row.get('scope', '')}" for row in rollout[:3]))
@@ -423,7 +441,7 @@ def write_investment_md(
         if strategy_notes:
             lines.append("- 策略备注: " + " ".join(strategy_notes))
     lines.append(
-        "- Regime 说明: 这里只解释趋势、动量、波动、回撤四个维度的综合含义，不展示具体参数和阈值。"
+        "- Regime 说明: 这里展示的是 ACM-RS 的框架级默认值；逐标的信号仍主要解释趋势、动量、波动、回撤四个维度，不展开更细的逐笔调参细节。"
     )
     lines.append("")
 

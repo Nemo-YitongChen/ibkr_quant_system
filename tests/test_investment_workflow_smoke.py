@@ -68,6 +68,26 @@ def _write_minimal_report_fixture(report_dir: Path) -> None:
         ),
         encoding="utf-8",
     )
+    (report_dir / "investment_adaptive_strategy_summary.json").write_text(
+        json.dumps(
+            {
+                "adaptive_strategy": {
+                    "name": "ACM-RS",
+                    "display_name": "Adaptive Cross-Market Relative Strength",
+                    "summary_text": "ACM-RS | RS=126/63/20 | rebalance=weekly | entry_delay=15-30m",
+                },
+                "summary": {
+                    "enabled": True,
+                    "defensive_cap_count": 1,
+                    "defensive_regime_detected": True,
+                    "active_regime_states": ["RISK_OFF"],
+                    "top_defensive_symbols": ["AAPL"],
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
     (report_dir / "investment_plan.csv").write_text(
         "\n".join(
             [
@@ -106,14 +126,15 @@ def test_investment_workflow_cli_smoke_generates_contract_artifacts(tmp_path, mo
     _write_yaml(
         paper_cfg_path,
         {
-            "paper": {
-                "initial_cash": 100000.0,
-                "max_holdings": 1,
-                "max_single_weight": 0.60,
-                "min_position_weight": 0.05,
-            }
-        },
-    )
+                "paper": {
+                    "initial_cash": 100000.0,
+                    "max_holdings": 1,
+                    "max_single_weight": 0.60,
+                    "max_sector_weight": 0.60,
+                    "min_position_weight": 0.05,
+                }
+            },
+        )
     _write_yaml(
         execution_cfg_path,
         {
@@ -123,7 +144,7 @@ def test_investment_workflow_cli_smoke_generates_contract_artifacts(tmp_path, mo
                 "min_trade_value": 100.0,
                 "max_order_value_pct": 0.50,
                 "max_orders_per_run": 2,
-                "account_allocation_pct": 0.50,
+                "account_allocation_pct": 0.60,
                 "manual_review_enabled": False,
                 "shadow_ml_review_enabled": False,
                 "risk_alert_guard_enabled": False,
@@ -307,26 +328,62 @@ def test_investment_workflow_cli_smoke_generates_contract_artifacts(tmp_path, mo
     assert paper_summary["portfolio_id"] == portfolio_id
     assert "equity_after" in paper_summary
     assert "target_invested_weight" in paper_summary
+    assert paper_summary["adaptive_strategy_name"] == "ACM-RS"
+    assert paper_summary["adaptive_strategy_defensive_caps"] == 1
+    assert paper_summary["adaptive_strategy_defensive_regime"] is True
+    assert paper_summary["strategy_effective_controls_applied"] is True
+    assert paper_summary["target_invested_weight"] == pytest.approx(0.30)
+    assert paper_summary["strategy_effective_controls"]["base_target_invested_weight"] == pytest.approx(0.60)
+    assert paper_summary["strategy_effective_controls"]["effective_target_invested_weight"] == pytest.approx(0.30)
+    assert "risk_base_gross_exposure" in paper_summary
+    assert paper_summary["risk_gross_exposure_tightening"] >= 0.0
 
     assert execution_summary["market"] == "US"
     assert execution_summary["portfolio_id"] == portfolio_id
     assert "order_count" in execution_summary
     assert "gap_symbols" in execution_summary
     assert "gap_notional" in execution_summary
+    assert execution_summary["adaptive_strategy_name"] == "ACM-RS"
+    assert execution_summary["adaptive_strategy_runtime_note"].startswith("enabled=true defensive_caps=1")
+    assert execution_summary["strategy_effective_controls_applied"] is True
+    assert execution_summary["strategy_effective_controls"]["base_effective_target_invested_weight"] == pytest.approx(0.36)
+    assert execution_summary["strategy_effective_controls"]["effective_target_invested_weight"] == pytest.approx(0.30)
+    assert execution_summary["strategy_effective_controls"]["effective_account_allocation_pct"] == pytest.approx(0.50)
+    assert execution_summary["strategy_effective_controls"]["effective_max_order_value_pct"] == pytest.approx(0.4166666667)
+    assert "risk_base_gross_exposure" in execution_summary
+    assert execution_summary["risk_gross_exposure_tightening"] >= 0.0
 
     assert weekly_summary["market_filter"] == "US"
     assert weekly_summary["portfolio_filter"] == portfolio_id
     assert weekly_summary["portfolio_count"] == 1
     assert weekly_summary["execution_run_count"] == 1
+    assert weekly_summary["portfolio_strategy_context"][0]["strategy_effective_controls_applied"] is True
+    assert "策略主动转入防守" in weekly_summary["portfolio_strategy_context"][0]["strategy_effective_controls_note"]
+    assert weekly_summary["attribution_summary"][0]["strategy_control_weight_delta"] == pytest.approx(0.06)
+    assert execution_summary["blocked_edge_order_count"] == 1
+    assert weekly_summary["attribution_summary"][0]["execution_gate_blocked_order_count"] == 1
+    assert "策略" in weekly_summary["attribution_summary"][0]["control_split_text"]
 
     assert reconcile_summary["market"] == "US"
     assert reconcile_summary["portfolio_id"] == portfolio_id
     assert "only_local_rows" in reconcile_summary
     assert "qty_mismatch_rows" in reconcile_summary
+    assert reconcile_summary["adaptive_strategy_name"] == "ACM-RS"
+    assert reconcile_summary["adaptive_strategy_top_defensive_symbols"] == ["AAPL"]
+    assert reconcile_summary["strategy_effective_controls_applied"] is True
+    assert "策略主动转入防守" in reconcile_summary["strategy_effective_controls_note"]
+    assert reconcile_summary["execution_blocked_order_count"] == 1
 
     assert len(dashboard_payload["cards"]) == 1
     assert dashboard_payload["cards"][0]["portfolio_id"] == portfolio_id
     assert dashboard_payload["cards"][0]["paper_summary"]["portfolio_id"] == portfolio_id
+    assert dashboard_payload["cards"][0]["paper_summary"]["adaptive_strategy_name"] == "ACM-RS"
+    assert dashboard_payload["cards"][0]["paper_summary"]["strategy_effective_controls_applied"] is True
     assert dashboard_payload["cards"][0]["execution_summary"]["portfolio_id"] == portfolio_id
+    assert dashboard_payload["cards"][0]["execution_summary"]["adaptive_strategy_defensive_caps"] == 1
+    assert dashboard_payload["cards"][0]["execution_summary"]["strategy_effective_controls_applied"] is True
+    assert dashboard_payload["cards"][0]["execution_summary"]["blocked_edge_order_count"] == 1
     assert dashboard_payload["cards"][0]["execution_weekly_row"]["portfolio_id"] == portfolio_id
     assert dashboard_payload["execution_weekly"]["portfolio_id"] == portfolio_id
+    assert "control_split_text" in dashboard_payload["cards"][0]["weekly_attribution"]
+    assert "策略主动转入防守" in dashboard_payload["cards"][0]["weekly_strategy_context"]["strategy_effective_controls_note"]

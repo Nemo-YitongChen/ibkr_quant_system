@@ -28,7 +28,12 @@ from ..analysis.report import write_csv, write_investment_md, write_json
 from ..analysis.universe import build_candidates
 from ..common.adaptive_strategy import (
     adaptive_strategy_context,
+    adaptive_strategy_market_execution_overrides,
+    adaptive_strategy_market_plan_overrides,
+    adaptive_strategy_market_regime_overrides,
     apply_adaptive_defensive_rank_cap,
+    apply_adaptive_strategy_plan_overrides,
+    apply_adaptive_strategy_regime_overrides,
     load_adaptive_strategy,
 )
 from ..common.cli import build_cli_parser, emit_cli_summary
@@ -1611,6 +1616,10 @@ def main(argv: List[str] | None = None) -> None:
     adaptive_strategy = load_adaptive_strategy(BASE_DIR, adaptive_strategy_cfg_path)
     scoring_cfg = InvestmentScoringConfig.from_dict(investment_cfg.get("scoring"))
     plan_cfg = InvestmentPlanConfig.from_dict(investment_cfg.get("plan"))
+    plan_cfg = apply_adaptive_strategy_plan_overrides(plan_cfg, adaptive_strategy, market=resolved_market)
+    adaptive_market_plan = adaptive_strategy_market_plan_overrides(adaptive_strategy, resolved_market)
+    adaptive_market_regime = adaptive_strategy_market_regime_overrides(adaptive_strategy, resolved_market)
+    adaptive_market_execution = adaptive_strategy_market_execution_overrides(adaptive_strategy, resolved_market)
     backtest_cfg = InvestmentBacktestConfig.from_dict(investment_cfg.get("backtest"))
     short_book_cfg = InvestmentShortBookConfig.from_dict(investment_cfg.get("short_book"), market=resolved_market)
     shadow_ml_cfg = InvestmentShadowModelConfig.from_dict(investment_cfg.get("shadow_ml"))
@@ -1750,6 +1759,11 @@ def main(argv: List[str] | None = None) -> None:
             )
 
         base_regime_cfg = RegimeConfig(**(strategy_cfg.get("mid_regime", {}) or {}))
+        base_regime_cfg = apply_adaptive_strategy_regime_overrides(
+            base_regime_cfg,
+            adaptive_strategy,
+            market=resolved_market,
+        )
         regime_adaptor = RegimeAdaptor(
             market=resolved_market,
             base_cfg=base_regime_cfg,
@@ -1919,6 +1933,8 @@ def main(argv: List[str] | None = None) -> None:
             row["scan_tier"] = "deep" if symbol in set(enrichment_symbols) else "deep_pool"
             row["market_sentiment"] = str(market_sentiment.get("label", ""))
             row["market_sentiment_score"] = float(market_sentiment.get("score", 0.0) or 0.0)
+            row["adaptive_strategy_market_profile"] = str(adaptive_market_plan.get("profile_key", "") or "")
+            row["adaptive_strategy_market_profile_label"] = str(adaptive_market_plan.get("profile_label", "") or "")
             if isinstance(row.get("signal_decision"), dict):
                 row["signal_decision_json"] = json.dumps(row["signal_decision"], ensure_ascii=False)
 
@@ -1973,6 +1989,8 @@ def main(argv: List[str] | None = None) -> None:
             row.update(recommendations_map.get(symbol, {}))
             row["market_sentiment"] = str(market_sentiment.get("label", ""))
             row["market_sentiment_score"] = float(market_sentiment.get("score", 0.0) or 0.0)
+            row["adaptive_strategy_market_profile"] = str(adaptive_market_plan.get("profile_key", "") or "")
+            row["adaptive_strategy_market_profile_label"] = str(adaptive_market_plan.get("profile_label", "") or "")
             if isinstance(row.get("signal_decision"), dict):
                 row["signal_decision_json"] = json.dumps(row["signal_decision"], ensure_ascii=False)
 
@@ -1999,6 +2017,8 @@ def main(argv: List[str] | None = None) -> None:
         for row in short_ranked:
             row["market_sentiment"] = str(market_sentiment.get("label", ""))
             row["market_sentiment_score"] = float(market_sentiment.get("score", 0.0) or 0.0)
+            row["adaptive_strategy_market_profile"] = str(adaptive_market_plan.get("profile_key", "") or "")
+            row["adaptive_strategy_market_profile_label"] = str(adaptive_market_plan.get("profile_label", "") or "")
         short_plans = [make_investment_plan(row, vix=vix, cfg=plan_cfg) for row in short_ranked]
         for plan in short_plans:
             plan["market_sentiment"] = str(market_sentiment.get("label", ""))
@@ -2095,6 +2115,9 @@ def main(argv: List[str] | None = None) -> None:
             {
                 "adaptive_strategy": adaptive_strategy_context(adaptive_strategy),
                 "summary": adaptive_strategy_summary,
+                "active_market_plan": adaptive_market_plan,
+                "active_market_regime": adaptive_market_regime,
+                "active_market_execution": adaptive_market_execution,
             },
         )
 

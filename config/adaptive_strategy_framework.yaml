@@ -42,6 +42,71 @@ adaptive_strategy:
     max_rebalances_per_week_high_vol: 2
     entry_delay_min_minutes: 15
     entry_delay_max_minutes: 30
+  market_profiles:
+    DEFAULT:
+      label: "Cross-market baseline"
+      staged_entry_parts: 3
+      accumulate_pullback_pct: 0.03
+      rebalance_window_days: 30
+      trim_fraction: 0.25
+      turnover_penalty_scale: 0.18
+      no_trade_band_pct: 0.04
+      regime_vol_elevated: 0.010
+      regime_vol_extreme: 0.018
+      regime_drawdown_warn: -0.03
+      regime_drawdown_stop: -0.06
+      regime_risk_on_threshold: 0.50
+      regime_hard_risk_off_threshold: 0.25
+      min_expected_edge_bps: 18.0
+      edge_cost_buffer_bps: 6.0
+    US:
+      label: "US trend-first"
+      staged_entry_parts: 3
+      accumulate_pullback_pct: 0.025
+      rebalance_window_days: 21
+      trim_fraction: 0.25
+      turnover_penalty_scale: 0.15
+      no_trade_band_pct: 0.03
+      regime_vol_elevated: 0.010
+      regime_vol_extreme: 0.018
+      regime_drawdown_warn: -0.03
+      regime_drawdown_stop: -0.06
+      regime_risk_on_threshold: 0.50
+      regime_hard_risk_off_threshold: 0.25
+      min_expected_edge_bps: 16.0
+      edge_cost_buffer_bps: 5.0
+    HK:
+      label: "HK ETF-first"
+      staged_entry_parts: 4
+      accumulate_pullback_pct: 0.035
+      rebalance_window_days: 28
+      trim_fraction: 0.20
+      turnover_penalty_scale: 0.24
+      no_trade_band_pct: 0.055
+      regime_vol_elevated: 0.012
+      regime_vol_extreme: 0.022
+      regime_drawdown_warn: -0.04
+      regime_drawdown_stop: -0.08
+      regime_risk_on_threshold: 0.52
+      regime_hard_risk_off_threshold: 0.24
+      min_expected_edge_bps: 26.0
+      edge_cost_buffer_bps: 9.0
+    CN:
+      label: "CN low-turnover defensive"
+      staged_entry_parts: 4
+      accumulate_pullback_pct: 0.040
+      rebalance_window_days: 35
+      trim_fraction: 0.20
+      turnover_penalty_scale: 0.28
+      no_trade_band_pct: 0.065
+      regime_vol_elevated: 0.012
+      regime_vol_extreme: 0.020
+      regime_drawdown_warn: -0.040
+      regime_drawdown_stop: -0.070
+      regime_risk_on_threshold: 0.50
+      regime_hard_risk_off_threshold: 0.25
+      min_expected_edge_bps: 24.0
+      edge_cost_buffer_bps: 8.0
   rollout:
     - name: "stage_1"
       scope: "ETF-only baseline across US / HK / CN research"

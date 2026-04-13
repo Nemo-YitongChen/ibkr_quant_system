@@ -15,6 +15,13 @@ from ..analysis.investment_portfolio import (
     simulate_rebalance,
 )
 from ..analysis.report import write_csv, write_json
+from ..common.adaptive_strategy import (
+    adaptive_strategy_effective_control_fields,
+    adaptive_strategy_effective_controls,
+    adaptive_strategy_summary_fields,
+    apply_adaptive_strategy_weight_cap,
+    load_report_adaptive_strategy_payload,
+)
 from ..common.cli import build_cli_parser, emit_cli_summary
 from ..common.cli_contracts import ArtifactBundle, InvestmentPaperSummary
 from ..common.logger import get_logger
@@ -105,6 +112,10 @@ def _to_float(value: Any, default: float = 0.0) -> float:
 
 def _write_md(path: Path, summary: Dict[str, Any], trades: List[Dict[str, Any]], positions: List[Dict[str, Any]]) -> None:
     risk_label = str(summary.get("risk_stress_worst_scenario_label", "") or "-")
+    strategy_name = str(summary.get("adaptive_strategy_display_name") or summary.get("adaptive_strategy_name") or "").strip()
+    strategy_summary = str(summary.get("adaptive_strategy_summary") or "").strip()
+    strategy_runtime_note = str(summary.get("adaptive_strategy_runtime_note") or "").strip()
+    strategy_control_note = str(summary.get("strategy_effective_controls_note", "") or "").strip()
     lines = [
         "# Investment Paper Report",
         "",
@@ -121,8 +132,26 @@ def _write_md(path: Path, summary: Dict[str, Any], trades: List[Dict[str, Any]],
         f"- Avg pair correlation: {float(summary.get('risk_avg_pair_correlation', 0.0) or 0.0):.2f}",
         f"- Worst stress: {risk_label} loss={float(summary.get('risk_stress_worst_loss', 0.0) or 0.0):.3f}",
         "",
-        "## Trades",
     ]
+    if strategy_name or strategy_summary or strategy_runtime_note:
+        lines.extend(
+            [
+                "## Strategy",
+                f"- Framework: {strategy_name or '-'}",
+            ]
+        )
+        if strategy_summary:
+            lines.append(f"- Summary: {strategy_summary}")
+        if strategy_runtime_note:
+            lines.append(f"- Runtime: {strategy_runtime_note}")
+        if strategy_control_note:
+            lines.append(f"- Effective controls: {strategy_control_note}")
+        lines.append("")
+    lines.extend(
+        [
+        "## Trades",
+        ]
+    )
     if not trades:
         lines.append("- (no trades)")
     else:
@@ -199,7 +228,14 @@ def main(argv: List[str] | None = None) -> None:
         rebalance_weekday=int(paper_cfg.rebalance_weekday),
         force=bool(args.force),
     )
+    strategy_payload = load_report_adaptive_strategy_payload(report_dir)
     target_weights, risk_overlay = build_target_allocations(candidates, plans, cfg=paper_cfg, return_details=True)
+    strategy_controls = adaptive_strategy_effective_controls(
+        strategy_payload,
+        portfolio_equity=equity_before,
+        base_target_invested_weight=float(sum(abs(float(v)) for v in target_weights.values())),
+    )
+    target_weights = apply_adaptive_strategy_weight_cap(target_weights, strategy_controls)
 
     executed = False
     trades: List[Dict[str, Any]] = []
@@ -222,6 +258,7 @@ def main(argv: List[str] | None = None) -> None:
         "target_weights": target_weights,
         "position_count": int(sum(1 for pos in positions.values() if abs(_to_float(pos.get("qty"))) > 1e-9)),
         "risk_overlay": risk_overlay,
+        "strategy_effective_controls": strategy_controls,
     }
     storage.insert_investment_run(
         {
@@ -278,6 +315,9 @@ def main(argv: List[str] | None = None) -> None:
             }
         )
 
+    strategy_fields = adaptive_strategy_summary_fields(strategy_payload)
+    strategy_control_fields = adaptive_strategy_effective_control_fields(strategy_controls)
+
     summary = {
         "ts": now.isoformat(),
         "market": market,
@@ -294,10 +334,34 @@ def main(argv: List[str] | None = None) -> None:
         "target_invested_weight": float(sum(abs(float(v)) for v in target_weights.values())),
         "target_net_weight": float(sum(float(v) for v in target_weights.values())),
         "risk_overlay_enabled": bool(risk_overlay.get("enabled", False)),
+        "risk_base_net_exposure": float(risk_overlay.get("base_net_exposure", 0.0) or 0.0),
+        "risk_base_gross_exposure": float(risk_overlay.get("base_gross_exposure", 0.0) or 0.0),
+        "risk_base_short_exposure": float(risk_overlay.get("base_short_exposure", 0.0) or 0.0),
         "risk_dynamic_scale": float(risk_overlay.get("dynamic_scale", 1.0) or 1.0),
         "risk_dynamic_net_exposure": float(risk_overlay.get("dynamic_net_exposure", 0.0) or 0.0),
         "risk_dynamic_gross_exposure": float(risk_overlay.get("dynamic_gross_exposure", 0.0) or 0.0),
         "risk_dynamic_short_exposure": float(risk_overlay.get("dynamic_short_exposure", 0.0) or 0.0),
+        "risk_net_exposure_tightening": float(
+            max(
+                0.0,
+                float(risk_overlay.get("base_net_exposure", 0.0) or 0.0)
+                - float(risk_overlay.get("dynamic_net_exposure", 0.0) or 0.0),
+            )
+        ),
+        "risk_gross_exposure_tightening": float(
+            max(
+                0.0,
+                float(risk_overlay.get("base_gross_exposure", 0.0) or 0.0)
+                - float(risk_overlay.get("dynamic_gross_exposure", 0.0) or 0.0),
+            )
+        ),
+        "risk_short_exposure_tightening": float(
+            max(
+                0.0,
+                float(risk_overlay.get("base_short_exposure", 0.0) or 0.0)
+                - float(risk_overlay.get("dynamic_short_exposure", 0.0) or 0.0),
+            )
+        ),
         "risk_applied_net_exposure": float(risk_overlay.get("applied_net_exposure", 0.0) or 0.0),
         "risk_applied_gross_exposure": float(risk_overlay.get("applied_gross_exposure", 0.0) or 0.0),
         "risk_avg_pair_correlation": float(risk_overlay.get("final_avg_pair_correlation", risk_overlay.get("avg_pair_correlation", 0.0)) or 0.0),
@@ -333,6 +397,8 @@ def main(argv: List[str] | None = None) -> None:
         "risk_notes": list(risk_overlay.get("notes", []) or []),
         "risk_correlation_reduced_symbols": list(risk_overlay.get("correlation_reduced_symbols", []) or []),
     }
+    summary.update(strategy_fields)
+    summary.update(strategy_control_fields)
     # 风险轨迹单独落一份规范化记录，后续 dashboard / 周报优先读这里，
     # 不必每次再从 investment_runs.details 里回推。
     storage.insert_investment_risk_history(

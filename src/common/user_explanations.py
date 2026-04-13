@@ -49,6 +49,11 @@ def execution_user_explanation(row: Dict[str, Any]) -> Tuple[str, str]:
         return "需要人工确认", reason or "这笔订单当前不适合直接自动提交。"
     if quality_status == "LOW_QUALITY" or status == "BLOCKED_QUALITY":
         return "信号质量不足", "当前信号质量或执行准备度不足，先不自动下单。"
+    if status == "BLOCKED_EDGE":
+        return (
+            "边际收益不够覆盖成本",
+            _text(row.get("edge_gate_reason")) or "当前预期边际收益还不足以覆盖执行成本和安全缓冲，先不下单。",
+        )
     if status == "BLOCKED_OPPORTUNITY":
         opp_row = {
             "entry_status": _text(row.get("opportunity_status")),

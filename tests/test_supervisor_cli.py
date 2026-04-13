@@ -1521,11 +1521,30 @@ class SupervisorCliTests(unittest.TestCase):
             with patch.object(supervisor, "_refresh_dashboard", return_value=True) as mock_refresh:
                 result = supervisor._dashboard_control_run_preflight()
                 self.assertTrue(result["ok"])
+                control_state_path = summary_dir / "dashboard_control_state.json"
                 for _ in range(40):
-                    if (preflight_dir / "supervisor_preflight_summary.json").exists() and mock_refresh.called:
+                    summary_path = preflight_dir / "supervisor_preflight_summary.json"
+                    report_path = preflight_dir / "supervisor_preflight_report.md"
+                    control_state_done = False
+                    if control_state_path.exists():
+                        try:
+                            control_state_payload = json.loads(control_state_path.read_text(encoding="utf-8"))
+                        except json.JSONDecodeError:
+                            control_state_payload = {}
+                        control_state_done = not bool(
+                            dict(control_state_payload.get("actions") or {}).get("preflight_in_progress", True)
+                        )
+                    if (
+                        summary_path.exists()
+                        and report_path.exists()
+                        and mock_refresh.called
+                        and not supervisor._dashboard_control_preflight_in_progress
+                        and control_state_done
+                    ):
                         break
                     time.sleep(0.01)
             self.assertTrue((preflight_dir / "supervisor_preflight_summary.json").exists())
+            self.assertTrue((preflight_dir / "supervisor_preflight_report.md").exists())
             mock_refresh.assert_called()
 
     def test_dashboard_control_execution_mode_switch_restores_base_flags(self):
@@ -2285,6 +2304,7 @@ class SupervisorCliTests(unittest.TestCase):
                                 "execution_cost_gap": 13.5,
                                 "avg_expected_cost_bps": 18.4,
                                 "avg_actual_slippage_bps": 29.7,
+                                "control_split_text": "策略 6.0% | 风险 12.0% | 执行 1.5%（blocked 1500.00 / 50%）",
                                 "execution_style_breakdown": "VWAP_LITE_MIDDAY:2",
                                 "dominant_driver": "EXECUTION",
                                 "diagnosis": "实际执行成本高于计划，优先复盘拆单和执行时段。",
@@ -2320,6 +2340,7 @@ class SupervisorCliTests(unittest.TestCase):
             payload = build_dashboard(str(cfg_path), str(summary_dir))
             self.assertAlmostEqual(payload["execution_cost_overview"][0]["planned_execution_cost_total"], 21.4, places=6)
             self.assertAlmostEqual(payload["trade_cards"][0]["weekly_attribution"]["execution_cost_gap"], 13.5, places=6)
+            self.assertIn("策略 6.0%", payload["trade_cards"][0]["weekly_attribution"]["control_split_text"])
             write_dashboard(payload, str(summary_dir))
             html_text = (summary_dir / "dashboard.html").read_text(encoding="utf-8")
             self.assertIn("计划成本 vs 实际执行成本", html_text)
@@ -4053,6 +4074,8 @@ class SupervisorCliTests(unittest.TestCase):
                                 "market_rules_summary": "settlement=T+1 / no same-day round trip",
                                 "adaptive_strategy_name": "ACM-RS",
                                 "adaptive_strategy_summary": "上涨做相对强弱，高波动看回撤，下跌先防守；周调仓。",
+                                "strategy_effective_controls_note": "策略主动转入防守，按 中等资金 上限把有效目标仓位从 36% 收到 30%。",
+                                "execution_gate_summary": "另外有 2 笔计划单因执行 gate 暂未下发（流动性 1，人工复核 1）。",
                                 "weekly_strategy_note": "本周有 2 个新开仓机会因防守环境被降级为观察，先不把回撤信号直接转成加仓动作。",
                             }
                         ]
@@ -4090,7 +4113,11 @@ class SupervisorCliTests(unittest.TestCase):
             self.assertIn('data-simple-section="weekly-strategy-context"', html_text)
             self.assertIn("本周策略解释", html_text)
             self.assertIn("周度解释", html_text)
+            self.assertIn("策略控仓", html_text)
+            self.assertIn("执行阻断", html_text)
             self.assertIn("settlement=T+1 / no same-day round trip", html_text)
+            self.assertIn("策略主动转入防守", html_text)
+            self.assertIn("2 笔计划单因执行 gate 暂未下发", html_text)
             self.assertIn("本周有 2 个新开仓机会因防守环境被降级为观察", html_text)
 
     def test_dashboard_execution_plan_prefers_user_reason(self):

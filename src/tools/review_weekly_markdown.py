@@ -84,6 +84,10 @@ def write_weekly_review_markdown(
                 if row.get("adaptive_strategy_summary"):
                     strategy_text = f"{strategy_text} / {row.get('adaptive_strategy_summary')}"
                 lines.append(f"  策略框架: {strategy_text}")
+            if row.get("strategy_effective_controls_note"):
+                lines.append(f"  策略控仓: {row['strategy_effective_controls_note']}")
+            if row.get("execution_gate_summary"):
+                lines.append(f"  执行阻断: {row['execution_gate_summary']}")
             if row.get("weekly_strategy_note"):
                 lines.append(f"  周度解释: {row['weekly_strategy_note']}")
             lines.append(
@@ -213,6 +217,8 @@ def write_weekly_review_markdown(
                 f"expected_bps={float(row.get('avg_expected_cost_bps', 0.0) or 0.0):.2f} "
                 f"actual_slippage_bps={float(row.get('avg_actual_slippage_bps', 0.0) or 0.0):.2f}"
             )
+            if row.get("control_split_text"):
+                lines.append(f"  控制拆解: {row.get('control_split_text', '')}")
             lines.append(f"  建议: {row.get('diagnosis', '')}")
 
     lines.append("")

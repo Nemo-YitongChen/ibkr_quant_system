@@ -12,6 +12,14 @@ from zoneinfo import ZoneInfo
 from ..analysis.investment_portfolio import InvestmentPaperConfig, build_target_allocations
 from ..analysis.report import write_csv, write_json
 from ..common.account_profile import AccountProfilesConfig, apply_account_profile
+from ..common.adaptive_strategy import (
+    adaptive_strategy_effective_control_fields,
+    adaptive_strategy_effective_controls,
+    adaptive_strategy_summary_fields,
+    apply_active_market_execution_overrides,
+    apply_adaptive_strategy_execution_controls,
+    load_report_adaptive_strategy_payload,
+)
 from ..common.market_structure import MarketStructureConfig
 from ..common.markets import market_timezone_name, symbol_matches_market
 from ..common.logger import get_logger
@@ -462,6 +470,9 @@ class InvestmentExecutionEngine:
                 "score_before_cost",
                 "model_recommendation_score",
                 "execution_score",
+                "expected_edge_threshold",
+                "expected_edge_score",
+                "expected_edge_bps",
                 "expected_cost_bps",
                 "spread_proxy_bps",
                 "slippage_proxy_bps",
@@ -1054,6 +1065,76 @@ class InvestmentExecutionEngine:
             )
         return float(total)
 
+    def _apply_expected_edge_gates(
+        self,
+        order_rows: List[Dict[str, Any]],
+    ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        if not bool(self.execution_cfg.edge_gate_enabled):
+            return order_rows, []
+
+        filtered: List[Dict[str, Any]] = []
+        blocked: List[Dict[str, Any]] = []
+        min_expected_edge_bps = max(0.0, float(self.execution_cfg.min_expected_edge_bps or 0.0))
+        edge_cost_buffer_bps = max(0.0, float(self.execution_cfg.edge_cost_buffer_bps or 0.0))
+        edge_score_to_bps_scale = max(1e-6, float(self.execution_cfg.edge_score_to_bps_scale or 140.0))
+
+        for row in order_rows:
+            is_entry = self._is_long_entry_order(row) or self._is_short_entry_order(row)
+            if not is_entry:
+                filtered.append(row)
+                continue
+
+            expected_cost_bps = max(0.0, _to_float(row.get("expected_cost_bps"), 0.0))
+            expected_edge_threshold = max(
+                0.0,
+                _to_float(
+                    row.get("expected_edge_threshold"),
+                    _to_float(row.get("plan_no_trade_band_threshold"), 0.0),
+                ),
+            )
+            score_before_cost = _to_float(
+                row.get("score_before_cost"),
+                _to_float(row.get("score"), 0.0),
+            )
+            expected_edge_score = max(
+                0.0,
+                _to_float(
+                    row.get("expected_edge_score"),
+                    max(0.0, score_before_cost - expected_edge_threshold),
+                ),
+            )
+            expected_edge_bps = max(
+                0.0,
+                _to_float(row.get("expected_edge_bps"), expected_edge_score * edge_score_to_bps_scale),
+            )
+            required_edge_bps = max(min_expected_edge_bps, expected_cost_bps + edge_cost_buffer_bps)
+
+            row["expected_edge_threshold"] = float(expected_edge_threshold)
+            row["expected_edge_score"] = float(expected_edge_score)
+            row["expected_edge_bps"] = float(expected_edge_bps)
+            row["edge_gate_threshold_bps"] = float(required_edge_bps)
+            row["edge_gate_status"] = "PASS"
+            row["edge_gate_reason"] = (
+                f"expected_edge={expected_edge_bps:.1f}bps >= required={required_edge_bps:.1f}bps "
+                f"(cost={expected_cost_bps:.1f} + buffer={edge_cost_buffer_bps:.1f})"
+            )
+            if expected_edge_bps + 1e-9 >= required_edge_bps:
+                annotate_execution_user_explanation(row)
+                filtered.append(row)
+                continue
+
+            blocked_row = dict(row)
+            blocked_row["status"] = "BLOCKED_EDGE"
+            blocked_row["edge_gate_status"] = "BLOCKED"
+            blocked_row["edge_gate_reason"] = (
+                f"expected_edge={expected_edge_bps:.1f}bps < required={required_edge_bps:.1f}bps "
+                f"(cost={expected_cost_bps:.1f} + buffer={edge_cost_buffer_bps:.1f})"
+            )
+            blocked_row["reason"] = f"{str(row.get('reason') or '')}|edge_gate".strip("|")
+            annotate_execution_user_explanation(blocked_row)
+            blocked.append(blocked_row)
+        return filtered, blocked
+
     def _apply_opportunity_gates(
         self,
         report_path: Path,
@@ -1429,6 +1510,10 @@ class InvestmentExecutionEngine:
             except Exception:
                 return {}
 
+        strategy_name = str(summary.get("adaptive_strategy_display_name") or summary.get("adaptive_strategy_name") or "").strip()
+        strategy_summary = str(summary.get("adaptive_strategy_summary") or "").strip()
+        strategy_runtime_note = str(summary.get("adaptive_strategy_runtime_note") or "").strip()
+        strategy_control_note = str(summary.get("strategy_effective_controls_note") or "").strip()
         lines = [
             "# Investment Execution Report",
             "",
@@ -1454,6 +1539,7 @@ class InvestmentExecutionEngine:
             f"loss={float(summary.get('risk_stress_worst_loss', 0.0) or 0.0):.3f}",
             f"- Order count: {int(summary.get('order_count', 0) or 0)}",
             f"- Blocked total: {int(summary.get('blocked_order_count', 0) or 0)}",
+            f"- Blocked by edge: {int(summary.get('blocked_edge_order_count', 0) or 0)}",
             f"- Blocked by quality: {int(summary.get('blocked_quality_order_count', 0) or 0)}",
             f"- Blocked by opportunity: {int(summary.get('blocked_opportunity_order_count', 0) or 0)}",
             f"- Blocked by liquidity: {int(summary.get('blocked_liquidity_order_count', 0) or 0)}",
@@ -1482,8 +1568,22 @@ class InvestmentExecutionEngine:
             f"- Gap notional after snapshot: {float(summary.get('gap_notional', 0.0) or 0.0):.2f}",
             f"- Risk alert diagnosis: {str(summary.get('risk_alert_diagnosis', '') or '-')}",
             "",
-            "## Orders",
         ]
+        if strategy_name or strategy_summary or strategy_runtime_note:
+            lines.extend(
+                [
+                    "## Strategy",
+                    f"- Framework: {strategy_name or '-'}",
+                ]
+            )
+            if strategy_summary:
+                lines.append(f"- Summary: {strategy_summary}")
+            if strategy_runtime_note:
+                lines.append(f"- Runtime: {strategy_runtime_note}")
+            if strategy_control_note:
+                lines.append(f"- Effective controls: {strategy_control_note}")
+            lines.append("")
+        lines.append("## Orders")
         if not order_rows:
             lines.append("- (no orders)")
         else:
@@ -1537,6 +1637,8 @@ class InvestmentExecutionEngine:
         candidates, plans = self._read_report_books(report_path)
         if not candidates or not plans:
             raise ValueError(f"investment report files not found or empty under {report_path}")
+        strategy_payload = load_report_adaptive_strategy_payload(report_path)
+        strategy_fields = adaptive_strategy_summary_fields(strategy_payload)
 
         price_map = {
             str(row.get("symbol") or "").upper(): _to_float(row.get("last_close", 0.0))
@@ -1548,11 +1650,21 @@ class InvestmentExecutionEngine:
         broker_equity = float(account.get("netliq", 0.0) or 0.0)
         broker_cash = float(account.get("cash", 0.0) or 0.0)
         base_execution_cfg = self.execution_cfg
+        base_execution_cfg = apply_active_market_execution_overrides(base_execution_cfg, strategy_payload)
         effective_execution_cfg, account_profile = apply_account_profile(
             base_execution_cfg,
             self.account_profiles,
             broker_equity=broker_equity,
         )
+        strategy_controls = adaptive_strategy_effective_controls(
+            strategy_payload,
+            portfolio_equity=broker_equity,
+            base_target_invested_weight=float(sum(abs(float(v)) for v in target_weights.values())),
+            base_account_allocation_pct=float(effective_execution_cfg.account_allocation_pct),
+            base_max_order_value_pct=float(effective_execution_cfg.max_order_value_pct),
+        )
+        effective_execution_cfg = apply_adaptive_strategy_execution_controls(effective_execution_cfg, strategy_controls)
+        strategy_control_fields = adaptive_strategy_effective_control_fields(strategy_controls)
         self.execution_cfg = effective_execution_cfg
         try:
             lot_size_map = load_lot_size_map(self.execution_cfg.lot_size_file)
@@ -1568,7 +1680,8 @@ class InvestmentExecutionEngine:
                 lot_size_map=lot_size_map,
                 priority_context_map=priority_context_map,
             )
-            quality_allowed, quality_blocked = self._apply_quality_gates(report_path, raw_order_rows)
+            edge_allowed, edge_blocked = self._apply_expected_edge_gates(raw_order_rows)
+            quality_allowed, quality_blocked = self._apply_quality_gates(report_path, edge_allowed)
             opportunity_allowed, opportunity_blocked = self._apply_opportunity_gates(report_path, quality_allowed)
             shadow_review_allowed, shadow_review_blocked = self._apply_shadow_ml_review_gates(report_path, opportunity_allowed)
             structure_review_allowed, structure_review_blocked = self._apply_market_structure_review_gates(
@@ -1603,7 +1716,8 @@ class InvestmentExecutionEngine:
                 + list(risk_alert_manual_review_blocked)
             )
             blocked_rows = (
-                list(quality_blocked)
+                list(edge_blocked)
+                + list(quality_blocked)
                 + list(opportunity_blocked)
                 + list(risk_alert_deferred_blocked)
                 + list(hotspot_blocked)
@@ -1680,6 +1794,7 @@ class InvestmentExecutionEngine:
                             "target_weights": target_weights,
                             "risk_overlay": risk_overlay,
                             "blocked_order_count": int(len(blocked_rows)),
+                            "blocked_edge_order_count": int(len(edge_blocked)),
                             "blocked_manual_review_order_count": int(len(manual_review_blocked)),
                             "blocked_shadow_review_order_count": int(len(shadow_review_blocked)),
                             "blocked_market_structure_review_order_count": int(len(structure_review_blocked)),
@@ -1706,6 +1821,7 @@ class InvestmentExecutionEngine:
                             "execution_session_label": session_profile.session_label,
                             "execution_style": session_profile.execution_style,
                             "account_profile": dict(account_profile or {}),
+                            "strategy_effective_controls": dict(strategy_controls or {}),
                         },
                         ensure_ascii=False,
                     ),
@@ -1834,10 +1950,34 @@ class InvestmentExecutionEngine:
                 "planned_order_value": float(planned_order_value),
                 "idle_capital_gap": float(idle_capital_gap),
                 "risk_overlay_enabled": bool(risk_overlay.get("enabled", False)),
+                "risk_base_net_exposure": float(risk_overlay.get("base_net_exposure", 0.0) or 0.0),
+                "risk_base_gross_exposure": float(risk_overlay.get("base_gross_exposure", 0.0) or 0.0),
+                "risk_base_short_exposure": float(risk_overlay.get("base_short_exposure", 0.0) or 0.0),
                 "risk_dynamic_scale": float(risk_overlay.get("dynamic_scale", 1.0) or 1.0),
                 "risk_dynamic_net_exposure": float(risk_overlay.get("dynamic_net_exposure", 0.0) or 0.0),
                 "risk_dynamic_gross_exposure": float(risk_overlay.get("dynamic_gross_exposure", 0.0) or 0.0),
                 "risk_dynamic_short_exposure": float(risk_overlay.get("dynamic_short_exposure", 0.0) or 0.0),
+                "risk_net_exposure_tightening": float(
+                    max(
+                        0.0,
+                        float(risk_overlay.get("base_net_exposure", 0.0) or 0.0)
+                        - float(risk_overlay.get("dynamic_net_exposure", 0.0) or 0.0),
+                    )
+                ),
+                "risk_gross_exposure_tightening": float(
+                    max(
+                        0.0,
+                        float(risk_overlay.get("base_gross_exposure", 0.0) or 0.0)
+                        - float(risk_overlay.get("dynamic_gross_exposure", 0.0) or 0.0),
+                    )
+                ),
+                "risk_short_exposure_tightening": float(
+                    max(
+                        0.0,
+                        float(risk_overlay.get("base_short_exposure", 0.0) or 0.0)
+                        - float(risk_overlay.get("dynamic_short_exposure", 0.0) or 0.0),
+                    )
+                ),
                 "risk_applied_net_exposure": float(risk_overlay.get("applied_net_exposure", 0.0) or 0.0),
                 "risk_applied_gross_exposure": float(risk_overlay.get("applied_gross_exposure", 0.0) or 0.0),
                 "risk_avg_pair_correlation": float(risk_overlay.get("final_avg_pair_correlation", risk_overlay.get("avg_pair_correlation", 0.0)) or 0.0),
@@ -1874,6 +2014,7 @@ class InvestmentExecutionEngine:
                 "risk_correlation_reduced_symbols": list(risk_overlay.get("correlation_reduced_symbols", []) or []),
                 "order_count": int(len(order_rows)),
                 "blocked_order_count": int(len(blocked_rows)),
+                "blocked_edge_order_count": int(len(edge_blocked)),
                 "blocked_quality_order_count": int(len(quality_blocked)),
                 "blocked_opportunity_order_count": int(len(opportunity_blocked)),
                 "blocked_liquidity_order_count": int(len(liquidity_blocked)),
@@ -1905,9 +2046,19 @@ class InvestmentExecutionEngine:
                 "gap_symbols": int(gap_symbols),
                 "gap_notional": float(gap_notional),
             }
+            summary.update(strategy_fields)
+            summary.update(strategy_control_fields)
             self.storage.update_investment_execution_run(
                 run_id,
-                details=json.dumps({"target_weights": target_weights, "risk_overlay": risk_overlay, "summary": summary}, ensure_ascii=False),
+                details=json.dumps(
+                    {
+                        "target_weights": target_weights,
+                        "risk_overlay": risk_overlay,
+                        "strategy_effective_controls": strategy_controls,
+                        "summary": summary,
+                    },
+                    ensure_ascii=False,
+                ),
             )
             self.storage.insert_investment_risk_history(
                 build_investment_risk_history_row(
@@ -1926,6 +2077,7 @@ class InvestmentExecutionEngine:
                         "blocked_order_count": int(len(blocked_rows)),
                         "execution_session_bucket": str(summary.get("execution_session_bucket") or ""),
                         "execution_style": str(summary.get("execution_style") or ""),
+                        "strategy_effective_controls_applied": bool(summary.get("strategy_effective_controls_applied", False)),
                     },
                 )
             )

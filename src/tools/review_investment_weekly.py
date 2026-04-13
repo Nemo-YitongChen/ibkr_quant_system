@@ -10,7 +10,11 @@ from typing import Any, Dict, List
 
 from ..analysis.report import write_csv, write_json
 from ..common.account_profile import load_account_profiles, resolved_account_profile_summary
-from ..common.adaptive_strategy import adaptive_strategy_context, load_adaptive_strategy
+from ..common.adaptive_strategy import (
+    adaptive_strategy_context,
+    adaptive_strategy_effective_controls_human_note,
+    load_adaptive_strategy,
+)
 from ..common.cli import build_cli_parser, emit_cli_summary
 from ..common.cli_contracts import ArtifactBundle, WeeklyReviewSummary
 from ..common.market_structure import load_market_structure, market_structure_summary
@@ -2480,6 +2484,43 @@ def _report_json(report_dir: str, name: str) -> Dict[str, Any]:
     return _load_json_file(_resolve_project_path(report_dir) / name)
 
 
+def _strategy_effective_controls_note(*summaries: Dict[str, Any]) -> str:
+    for summary in summaries:
+        payload = dict(summary or {})
+        note = str(
+            payload.get("strategy_effective_controls_human_note")
+            or payload.get("strategy_effective_controls_note")
+            or ""
+        ).strip()
+        if note:
+            return note
+        controls = dict(payload.get("strategy_effective_controls") or {})
+        note = adaptive_strategy_effective_controls_human_note(controls)
+        if note:
+            return note
+    return ""
+
+
+def _execution_gate_summary(execution_summary: Dict[str, Any]) -> str:
+    execution_summary = dict(execution_summary or {})
+    blocked_total = int(execution_summary.get("blocked_order_count", 0) or 0)
+    if blocked_total <= 0:
+        return ""
+    labels = [
+        ("边际收益", int(execution_summary.get("blocked_edge_order_count", 0) or 0)),
+        ("流动性", int(execution_summary.get("blocked_liquidity_order_count", 0) or 0)),
+        ("风险告警", int(execution_summary.get("blocked_risk_alert_order_count", 0) or 0)),
+        ("人工复核", int(execution_summary.get("blocked_manual_review_order_count", 0) or 0)),
+        ("机会过滤", int(execution_summary.get("blocked_opportunity_order_count", 0) or 0)),
+        ("质量过滤", int(execution_summary.get("blocked_quality_order_count", 0) or 0)),
+        ("热点惩罚", int(execution_summary.get("blocked_hotspot_penalty_order_count", 0) or 0)),
+    ]
+    detail = "，".join(f"{label} {count}" for label, count in labels if count > 0)
+    if detail:
+        return f"另外有 {blocked_total} 笔计划单因执行 gate 暂未下发（{detail}）。"
+    return f"另外有 {blocked_total} 笔计划单因执行 gate 暂未下发。"
+
+
 def _runtime_config_paths_for_market(market: str) -> Dict[str, Path]:
     market_code = resolve_market_code(str(market or ""))
     ibkr_cfg = _load_yaml_file(market_config_path(BASE_DIR, market_code)) if market_code else {}
@@ -2503,23 +2544,49 @@ def _weekly_strategy_note(
     adaptive_strategy: Dict[str, Any],
     opportunity_summary: Dict[str, Any],
     market_sentiment: Dict[str, Any],
+    strategy_effective_controls_note: str = "",
+    execution_gate_summary: str = "",
 ) -> str:
     if bool(market_rules.get("research_only", False)):
         return "当前市场仍以研究为主，周度结论优先用于研究跟踪，不直接放大自动交易动作。"
     defensive_wait_count = int(opportunity_summary.get("adaptive_strategy_wait_count", 0) or 0)
+    control_note = str(strategy_effective_controls_note or "").strip()
+    gate_note = str(execution_gate_summary or "").strip()
+    if control_note:
+        parts = [control_note]
+        if defensive_wait_count > 0:
+            parts.append(f"同时有 {defensive_wait_count} 个新开仓机会因防守环境被降级为观察。")
+        if gate_note:
+            parts.append(gate_note)
+        return " ".join(parts)
     if defensive_wait_count > 0:
-        return f"本周有 {defensive_wait_count} 个新开仓机会因防守环境被降级为观察，先不把回撤信号直接转成加仓动作。"
+        note = f"本周有 {defensive_wait_count} 个新开仓机会因防守环境被降级为观察，先不把回撤信号直接转成加仓动作。"
+        if gate_note:
+            return f"{note} {gate_note}"
+        return note
     sentiment_label = str(market_sentiment.get("label", "") or "").strip().upper()
     if sentiment_label == "DEFENSIVE":
-        return "本周市场处于防守环境，周报应优先解释仓位保护、减速加仓和执行保守化。"
+        note = "本周市场处于防守环境，周报应优先解释仓位保护、减速加仓和执行保守化。"
+        if gate_note:
+            return f"{note} {gate_note}"
+        return note
     if bool(market_rules.get("small_account_rule_active", False)):
         preferred = "/".join(str(item).upper() for item in list(market_rules.get("small_account_preferred_asset_classes", []) or []) if str(item).strip()) or "ETF"
-        return f"当前账户仍在小资金规则范围内，本周先按 {preferred} 优先级解释机会与执行，不扩展到低流动性单股。"
+        note = f"当前账户仍在小资金规则范围内，本周先按 {preferred} 优先级解释机会与执行，不扩展到低流动性单股。"
+        if gate_note:
+            return f"{note} {gate_note}"
+        return note
     profile_label = str(account_profile.get("label", "") or account_profile.get("name", "") or "").strip()
     if profile_label:
-        return f"当前按 {profile_label} 档位运行，周报优先关注这档账户适配的仓位节奏、持仓数和执行密度。"
+        note = f"当前按 {profile_label} 档位运行，周报优先关注这档账户适配的仓位节奏、持仓数和执行密度。"
+        if gate_note:
+            return f"{note} {gate_note}"
+        return note
     strategy_name = str(adaptive_strategy.get("name", "") or "ACM-RS").strip()
-    return f"当前按 {strategy_name} 自适应中频框架运行，周报优先复盘市场状态、执行成本和信号质量。"
+    note = f"当前按 {strategy_name} 自适应中频框架运行，周报优先复盘市场状态、执行成本和信号质量。"
+    if gate_note:
+        return f"{note} {gate_note}"
+    return note
 
 
 def _augment_summary_rows_with_strategy_context(
@@ -2537,6 +2604,8 @@ def _augment_summary_rows_with_strategy_context(
         report_dir = _latest_report_dir(runs_by_portfolio, portfolio_id)
         market_sentiment = _load_market_sentiment(report_dir)
         opportunity_summary = _report_json(report_dir, "investment_opportunity_summary.json")
+        paper_summary = _report_json(report_dir, "investment_paper_summary.json")
+        execution_summary = _report_json(report_dir, "investment_execution_summary.json")
         if market not in market_cache:
             runtime_paths = _runtime_config_paths_for_market(market)
             market_cache[market] = {
@@ -2555,18 +2624,29 @@ def _augment_summary_rows_with_strategy_context(
         market_rules = market_structure_summary(cached["market_structure"], broker_equity=broker_equity)
         account_profile = resolved_account_profile_summary(cached["account_profiles"], broker_equity=broker_equity) if broker_equity > 0.0 else {}
         adaptive_strategy = adaptive_strategy_context(cached["adaptive_strategy"])
+        strategy_effective_controls_note = _strategy_effective_controls_note(execution_summary, paper_summary)
+        execution_gate_summary = _execution_gate_summary(execution_summary)
         strategy_note = _weekly_strategy_note(
             market_rules=market_rules,
             account_profile=account_profile,
             adaptive_strategy=adaptive_strategy,
             opportunity_summary=opportunity_summary,
             market_sentiment=market_sentiment,
+            strategy_effective_controls_note=strategy_effective_controls_note,
+            execution_gate_summary=execution_gate_summary,
         )
         row["market_rules_summary"] = str(market_rules.get("summary_text", "") or "")
         row["account_profile_label"] = str(account_profile.get("label", "") or account_profile.get("name", "") or "")
         row["account_profile_summary"] = str(account_profile.get("summary", "") or "")
         row["adaptive_strategy_name"] = str(adaptive_strategy.get("name", "") or "")
         row["adaptive_strategy_summary"] = str(adaptive_strategy.get("summary_text", "") or "")
+        row["strategy_effective_controls_applied"] = bool(
+            execution_summary.get("strategy_effective_controls_applied")
+            or paper_summary.get("strategy_effective_controls_applied")
+        )
+        row["strategy_effective_controls_note"] = strategy_effective_controls_note
+        row["execution_gate_summary"] = execution_gate_summary
+        row["execution_blocked_order_count"] = int(execution_summary.get("blocked_order_count", 0) or 0)
         row["weekly_strategy_note"] = strategy_note
         context_rows.append(
             {
@@ -2578,6 +2658,10 @@ def _augment_summary_rows_with_strategy_context(
                 "account_profile_summary": row["account_profile_summary"],
                 "adaptive_strategy_name": row["adaptive_strategy_name"],
                 "adaptive_strategy_summary": row["adaptive_strategy_summary"],
+                "strategy_effective_controls_applied": row["strategy_effective_controls_applied"],
+                "strategy_effective_controls_note": row["strategy_effective_controls_note"],
+                "execution_gate_summary": row["execution_gate_summary"],
+                "execution_blocked_order_count": row["execution_blocked_order_count"],
                 "weekly_strategy_note": row["weekly_strategy_note"],
                 "market_sentiment_label": str(market_sentiment.get("label", "") or ""),
                 "adaptive_strategy_wait_count": int(opportunity_summary.get("adaptive_strategy_wait_count", 0) or 0),
@@ -3173,6 +3257,131 @@ def _build_planned_execution_cost_rows(execution_orders: List[Dict[str, Any]]) -
     return out
 
 
+def _is_execution_gate_status(status: str) -> bool:
+    normalized = str(status or "").strip().upper()
+    return normalized.startswith("BLOCKED") or normalized in {"DEFERRED_RISK_ALERT", "REVIEW_REQUIRED"}
+
+
+def _build_execution_gate_rows(execution_orders: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    grouped: Dict[str, Dict[str, Any]] = {}
+    for row in execution_orders:
+        portfolio_id = str(row.get("portfolio_id") or "").strip()
+        if not portfolio_id:
+            continue
+        order_value = abs(float(row.get("order_value") or 0.0))
+        bucket = grouped.setdefault(
+            portfolio_id,
+            {
+                "portfolio_id": portfolio_id,
+                "market": str(row.get("market") or _market_from_portfolio_or_symbol(portfolio_id, str(row.get("symbol") or ""))),
+                "execution_order_count": 0,
+                "execution_order_value": 0.0,
+                "blocked_order_count": 0,
+                "blocked_order_value": 0.0,
+            },
+        )
+        bucket["execution_order_count"] = int(bucket["execution_order_count"]) + 1
+        bucket["execution_order_value"] = float(bucket["execution_order_value"]) + float(order_value)
+        if not _is_execution_gate_status(str(row.get("status") or "")):
+            continue
+        bucket["blocked_order_count"] = int(bucket["blocked_order_count"]) + 1
+        bucket["blocked_order_value"] = float(bucket["blocked_order_value"]) + float(order_value)
+
+    out: List[Dict[str, Any]] = []
+    for portfolio_id, bucket in grouped.items():
+        total_count = int(bucket.get("execution_order_count", 0) or 0)
+        total_value = float(bucket.get("execution_order_value", 0.0) or 0.0)
+        blocked_count = int(bucket.get("blocked_order_count", 0) or 0)
+        blocked_value = float(bucket.get("blocked_order_value", 0.0) or 0.0)
+        out.append(
+            {
+                "portfolio_id": portfolio_id,
+                "market": str(bucket.get("market") or ""),
+                "execution_order_count": total_count,
+                "execution_order_value": total_value,
+                "blocked_order_count": blocked_count,
+                "blocked_order_value": blocked_value,
+                "blocked_order_ratio": float(blocked_count / total_count) if total_count > 0 else 0.0,
+                "blocked_order_value_ratio": float(blocked_value / total_value) if total_value > 0.0 else 0.0,
+            }
+        )
+    out.sort(key=lambda row: str(row.get("portfolio_id") or ""))
+    return out
+
+
+def _attribution_control_split_text(
+    *,
+    strategy_delta: float,
+    risk_delta: float,
+    gate_weight: float,
+    gate_value: float,
+    gate_ratio: float,
+) -> str:
+    strategy_delta = max(0.0, float(strategy_delta or 0.0))
+    risk_delta = max(0.0, float(risk_delta or 0.0))
+    gate_weight = max(0.0, float(gate_weight or 0.0))
+    gate_value = max(0.0, float(gate_value or 0.0))
+    gate_ratio = max(0.0, float(gate_ratio or 0.0))
+    if max(strategy_delta, risk_delta, gate_weight, gate_ratio) <= 1e-9 and gate_value <= 1e-9:
+        return "策略/风险/执行本周都没有明显压缩。"
+    execution_text = f"执行 {gate_weight:.1%}"
+    if gate_value > 1e-9 or gate_ratio > 1e-9:
+        execution_text += f"（blocked {gate_value:.2f} / {gate_ratio:.0%}）"
+    return " | ".join(
+        [
+            f"策略 {strategy_delta:.1%}",
+            f"风险 {risk_delta:.1%}",
+            execution_text,
+        ]
+    )
+
+
+def _feedback_control_driver_context(
+    *,
+    strategy_delta: float,
+    risk_delta: float,
+    execution_gate_weight: float,
+    execution_gate_ratio: float = 0.0,
+    execution_gate_value: float = 0.0,
+) -> Dict[str, Any]:
+    strategy_delta = max(0.0, float(strategy_delta or 0.0))
+    risk_delta = max(0.0, float(risk_delta or 0.0))
+    execution_gate_weight = max(0.0, float(execution_gate_weight or 0.0))
+    execution_gate_ratio = max(0.0, float(execution_gate_ratio or 0.0))
+    execution_gate_value = max(0.0, float(execution_gate_value or 0.0))
+    dominant_value = max(strategy_delta, risk_delta, execution_gate_weight)
+    driver = ""
+    if dominant_value > 1e-9:
+        if strategy_delta >= risk_delta and strategy_delta >= execution_gate_weight:
+            driver = "STRATEGY"
+        elif risk_delta >= strategy_delta and risk_delta >= execution_gate_weight:
+            driver = "RISK"
+        else:
+            driver = "EXECUTION"
+    driver_label = {
+        "STRATEGY": "策略主动控仓",
+        "RISK": "风险 overlay",
+        "EXECUTION": "执行 gate",
+    }.get(driver, "")
+    return {
+        "feedback_control_driver": driver,
+        "feedback_control_driver_label": driver_label,
+        "feedback_control_driver_weight": float(dominant_value),
+        "strategy_control_weight_delta": float(strategy_delta),
+        "risk_overlay_weight_delta": float(risk_delta),
+        "execution_gate_blocked_weight": float(execution_gate_weight),
+        "execution_gate_blocked_order_ratio": float(execution_gate_ratio),
+        "execution_gate_blocked_order_value": float(execution_gate_value),
+        "feedback_control_split_text": _attribution_control_split_text(
+            strategy_delta=strategy_delta,
+            risk_delta=risk_delta,
+            gate_weight=execution_gate_weight,
+            gate_value=execution_gate_value,
+            gate_ratio=execution_gate_ratio,
+        ),
+    }
+
+
 def _build_attribution_rows(
     summary_rows: List[Dict[str, Any]],
     *,
@@ -3180,6 +3389,7 @@ def _build_attribution_rows(
     latest_rows_by_portfolio: Dict[str, List[Dict[str, Any]]],
     execution_effect_rows: List[Dict[str, Any]],
     planned_execution_cost_rows: List[Dict[str, Any]] | None = None,
+    execution_gate_rows: List[Dict[str, Any]] | None = None,
     runs_by_portfolio: Dict[str, List[Dict[str, Any]]],
 ) -> List[Dict[str, Any]]:
     # 这是“策略升级用”的代理归因，不是严格的学术因子归因。
@@ -3188,6 +3398,10 @@ def _build_attribution_rows(
     planned_execution_map = {
         str(row.get("portfolio_id") or ""): dict(row)
         for row in list(planned_execution_cost_rows or [])
+    }
+    execution_gate_map = {
+        str(row.get("portfolio_id") or ""): dict(row)
+        for row in list(execution_gate_rows or [])
     }
     out: List[Dict[str, Any]] = []
     neutral_exposure_ratio = 0.60
@@ -3204,16 +3418,84 @@ def _build_attribution_rows(
 
         report_dir = _latest_report_dir(runs_by_portfolio, portfolio_id)
         market_sentiment = _load_market_sentiment(report_dir)
+        paper_summary = _report_json(report_dir, "investment_paper_summary.json")
+        execution_summary = _report_json(report_dir, "investment_execution_summary.json")
         market_proxy_return = float(market_sentiment.get("benchmark_ret5d", 0.0) or 0.0)
         market_contribution = market_proxy_return * neutral_exposure_ratio
         sizing_contribution = market_proxy_return * (invested_ratio - neutral_exposure_ratio)
 
         execution_effect = dict(execution_map.get(portfolio_id) or {})
         planned_effect = dict(planned_execution_map.get(portfolio_id) or {})
+        gate_effect = dict(execution_gate_map.get(portfolio_id) or {})
         execution_cost_total = float(execution_effect.get("execution_cost_total", 0.0) or 0.0)
         planned_execution_cost_total = float(planned_effect.get("planned_execution_cost_total", 0.0) or 0.0)
         execution_contribution = -execution_cost_total / latest_equity if latest_equity > 0.0 else 0.0
         execution_cost_gap = float(execution_cost_total - planned_execution_cost_total)
+
+        strategy_controls = dict(
+            execution_summary.get("strategy_effective_controls")
+            or paper_summary.get("strategy_effective_controls")
+            or {}
+        )
+        strategy_base_target = float(
+            strategy_controls.get(
+                "base_effective_target_invested_weight",
+                strategy_controls.get("base_target_invested_weight", 0.0),
+            )
+            or 0.0
+        )
+        strategy_effective_target = float(
+            strategy_controls.get("effective_target_invested_weight", strategy_base_target) or strategy_base_target
+        )
+        strategy_control_weight_delta = max(0.0, strategy_base_target - strategy_effective_target)
+
+        risk_source = dict(paper_summary or {})
+        risk_source.update(dict(execution_summary or {}))
+        risk_net_tightening = max(
+            0.0,
+            float(
+                risk_source.get(
+                    "risk_net_exposure_tightening",
+                    max(
+                        0.0,
+                        float(risk_source.get("risk_base_net_exposure", 0.0) or 0.0)
+                        - float(risk_source.get("risk_dynamic_net_exposure", 0.0) or 0.0),
+                    ),
+                )
+                or 0.0
+            ),
+        )
+        risk_gross_tightening = max(
+            0.0,
+            float(
+                risk_source.get(
+                    "risk_gross_exposure_tightening",
+                    max(
+                        0.0,
+                        float(risk_source.get("risk_base_gross_exposure", 0.0) or 0.0)
+                        - float(risk_source.get("risk_dynamic_gross_exposure", 0.0) or 0.0),
+                    ),
+                )
+                or 0.0
+            ),
+        )
+        risk_overlay_weight_delta = max(risk_net_tightening, risk_gross_tightening)
+
+        execution_gate_blocked_order_count = int(gate_effect.get("blocked_order_count", 0) or 0)
+        execution_gate_blocked_order_value = float(gate_effect.get("blocked_order_value", 0.0) or 0.0)
+        execution_gate_blocked_order_ratio = float(gate_effect.get("blocked_order_ratio", 0.0) or 0.0)
+        execution_gate_blocked_weight = (
+            float(execution_gate_blocked_order_value / latest_equity)
+            if latest_equity > 0.0
+            else 0.0
+        )
+        control_split_text = _attribution_control_split_text(
+            strategy_delta=strategy_control_weight_delta,
+            risk_delta=risk_overlay_weight_delta,
+            gate_weight=execution_gate_blocked_weight,
+            gate_value=execution_gate_blocked_order_value,
+            gate_ratio=execution_gate_blocked_order_ratio,
+        )
 
         top_sector, top_sector_weight = _sector_top_weight(sector_rows, portfolio_id)
         residual_after_base = float(summary.get("weekly_return") or 0.0) - market_contribution - sizing_contribution - execution_contribution
@@ -3275,6 +3557,13 @@ def _build_attribution_rows(
                 "commission_total": float(execution_effect.get("commission_total", 0.0) or 0.0),
                 "slippage_cost_total": float(execution_effect.get("slippage_cost_total", 0.0) or 0.0),
                 "avg_actual_slippage_bps": execution_effect.get("avg_actual_slippage_bps"),
+                "strategy_control_weight_delta": float(strategy_control_weight_delta),
+                "risk_overlay_weight_delta": float(risk_overlay_weight_delta),
+                "execution_gate_blocked_order_count": int(execution_gate_blocked_order_count),
+                "execution_gate_blocked_order_value": float(execution_gate_blocked_order_value),
+                "execution_gate_blocked_order_ratio": float(execution_gate_blocked_order_ratio),
+                "execution_gate_blocked_weight": float(execution_gate_blocked_weight),
+                "control_split_text": control_split_text,
                 "dominant_driver": dominant_key.upper(),
                 "diagnosis": diagnosis,
             }
@@ -3439,10 +3728,16 @@ def _build_risk_review_rows(
 
 def _build_risk_feedback_rows(
     risk_review_rows: List[Dict[str, Any]],
+    attribution_rows: List[Dict[str, Any]] | None = None,
     feedback_calibration_map: Dict[str, Dict[str, Any]] | None = None,
 ) -> List[Dict[str, Any]]:
     # 这里把“风险复盘结论”转成下一轮 paper/execution 能直接消费的参数增减量。
     # 先只改组合预算相关参数，不去碰更深层的信号逻辑，避免闭环一下子过重。
+    attribution_map = {
+        str(row.get("portfolio_id") or ""): dict(row)
+        for row in list(attribution_rows or [])
+        if str(row.get("portfolio_id") or "").strip()
+    }
     out: List[Dict[str, Any]] = []
     for row in risk_review_rows:
         driver = str(row.get("dominant_risk_driver") or "").upper()
@@ -3452,6 +3747,19 @@ def _build_risk_feedback_rows(
         latest_top_sector = float(row.get("latest_top_sector_share", 0.0) or 0.0)
         latest_dynamic_net = float(row.get("latest_dynamic_net_exposure", 0.0) or 0.0)
         latest_dynamic_gross = float(row.get("latest_dynamic_gross_exposure", 0.0) or 0.0)
+        attribution = dict(attribution_map.get(str(row.get("portfolio_id") or ""), {}) or {})
+        control_context = _feedback_control_driver_context(
+            strategy_delta=float(attribution.get("strategy_control_weight_delta", 0.0) or 0.0),
+            risk_delta=float(attribution.get("risk_overlay_weight_delta", 0.0) or 0.0),
+            execution_gate_weight=float(attribution.get("execution_gate_blocked_weight", 0.0) or 0.0),
+            execution_gate_ratio=float(attribution.get("execution_gate_blocked_order_ratio", 0.0) or 0.0),
+            execution_gate_value=float(attribution.get("execution_gate_blocked_order_value", 0.0) or 0.0),
+        )
+        control_driver = str(control_context.get("feedback_control_driver", "") or "")
+        strategy_delta = float(control_context.get("strategy_control_weight_delta", 0.0) or 0.0)
+        risk_delta = float(control_context.get("risk_overlay_weight_delta", 0.0) or 0.0)
+        gate_weight = float(control_context.get("execution_gate_blocked_weight", 0.0) or 0.0)
+        control_driver_reason = ""
 
         action = "HOLD"
         feedback_reason = str(row.get("risk_diagnosis") or "")
@@ -3492,6 +3800,50 @@ def _build_risk_feedback_rows(
                 "组合风险预算偏紧，但相关性和 stress 仍在可接受范围，适度放宽预算以减少资金闲置。"
             )
 
+        if (
+            action in {"TIGHTEN", "RELAX"}
+            and control_driver == "STRATEGY"
+            and strategy_delta >= max(0.05, risk_delta + 0.02)
+        ):
+            action = "HOLD"
+            max_single_delta = 0.0
+            max_sector_delta = 0.0
+            max_net_delta = 0.0
+            max_gross_delta = 0.0
+            max_short_delta = 0.0
+            correlation_soft_limit_delta = 0.0
+            control_driver_reason = (
+                "本周更明显的压仓来自策略主动控仓，先复核 regime/target invested weight，"
+                "暂不直接改风险预算。"
+            )
+            feedback_reason = (
+                f"{feedback_reason.rstrip('。')}。{control_driver_reason}"
+                f"（{str(control_context.get('feedback_control_split_text') or '')}）"
+            )
+        elif (
+            action == "RELAX"
+            and control_driver == "EXECUTION"
+            and gate_weight >= max(0.02, risk_delta + 0.01)
+        ):
+            action = "HOLD"
+            max_single_delta = 0.0
+            max_sector_delta = 0.0
+            max_net_delta = 0.0
+            max_gross_delta = 0.0
+            max_short_delta = 0.0
+            correlation_soft_limit_delta = 0.0
+            control_driver_reason = "当前低仓位更像执行 gate 阻断，而不是风险预算过紧，先复核执行门槛。"
+            feedback_reason = (
+                f"{feedback_reason.rstrip('。')}。{control_driver_reason}"
+                f"（{str(control_context.get('feedback_control_split_text') or '')}）"
+            )
+        elif action in {"TIGHTEN", "RELAX"} and control_driver == "RISK" and risk_delta > 1e-9:
+            control_driver_reason = (
+                f"本周主要压缩来自风险 overlay（{str(control_context.get('feedback_control_split_text') or '')}），"
+                "继续沿风险预算方向调整更一致。"
+            )
+            feedback_reason = f"{feedback_reason.rstrip('。')}。{control_driver_reason}"
+
         severity_ratio = 0.0
         if driver == "CORRELATION":
             severity_ratio = max(0.0, latest_corr - 0.62) / 0.12
@@ -3499,6 +3851,8 @@ def _build_risk_feedback_rows(
             severity_ratio = max(0.0, latest_stress - 0.085) / 0.06
         elif driver == "EXPOSURE_BUDGET":
             severity_ratio = max(max(0.0, 0.72 - latest_dynamic_net), max(0.0, 0.78 - latest_dynamic_gross)) / 0.24
+        if action != "HOLD" and control_driver == "RISK":
+            severity_ratio = max(severity_ratio, min(1.0, risk_delta / 0.10))
         base_confidence = _feedback_confidence(
             sample_ratio=float(risk_overlay_runs / 4.0),
             magnitude_ratio=severity_ratio,
@@ -3536,6 +3890,14 @@ def _build_risk_feedback_rows(
                 "feedback_confidence": float(confidence),
                 "feedback_confidence_label": _feedback_confidence_label(confidence),
                 "feedback_reason": feedback_reason,
+                "feedback_control_driver": str(control_context.get("feedback_control_driver", "") or ""),
+                "feedback_control_driver_label": str(control_context.get("feedback_control_driver_label", "") or ""),
+                "feedback_control_driver_weight": float(control_context.get("feedback_control_driver_weight", 0.0) or 0.0),
+                "feedback_control_split_text": str(control_context.get("feedback_control_split_text", "") or ""),
+                "feedback_control_driver_reason": control_driver_reason,
+                "strategy_control_weight_delta": float(strategy_delta),
+                "risk_overlay_weight_delta": float(risk_delta),
+                "execution_gate_blocked_weight": float(gate_weight),
             }
         )
     out.sort(
@@ -3589,6 +3951,17 @@ def _build_execution_feedback_rows(
         latest_gap_symbols = int(broker_summary.get("latest_gap_symbols", 0) or 0)
         if submitted_order_rows <= 0 and plan_cost <= 0.0 and actual_cost <= 0.0:
             continue
+        control_context = _feedback_control_driver_context(
+            strategy_delta=float(row.get("strategy_control_weight_delta", 0.0) or 0.0),
+            risk_delta=float(row.get("risk_overlay_weight_delta", 0.0) or 0.0),
+            execution_gate_weight=float(row.get("execution_gate_blocked_weight", 0.0) or 0.0),
+            execution_gate_ratio=float(row.get("execution_gate_blocked_order_ratio", 0.0) or 0.0),
+            execution_gate_value=float(row.get("execution_gate_blocked_order_value", 0.0) or 0.0),
+        )
+        control_driver = str(control_context.get("feedback_control_driver", "") or "")
+        gate_weight = float(control_context.get("execution_gate_blocked_weight", 0.0) or 0.0)
+        gate_ratio = float(control_context.get("execution_gate_blocked_order_ratio", 0.0) or 0.0)
+        control_driver_reason = ""
 
         action = "HOLD"
         feedback_reason = "计划与实际执行成本目前大致一致，继续观察当前拆单与参与率。"
@@ -3762,8 +4135,42 @@ def _build_execution_feedback_rows(
                 f"{feedback_reason.rstrip('。')}。下一轮候选会对这些执行热点标的增加成本/执行惩罚: {penalty_symbols}。"
             )
 
+        gate_pressure_high = gate_ratio >= 0.35 or gate_weight >= 0.03
+        if (
+            gate_pressure_high
+            and control_driver == "EXECUTION"
+            and action in {"HOLD", "RELAX"}
+        ):
+            action = "HOLD"
+            adv_max_participation_delta = 0.0
+            adv_split_trigger_delta = 0.0
+            max_slices_delta = 0
+            open_session_scale_delta = 0.0
+            midday_session_scale_delta = 0.0
+            close_session_scale_delta = 0.0
+            execution_penalties = []
+            control_driver_reason = (
+                "本周更明显的问题是执行 gate 阻断，而不是成交成本；"
+                "优先复核 opportunity/quality/risk/review gate，暂不直接调整 ADV/拆单参数。"
+            )
+            feedback_reason = (
+                f"{control_driver_reason}（{str(control_context.get('feedback_control_split_text') or '')}）"
+            )
+        elif (
+            gate_pressure_high
+            and control_driver == "EXECUTION"
+            and action == "TIGHTEN"
+        ):
+            control_driver_reason = (
+                f"同时存在明显的执行 gate 阻断（{str(control_context.get('feedback_control_split_text') or '')}），"
+                "执行参数收紧之外还应复核 gate 阈值。"
+            )
+            feedback_reason = f"{feedback_reason.rstrip('。')}。{control_driver_reason}"
+
         bps_gap_ratio = max(0.0, actual_bps - expected_bps) / 12.0
         gap_value_ratio = max(0.0, cost_gap) / max(plan_cost, 1.0)
+        if action != "HOLD" and control_driver == "EXECUTION":
+            gap_value_ratio = max(gap_value_ratio, min(1.0, gate_weight / 0.05))
         base_confidence = _feedback_confidence(
             sample_ratio=float((submitted_order_rows + latest_gap_symbols) / 5.0),
             magnitude_ratio=max(bps_gap_ratio, gap_value_ratio / 0.50),
@@ -3819,6 +4226,16 @@ def _build_execution_feedback_rows(
                 "feedback_confidence": float(confidence),
                 "feedback_confidence_label": _feedback_confidence_label(confidence),
                 "feedback_reason": feedback_reason,
+                "feedback_control_driver": str(control_context.get("feedback_control_driver", "") or ""),
+                "feedback_control_driver_label": str(control_context.get("feedback_control_driver_label", "") or ""),
+                "feedback_control_driver_weight": float(control_context.get("feedback_control_driver_weight", 0.0) or 0.0),
+                "feedback_control_split_text": str(control_context.get("feedback_control_split_text", "") or ""),
+                "feedback_control_driver_reason": control_driver_reason,
+                "strategy_control_weight_delta": float(control_context.get("strategy_control_weight_delta", 0.0) or 0.0),
+                "risk_overlay_weight_delta": float(control_context.get("risk_overlay_weight_delta", 0.0) or 0.0),
+                "execution_gate_blocked_weight": float(gate_weight),
+                "execution_gate_blocked_order_ratio": float(gate_ratio),
+                "execution_gate_blocked_order_value": float(control_context.get("execution_gate_blocked_order_value", 0.0) or 0.0),
             }
         )
     out.sort(
@@ -4100,6 +4517,7 @@ def main(argv: List[str] | None = None) -> None:
         filtered_commission_rows.append(row)
     execution_effect_rows = _build_execution_effect_rows(filtered_fill_rows, filtered_commission_rows)
     planned_execution_cost_rows = _build_planned_execution_cost_rows(execution_order_rows)
+    execution_gate_rows = _build_execution_gate_rows(execution_order_rows)
     execution_session_rows = _build_execution_session_rows(execution_order_rows, filtered_fill_rows, filtered_commission_rows)
     execution_hotspot_rows = _build_execution_hotspot_rows(execution_order_rows, filtered_fill_rows, filtered_commission_rows)
     execution_effect_map = {str(row.get("portfolio_id") or ""): dict(row) for row in execution_effect_rows}
@@ -4137,10 +4555,6 @@ def main(argv: List[str] | None = None) -> None:
         feedback_calibration_map=feedback_calibration_map,
     )
     risk_review_rows = _build_risk_review_rows(runs_by_portfolio, risk_history_by_portfolio)
-    risk_feedback_rows = _build_risk_feedback_rows(
-        risk_review_rows,
-        feedback_calibration_map=feedback_calibration_map,
-    )
 
     summary_rows: List[Dict[str, Any]] = []
     for portfolio_id, rows in runs_by_portfolio.items():
@@ -4196,7 +4610,13 @@ def main(argv: List[str] | None = None) -> None:
         latest_rows_by_portfolio=latest_rows_by_portfolio,
         execution_effect_rows=execution_effect_rows,
         planned_execution_cost_rows=planned_execution_cost_rows,
+        execution_gate_rows=execution_gate_rows,
         runs_by_portfolio=runs_by_portfolio,
+    )
+    risk_feedback_rows = _build_risk_feedback_rows(
+        risk_review_rows,
+        attribution_rows=attribution_rows,
+        feedback_calibration_map=feedback_calibration_map,
     )
     execution_feedback_rows = _build_execution_feedback_rows(
         attribution_rows,

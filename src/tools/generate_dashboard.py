@@ -13,7 +13,7 @@ import yaml
 
 from ..analysis.tracking import STATUS_LABELS
 from ..common.account_profile import load_account_profiles, resolved_account_profile_summary
-from ..common.adaptive_strategy import adaptive_strategy_context, load_adaptive_strategy
+from ..common.adaptive_strategy import load_report_adaptive_strategy_payload
 from ..common.cli import build_cli_parser, emit_cli_summary
 from ..common.cli_contracts import ArtifactBundle, DashboardSummary
 from ..common.market_structure import load_market_structure, market_structure_summary
@@ -2130,6 +2130,7 @@ def _feedback_apply_status(
         submitted_order_rows = int(weekly.get("submitted_order_rows", 0) or 0)
         fill_rows = int(weekly.get("fill_rows", 0) or 0)
         blocked_opportunity_rows = int(weekly.get("blocked_opportunity_rows", 0) or 0)
+        blocked_edge_count = int(execution_summary.get("blocked_edge_order_count", 0) or 0)
         blocked_opportunity_count = int(execution_summary.get("blocked_opportunity_order_count", 0) or 0)
         blocked_quality_count = int(execution_summary.get("blocked_quality_order_count", 0) or 0)
         blocked_risk_review_count = sum(
@@ -2145,7 +2146,7 @@ def _feedback_apply_status(
             int(execution_summary.get(key, 0) or 0)
             for key in ("blocked_liquidity_order_count", "blocked_hotspot_penalty_order_count")
         )
-        detailed_block_total = blocked_opportunity_count + blocked_quality_count + blocked_risk_review_count + blocked_liquidity_count
+        detailed_block_total = blocked_edge_count + blocked_opportunity_count + blocked_quality_count + blocked_risk_review_count + blocked_liquidity_count
         planned_execution_cost_total = _safe_float(weekly_attribution.get("planned_execution_cost_total"), 0.0)
         execution_cost_total = _safe_float(weekly_attribution.get("execution_cost_total"), 0.0)
         if not weekly and not weekly_attribution:
@@ -2162,17 +2163,22 @@ def _feedback_apply_status(
         if submitted_order_rows <= 0 and (blocked_opportunity_rows > 0 or detailed_block_total > 0):
             # 优先使用最新 execution summary 的细分阻断原因；只有这轮没有细分统计时才回退到 weekly blocked。
             if detailed_block_total > 0:
-                if blocked_quality_count >= max(blocked_opportunity_count, blocked_risk_review_count, blocked_liquidity_count, 1):
+                if blocked_edge_count >= max(blocked_opportunity_count, blocked_quality_count, blocked_risk_review_count, blocked_liquidity_count, 1):
+                    return (
+                        "NO_EDGE_PASS",
+                        f"本周没有实际提交订单，最近一轮主要被边际收益/成本门挡住（edge={blocked_edge_count}），因此没有新的执行参数反馈。",
+                    )
+                if blocked_quality_count >= max(blocked_opportunity_count, blocked_risk_review_count, blocked_liquidity_count, blocked_edge_count, 1):
                     return (
                         "NO_QUALITY_PASS",
                         f"本周没有实际提交订单，最近一轮主要被候选质量/执行质量门挡住（quality={blocked_quality_count}），因此没有新的执行参数反馈。",
                     )
-                if blocked_risk_review_count >= max(blocked_opportunity_count, blocked_quality_count, blocked_liquidity_count, 1):
+                if blocked_risk_review_count >= max(blocked_opportunity_count, blocked_quality_count, blocked_liquidity_count, blocked_edge_count, 1):
                     return (
                         "NO_GUARD_PASS",
                         f"本周没有实际提交订单，最近一轮主要被风险告警或人工审核门挡住（risk_review={blocked_risk_review_count}），因此没有新的执行参数反馈。",
                     )
-                if blocked_liquidity_count >= max(blocked_opportunity_count, blocked_quality_count, blocked_risk_review_count, 1):
+                if blocked_liquidity_count >= max(blocked_opportunity_count, blocked_quality_count, blocked_risk_review_count, blocked_edge_count, 1):
                     return (
                         "NO_LIQUIDITY_PASS",
                         f"本周没有实际提交订单，最近一轮主要被流动性/执行热点门挡住（liquidity={blocked_liquidity_count}），因此没有新的执行参数反馈。",
@@ -2669,10 +2675,12 @@ def _build_report_card(
     account_profile_card_summary = dict(exec_summary.get("account_profile", {}) or {})
     if not account_profile_card_summary and broker_equity > 0.0:
         account_profile_card_summary = resolved_account_profile_summary(account_profiles, broker_equity=broker_equity)
-    adaptive_strategy_payload = _load_json(report_dir / "investment_adaptive_strategy_summary.json")
+    adaptive_strategy_payload = load_report_adaptive_strategy_payload(
+        report_dir,
+        base_dir=BASE_DIR,
+        explicit_config_path=str(adaptive_strategy_cfg_path),
+    )
     adaptive_strategy_card_summary = dict(adaptive_strategy_payload.get("adaptive_strategy", {}) or {})
-    if not adaptive_strategy_card_summary:
-        adaptive_strategy_card_summary = adaptive_strategy_context(load_adaptive_strategy(BASE_DIR, str(adaptive_strategy_cfg_path)))
     adaptive_strategy_runtime_summary = dict(adaptive_strategy_payload.get("summary", {}) or {})
     data_quality_summary = _load_json(report_dir / "investment_data_quality_summary.json")
     cost_summary = _load_json(report_dir / "investment_cost_summary.json")
@@ -4054,12 +4062,22 @@ def _build_weekly_attribution_overview(cards: List[Dict[str, Any]]) -> List[Dict
                 "execution_cost_gap": _safe_float(attribution.get("execution_cost_gap"), 0.0),
                 "avg_expected_cost_bps": _safe_float(attribution.get("avg_expected_cost_bps"), 0.0),
                 "avg_actual_slippage_bps": _safe_float(attribution.get("avg_actual_slippage_bps"), 0.0),
+                "strategy_control_weight_delta": _safe_float(attribution.get("strategy_control_weight_delta"), 0.0),
+                "risk_overlay_weight_delta": _safe_float(attribution.get("risk_overlay_weight_delta"), 0.0),
+                "execution_gate_blocked_weight": _safe_float(attribution.get("execution_gate_blocked_weight"), 0.0),
+                "execution_gate_blocked_order_value": _safe_float(attribution.get("execution_gate_blocked_order_value"), 0.0),
+                "execution_gate_blocked_order_ratio": _safe_float(attribution.get("execution_gate_blocked_order_ratio"), 0.0),
+                "control_split_text": str(attribution.get("control_split_text", "") or ""),
                 "dominant_driver": str(attribution.get("dominant_driver", "") or ""),
                 "diagnosis": str(attribution.get("diagnosis", "") or ""),
             }
         )
     rows.sort(key=lambda row: abs(float(row.get("weekly_return", 0.0) or 0.0)), reverse=True)
     return rows
+
+
+def _weekly_attribution_control_split_text(attribution: Dict[str, Any]) -> str:
+    return str(dict(attribution or {}).get("control_split_text", "") or "").strip()
 
 
 def _build_execution_cost_overview(cards: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -4141,6 +4159,7 @@ def _build_execution_feedback_summary(rows: List[Dict[str, Any]]) -> Dict[str, A
     no_feedback_status_codes = {
         "NO_WEEKLY_DATA",
         "NO_EXECUTION_ACTIVITY",
+        "NO_EDGE_PASS",
         "NO_OPPORTUNITY_PASS",
         "NO_QUALITY_PASS",
         "NO_GUARD_PASS",
@@ -4156,6 +4175,7 @@ def _build_execution_feedback_summary(rows: List[Dict[str, Any]]) -> Dict[str, A
         for row in rows
         if str(row.get("apply_status_code", "") or "") in {"NO_WEEKLY_DATA", "NO_EXECUTION_ACTIVITY"}
     )
+    no_edge_count = sum(1 for row in rows if str(row.get("apply_status_code", "") or "") == "NO_EDGE_PASS")
     no_opportunity_count = sum(1 for row in rows if str(row.get("apply_status_code", "") or "") == "NO_OPPORTUNITY_PASS")
     no_quality_count = sum(1 for row in rows if str(row.get("apply_status_code", "") or "") == "NO_QUALITY_PASS")
     no_guard_count = sum(1 for row in rows if str(row.get("apply_status_code", "") or "") == "NO_GUARD_PASS")
@@ -4164,6 +4184,7 @@ def _build_execution_feedback_summary(rows: List[Dict[str, Any]]) -> Dict[str, A
         1
         for row in rows
         if str(row.get("apply_status_code", "") or "") in {
+            "NO_EDGE_PASS",
             "NO_OPPORTUNITY_PASS",
             "NO_QUALITY_PASS",
             "NO_GUARD_PASS",
@@ -4203,6 +4224,7 @@ def _build_execution_feedback_summary(rows: List[Dict[str, Any]]) -> Dict[str, A
         "base_only_count": int(base_only_count),
         "no_feedback_count": int(no_feedback_count),
         "no_data_count": int(no_data_count),
+        "no_edge_count": int(no_edge_count),
         "no_order_count": int(no_order_count),
         "no_fill_count": int(no_fill_count),
         "no_opportunity_count": int(no_opportunity_count),
@@ -5404,6 +5426,7 @@ def _render_card(card: Dict[str, Any]) -> str:
                 _fmt_money(weekly_attribution.get("planned_execution_cost_total")),
                 _fmt_money(weekly_attribution.get("execution_cost_total")),
                 _fmt_money(weekly_attribution.get("execution_cost_gap")),
+                _weekly_attribution_control_split_text(weekly_attribution) or "-",
                 str(weekly_attribution.get("dominant_driver", "") or "-"),
                 str(weekly_attribution.get("diagnosis", "") or "-"),
             ]
@@ -5445,7 +5468,7 @@ def _render_card(card: Dict[str, Any]) -> str:
         strategy_upgrade_section = f"""
   <div>
     <h3>周度代理归因（策略复盘）</h3>
-    {_render_table(["weekly_return", "selection", "sizing", "sector", "execution", "market", "plan_cost", "actual_cost", "cost_gap", "dominant", "diagnosis"], attribution_rows)}
+    {_render_table(["weekly_return", "selection", "sizing", "sector", "execution", "market", "plan_cost", "actual_cost", "cost_gap", "controls", "dominant", "diagnosis"], attribution_rows)}
   </div>
 """ if attribution_rows else ""
         risk_review_rows = [
@@ -6273,6 +6296,15 @@ def _adaptive_strategy_runtime_text(card: Dict[str, Any]) -> str:
     adaptive_summary = dict(card.get("adaptive_strategy_summary", {}) or {})
     adaptive_runtime = dict(card.get("adaptive_strategy_runtime_summary", {}) or {})
     opp_summary = dict(card.get("opportunity_summary", {}) or {})
+    paper_summary = dict(card.get("paper_summary", {}) or {})
+    execution_summary = dict(card.get("execution_summary", {}) or {})
+    effective_note = str(
+        execution_summary.get("strategy_effective_controls_note")
+        or paper_summary.get("strategy_effective_controls_note")
+        or ""
+    ).strip()
+    if effective_note:
+        return effective_note
     defensive_cap_count = max(
         int(adaptive_runtime.get("defensive_cap_count", 0) or 0),
         int(opp_summary.get("adaptive_strategy_wait_count", 0) or 0),
@@ -6315,7 +6347,7 @@ def _simple_weekly_strategy_context_rows(card: Dict[str, Any]) -> List[List[str]
     weekly_context = dict(card.get("weekly_strategy_context", {}) or {})
     market_structure = dict(card.get("market_structure_summary", {}) or {})
     profile_summary = dict(card.get("account_profile_summary", {}) or {})
-    return [
+    rows = [
         [
             "账户档位",
             str(weekly_context.get("account_profile_label") or _account_profile_text(profile_summary) or "-"),
@@ -6333,6 +6365,11 @@ def _simple_weekly_strategy_context_rows(card: Dict[str, Any]) -> List[List[str]
             _weekly_strategy_note_text(card),
         ],
     ]
+    if str(weekly_context.get("strategy_effective_controls_note") or "").strip():
+        rows.append(["策略控仓", str(weekly_context.get("strategy_effective_controls_note") or "").strip()])
+    if str(weekly_context.get("execution_gate_summary") or "").strip():
+        rows.append(["执行阻断", str(weekly_context.get("execution_gate_summary") or "").strip()])
+    return rows
 
 
 def _simple_market_structure_rows(card: Dict[str, Any]) -> List[List[str]]:
@@ -6395,8 +6432,18 @@ def _market_structure_detail_rows(card: Dict[str, Any]) -> List[List[str]]:
 def _simple_dry_run_attribution_text(rows: List[List[str]]) -> str:
     if not rows:
         return ""
-    market, watchlist, _, *_rest, dominant, diagnosis = rows[0]
-    return f"先看 {market or '-'} / {watchlist or '-'}：本周主要由 {dominant or '-'} 驱动，诊断：{_short_summary_text(str(diagnosis or '-'), max_len=72)}。"
+    market = rows[0][0] if len(rows[0]) > 0 else "-"
+    watchlist = rows[0][1] if len(rows[0]) > 1 else "-"
+    dominant = rows[0][-2] if len(rows[0]) >= 2 else "-"
+    diagnosis = rows[0][-1] if len(rows[0]) >= 1 else "-"
+    control_split = rows[0][-3] if len(rows[0]) >= 3 else ""
+    sentence = (
+        f"先看 {market or '-'} / {watchlist or '-'}：本周主要由 {dominant or '-'} 驱动，"
+        f"诊断：{_short_summary_text(str(diagnosis or '-'), max_len=72)}。"
+    )
+    if str(control_split or "").strip() and str(control_split or "").strip() != "-":
+        sentence += f" 控仓拆解：{_short_summary_text(str(control_split or '-'), max_len=72)}。"
+    return sentence
 
 
 def _simple_risk_review_text(rows: List[List[str]]) -> str:
@@ -6538,6 +6585,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
             _fmt_money(row.get("planned_execution_cost_total")),
             _fmt_money(row.get("execution_cost_total")),
             _fmt_money(row.get("execution_cost_gap")),
+            str(row.get("control_split_text", "") or "-"),
             row.get("dominant_driver", ""),
             row.get("diagnosis", "")[:96] or "-",
         ]
@@ -6785,7 +6833,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
       <h2>Dry Run 周度代理归因</h2>
       <div class="meta simple-only" data-simple-section="dry-run-attribution">{html.escape(_simple_dry_run_attribution_text(dry_run_attribution_rows))}</div>
       <div class="meta advanced-only">这是策略复盘用的代理归因 v1，用来指导调阈值、调信号和调仓位；它会尽量回收到周收益，但不是严格的学术因子归因。</div>
-      {_render_table(["market", "watchlist", "portfolio_id", "weekly_return", "selection", "sizing", "sector", "execution", "market", "plan_cost", "actual_cost", "cost_gap", "dominant", "diagnosis"], dry_run_attribution_rows)}
+      {_render_table(["market", "watchlist", "portfolio_id", "weekly_return", "selection", "sizing", "sector", "execution", "market", "plan_cost", "actual_cost", "cost_gap", "controls", "dominant", "diagnosis"], dry_run_attribution_rows)}
     </section>
     """ if dry_run_attribution_rows else """
     <section class="card overview">
@@ -7877,6 +7925,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
         <div><strong>Suggest Only</strong><span>{int(execution_feedback_summary.get("suggest_only_count", 0) or 0)}</span></div>
         <div><strong>No Feedback</strong><span>{int(execution_feedback_summary.get("no_feedback_count", 0) or 0)}</span></div>
         <div><strong>No Data</strong><span>{int(execution_feedback_summary.get("no_data_count", 0) or 0)}</span></div>
+        <div><strong>Edge Gate</strong><span>{int(execution_feedback_summary.get("no_edge_count", 0) or 0)}</span></div>
         <div><strong>No Orders</strong><span>{int(execution_feedback_summary.get("no_order_count", 0) or 0)}</span></div>
         <div><strong>No Fills</strong><span>{int(execution_feedback_summary.get("no_fill_count", 0) or 0)}</span></div>
         <div><strong>Opp Gate</strong><span>{int(execution_feedback_summary.get("no_opportunity_count", 0) or 0)}</span></div>

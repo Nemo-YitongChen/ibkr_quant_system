@@ -69,6 +69,8 @@ def test_read_csv_rows_and_markdown_writer(tmp_path: Path):
                 "market_rules_summary": "settlement=T+1 | buy_lot=1 | ETF-first below 25000.00",
                 "adaptive_strategy_name": "ACM-RS",
                 "adaptive_strategy_summary": "ACM-RS | RS=126/63/20 | rebalance=weekly | entry_delay=15-30m",
+                "strategy_effective_controls_note": "策略主动转入防守，按 中等资金 上限把有效目标仓位从 36% 收到 30%。",
+                "execution_gate_summary": "另外有 2 笔计划单因执行 gate 暂未下发（流动性 1，人工复核 1）。",
                 "weekly_strategy_note": "本周有 2 个新开仓机会因防守环境被降级为观察，先不把回撤信号直接转成加仓动作。",
             }
         ],
@@ -89,7 +91,26 @@ def test_read_csv_rows_and_markdown_writer(tmp_path: Path):
         feedback_threshold_tuning_rows=[],
         labeling_summary={},
         labeling_skip_rows=[],
-        attribution_rows=[],
+        attribution_rows=[
+            {
+                "portfolio_id": "US:watchlist",
+                "market": "US",
+                "attribution_mode": "proxy_v1",
+                "weekly_return": 0.01,
+                "selection_contribution": 0.004,
+                "sizing_contribution": 0.001,
+                "sector_contribution": 0.001,
+                "execution_contribution": -0.001,
+                "market_contribution": 0.005,
+                "planned_execution_cost_total": 12.0,
+                "execution_cost_total": 10.0,
+                "execution_cost_gap": -2.0,
+                "avg_expected_cost_bps": 10.0,
+                "avg_actual_slippage_bps": 8.0,
+                "control_split_text": "策略 6.0% | 风险 12.0% | 执行 0.0%",
+                "diagnosis": "收益主要由选股质量驱动，优先复盘信号与候选排序。",
+            }
+        ],
         risk_review_rows=[],
         risk_feedback_rows=[],
         execution_session_rows=[],
@@ -103,7 +124,10 @@ def test_read_csv_rows_and_markdown_writer(tmp_path: Path):
     assert "账户档位: 小资金" in text
     assert "市场约束: settlement=T+1" in text
     assert "策略框架: ACM-RS" in text
+    assert "策略控仓: 策略主动转入防守" in text
+    assert "执行阻断: 另外有 2 笔计划单因执行 gate 暂未下发" in text
     assert "周度解释: 本周有 2 个新开仓机会因防守环境被降级为观察" in text
+    assert "控制拆解: 策略 6.0% | 风险 12.0% | 执行 0.0%" in text
 
 
 def test_weekly_strategy_note_prefers_defensive_cap_message() -> None:
@@ -113,5 +137,22 @@ def test_weekly_strategy_note_prefers_defensive_cap_message() -> None:
         adaptive_strategy={"name": "ACM-RS"},
         opportunity_summary={"adaptive_strategy_wait_count": 2},
         market_sentiment={"label": "DEFENSIVE"},
+        strategy_effective_controls_note="",
+        execution_gate_summary="",
     )
     assert "2 个新开仓机会" in note
+
+
+def test_weekly_strategy_note_prefers_strategy_control_and_execution_gate_messages() -> None:
+    note = _weekly_strategy_note(
+        market_rules={"research_only": False},
+        account_profile={"label": "中等资金"},
+        adaptive_strategy={"name": "ACM-RS"},
+        opportunity_summary={"adaptive_strategy_wait_count": 1},
+        market_sentiment={"label": "BALANCED"},
+        strategy_effective_controls_note="策略主动转入防守，按 中等资金 上限把有效目标仓位从 36% 收到 30%。",
+        execution_gate_summary="另外有 2 笔计划单因执行 gate 暂未下发（流动性 1，人工复核 1）。",
+    )
+    assert "策略主动转入防守" in note
+    assert "1 个新开仓机会" in note
+    assert "2 笔计划单因执行 gate" in note

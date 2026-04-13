@@ -9,7 +9,7 @@ import json
 import threading
 from unittest.mock import Mock, patch
 
-from src.analysis.investment import InvestmentScoringConfig, score_investment_candidate
+from src.analysis.investment import InvestmentPlanConfig, InvestmentScoringConfig, make_investment_plan, score_investment_candidate
 from src.analysis.investment_backtest import InvestmentBacktestConfig, compute_investment_backtest_from_bars
 from src.analysis.investment_shadow_ml import (
     InvestmentShadowModelConfig,
@@ -218,6 +218,37 @@ class InvestmentModuleTests(unittest.TestCase):
     def test_placeholder_account_id_detection(self):
         self.assertTrue(_is_placeholder_account_id(""))
         self.assertTrue(_is_placeholder_account_id("UXXXXXXX"))
+
+    def test_make_investment_plan_scales_borderline_rebalance_signal(self):
+        base_row = {
+            "symbol": "AAPL",
+            "action": "ACCUMULATE",
+            "direction": "LONG",
+            "score": 0.36,
+            "score_before_cost": 0.40,
+            "execution_score": 0.20,
+            "mid_scale": 0.80,
+            "accumulate_threshold": 0.35,
+            "hold_threshold": 0.10,
+            "rebalance_flag": 1,
+            "execution_ready": 1,
+        }
+        baseline = make_investment_plan(
+            dict(base_row),
+            vix=12.0,
+            cfg=InvestmentPlanConfig(no_trade_band_pct=0.0, turnover_penalty_scale=0.0),
+        )
+        adjusted = make_investment_plan(
+            dict(base_row),
+            vix=12.0,
+            cfg=InvestmentPlanConfig(no_trade_band_pct=0.05, turnover_penalty_scale=0.20),
+        )
+        self.assertGreater(float(baseline["allocation_mult"]), float(adjusted["allocation_mult"]))
+        self.assertEqual(int(adjusted["plan_no_trade_band_applied"]), 1)
+        self.assertEqual(int(adjusted["plan_turnover_penalty_applied"]), 1)
+        self.assertAlmostEqual(float(adjusted["plan_no_trade_band_threshold"]), 0.35, places=6)
+        self.assertIn("no-trade band", str(adjusted["notes"]))
+        self.assertIn("turnover penalty", str(adjusted["notes"]))
         self.assertFalse(_is_placeholder_account_id("DU1234567"))
 
     def test_backtest_generates_forward_return_summary(self):
@@ -1421,6 +1452,41 @@ class InvestmentModuleTests(unittest.TestCase):
         self.assertEqual(orders[0]["symbol"], "AAA")
         self.assertGreater(float(orders[0]["priority_score"]), 0.0)
 
+    def test_build_investment_rebalance_orders_carry_expected_edge_metrics(self):
+        cfg = InvestmentExecutionConfig(
+            min_cash_buffer_pct=0.0,
+            cash_buffer_floor=0.0,
+            min_trade_value=100.0,
+            max_order_value_pct=1.0,
+            max_orders_per_run=1,
+            account_allocation_pct=1.0,
+            edge_score_to_bps_scale=150.0,
+        )
+        orders = build_investment_rebalance_orders(
+            {},
+            price_map={"AAA": 100.0},
+            target_weights={"AAA": 0.50},
+            broker_equity=10000.0,
+            broker_cash=10000.0,
+            cfg=cfg,
+            lot_size_map={},
+            priority_context_map={
+                "AAA": {
+                    "score": 0.62,
+                    "score_before_cost": 0.66,
+                    "execution_score": 0.20,
+                    "liquidity_score": 0.70,
+                    "expected_edge_threshold": 0.35,
+                    "expected_edge_score": 0.31,
+                    "expected_cost_bps": 12.0,
+                },
+            },
+        )
+        self.assertEqual(len(orders), 1)
+        self.assertAlmostEqual(float(orders[0]["expected_edge_threshold"]), 0.35, places=6)
+        self.assertAlmostEqual(float(orders[0]["expected_edge_score"]), 0.31, places=6)
+        self.assertAlmostEqual(float(orders[0]["expected_edge_bps"]), 46.5, places=6)
+
     def test_build_investment_rebalance_orders_respects_cash_buffer_without_zeroing_target(self):
         cfg = InvestmentExecutionConfig(
             min_cash_buffer_pct=0.08,
@@ -2595,6 +2661,7 @@ class InvestmentModuleTests(unittest.TestCase):
                     adv_max_participation_pct=0.05,
                     adv_split_trigger_pct=0.02,
                     max_slices_per_symbol=4,
+                    edge_gate_enabled=False,
                     manual_review_enabled=True,
                     manual_review_order_value_pct=0.10,
                 ),
@@ -2626,6 +2693,198 @@ class InvestmentModuleTests(unittest.TestCase):
             self.assertTrue(all(str(row.get("execution_order_type") or "") == "LMT" for row in order_rows))
             self.assertEqual(sorted(int(float(row.get("slice_index") or 0)) for row in order_rows), [1, 2, 3])
             self.assertTrue(all(float(row.get("expected_cost_bps") or 0.0) > 0.0 for row in order_rows))
+
+    def test_investment_execution_engine_blocks_entries_when_edge_is_below_cost_buffer(self):
+        class DummyEvent:
+            def __iadd__(self, other):
+                return self
+
+        class SummaryRow:
+            def __init__(self, account: str, tag: str, value: str):
+                self.account = account
+                self.tag = tag
+                self.value = value
+
+        class FakeIB:
+            orderStatusEvent = DummyEvent()
+            errorEvent = DummyEvent()
+            execDetailsEvent = DummyEvent()
+            commissionReportEvent = DummyEvent()
+
+            def accountSummary(self, *args, **kwargs):
+                return [
+                    SummaryRow("DUQ152001", "NetLiquidation", "100000"),
+                    SummaryRow("DUQ152001", "TotalCashValue", "100000"),
+                    SummaryRow("DUQ152001", "BuyingPower", "200000"),
+                ]
+
+            def portfolio(self, *args, **kwargs):
+                return []
+
+            def positions(self, *args, **kwargs):
+                return []
+
+            def sleep(self, *_args, **_kwargs):
+                return None
+
+        with NamedTemporaryFile(suffix=".db") as tmp, TemporaryDirectory() as td:
+            report_dir = Path(td)
+            (report_dir / "investment_candidates.csv").write_text(
+                "\n".join(
+                    [
+                        "symbol,last_close,score,score_before_cost,model_recommendation_score,execution_score,execution_ready,direction,market,avg_daily_dollar_volume,avg_daily_volume,expected_cost_bps,spread_proxy_bps,slippage_proxy_bps,commission_proxy_bps,liquidity_score",
+                        "AAPL,100,0.36,0.38,0.36,0.20,1,LONG,US,100000,1000,18,4,12,2,0.72",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (report_dir / "investment_plan.csv").write_text(
+                "\n".join(
+                    [
+                        "symbol,action,allocation_mult,direction,execution_ready,score,score_before_cost,model_recommendation_score,execution_score,avg_daily_dollar_volume,avg_daily_volume,expected_cost_bps,spread_proxy_bps,slippage_proxy_bps,commission_proxy_bps,liquidity_score,expected_edge_threshold,expected_edge_score",
+                        "AAPL,ACCUMULATE,1.0,LONG,1,0.36,0.38,0.36,0.20,100000,1000,18,4,12,2,0.72,0.35,0.03",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            engine = InvestmentExecutionEngine(
+                ib=FakeIB(),
+                account_id="DUQ152001",
+                storage=Storage(tmp.name),
+                market="US",
+                portfolio_id="US:test",
+                paper_cfg=InvestmentPaperConfig(max_holdings=1, max_single_weight=0.30),
+                execution_cfg=InvestmentExecutionConfig(
+                    min_cash_buffer_pct=0.0,
+                    cash_buffer_floor=0.0,
+                    min_trade_value=100.0,
+                    max_order_value_pct=0.08,
+                    max_orders_per_run=4,
+                    account_allocation_pct=0.30,
+                    edge_gate_enabled=True,
+                    min_expected_edge_bps=18.0,
+                    edge_cost_buffer_bps=6.0,
+                    edge_score_to_bps_scale=140.0,
+                    manual_review_enabled=True,
+                    manual_review_order_value_pct=0.10,
+                ),
+            )
+
+            engine.run(report_dir=str(report_dir), submit=False)
+            summary = json.loads((report_dir / "investment_execution_summary.json").read_text(encoding="utf-8"))
+            plan_rows = list(csv.DictReader((report_dir / "investment_execution_plan.csv").open("r", encoding="utf-8", newline="")))
+
+            self.assertEqual(int(summary["blocked_edge_order_count"]), 1)
+            self.assertEqual(int(summary["order_count"]), 0)
+            self.assertEqual(len(plan_rows), 1)
+            self.assertEqual(str(plan_rows[0]["status"]), "BLOCKED_EDGE")
+            self.assertEqual(str(plan_rows[0]["user_reason_label"]), "边际收益不够覆盖成本")
+            self.assertIn("expected_edge", str(plan_rows[0]["edge_gate_reason"]))
+
+    def test_investment_execution_engine_uses_market_profile_edge_override_from_report(self):
+        class DummyEvent:
+            def __iadd__(self, other):
+                return self
+
+        class SummaryRow:
+            def __init__(self, account: str, tag: str, value: str):
+                self.account = account
+                self.tag = tag
+                self.value = value
+
+        class FakeIB:
+            orderStatusEvent = DummyEvent()
+            errorEvent = DummyEvent()
+            execDetailsEvent = DummyEvent()
+            commissionReportEvent = DummyEvent()
+
+            def accountSummary(self, *args, **kwargs):
+                return [
+                    SummaryRow("DUQ152001", "NetLiquidation", "100000"),
+                    SummaryRow("DUQ152001", "TotalCashValue", "100000"),
+                    SummaryRow("DUQ152001", "BuyingPower", "200000"),
+                ]
+
+            def portfolio(self, *args, **kwargs):
+                return []
+
+            def positions(self, *args, **kwargs):
+                return []
+
+            def sleep(self, *_args, **_kwargs):
+                return None
+
+        with NamedTemporaryFile(suffix=".db") as tmp, TemporaryDirectory() as td:
+            report_dir = Path(td)
+            (report_dir / "investment_candidates.csv").write_text(
+                "\n".join(
+                    [
+                        "symbol,last_close,score,score_before_cost,model_recommendation_score,execution_score,execution_ready,direction,market,avg_daily_dollar_volume,avg_daily_volume,expected_cost_bps,spread_proxy_bps,slippage_proxy_bps,commission_proxy_bps,liquidity_score",
+                        "AAPL,100,0.40,0.41,0.40,0.20,1,LONG,US,100000,1000,18,4,12,2,0.72",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (report_dir / "investment_plan.csv").write_text(
+                "\n".join(
+                    [
+                        "symbol,action,allocation_mult,direction,execution_ready,score,score_before_cost,model_recommendation_score,execution_score,avg_daily_dollar_volume,avg_daily_volume,expected_cost_bps,spread_proxy_bps,slippage_proxy_bps,commission_proxy_bps,liquidity_score,expected_edge_threshold,expected_edge_score",
+                        "AAPL,ACCUMULATE,1.0,LONG,1,0.40,0.41,0.40,0.20,100000,1000,18,4,12,2,0.72,0.35,0.15",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (report_dir / "investment_adaptive_strategy_summary.json").write_text(
+                json.dumps(
+                    {
+                        "adaptive_strategy": {"name": "ACM-RS", "summary_text": "test"},
+                        "summary": {"enabled": True},
+                        "active_market_execution": {
+                            "profile_key": "US",
+                            "overrides": {
+                                "min_expected_edge_bps": 16.0,
+                                "edge_cost_buffer_bps": 2.0,
+                            },
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            engine = InvestmentExecutionEngine(
+                ib=FakeIB(),
+                account_id="DUQ152001",
+                storage=Storage(tmp.name),
+                market="US",
+                portfolio_id="US:test",
+                paper_cfg=InvestmentPaperConfig(max_holdings=1, max_single_weight=0.30),
+                execution_cfg=InvestmentExecutionConfig(
+                    min_cash_buffer_pct=0.0,
+                    cash_buffer_floor=0.0,
+                    min_trade_value=100.0,
+                    max_order_value_pct=0.08,
+                    max_orders_per_run=4,
+                    account_allocation_pct=0.30,
+                    edge_gate_enabled=True,
+                    min_expected_edge_bps=18.0,
+                    edge_cost_buffer_bps=6.0,
+                    edge_score_to_bps_scale=140.0,
+                    manual_review_enabled=False,
+                    shadow_ml_review_enabled=False,
+                    risk_alert_guard_enabled=False,
+                ),
+            )
+
+            engine.run(report_dir=str(report_dir), submit=False)
+            summary = json.loads((report_dir / "investment_execution_summary.json").read_text(encoding="utf-8"))
+            plan_rows = list(csv.DictReader((report_dir / "investment_execution_plan.csv").open("r", encoding="utf-8", newline="")))
+
+            self.assertEqual(int(summary["blocked_edge_order_count"]), 0)
+            self.assertGreater(int(summary["order_count"]), 0)
+            self.assertEqual(str(summary["adaptive_strategy_active_market_execution"]["profile_key"]), "US")
+            self.assertEqual(str(plan_rows[0]["status"]), "PLANNED")
 
     def test_investment_signal_decision_is_structured(self):
         long_row = {

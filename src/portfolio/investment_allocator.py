@@ -51,6 +51,10 @@ class InvestmentExecutionConfig:
     shadow_ml_min_score_auto_submit: float = 0.0
     shadow_ml_min_positive_prob_auto_submit: float = 0.50
     shadow_ml_min_training_samples: int = 80
+    edge_gate_enabled: bool = True
+    min_expected_edge_bps: float = 18.0
+    edge_cost_buffer_bps: float = 6.0
+    edge_score_to_bps_scale: float = 140.0
     adv_max_participation_pct: float = 0.05
     adv_split_trigger_pct: float = 0.02
     max_slices_per_symbol: int = 4
@@ -189,12 +193,20 @@ def _entry_priority_score(
     )
     execution_score = _to_float(context.get("execution_score"), 0.0)
     liquidity_score = _to_float(context.get("liquidity_score"), 0.0)
+    expected_edge_bps = max(
+        0.0,
+        _to_float(
+            context.get("expected_edge_bps"),
+            _to_float(context.get("expected_edge_score"), 0.0) * 140.0,
+        ),
+    )
     expected_cost_bps = max(0.0, _to_float(context.get("expected_cost_bps"), 0.0))
     return float(
         score_net
         + 0.30 * execution_score
         + 0.08 * liquidity_score
         + 0.05 * abs(float(target_weight))
+        + min(expected_edge_bps, 240.0) / 1200.0
         - min(expected_cost_bps, 150.0) / 1000.0
     )
 
@@ -321,6 +333,17 @@ def build_investment_rebalance_orders(
         next_qty = float(current_qty - sell_qty)
         order_value = float(sell_qty * ref_price)
         context = _priority_context(symbol, priority_context_map)
+        expected_edge_threshold = float(_to_float(context.get("expected_edge_threshold"), 0.0))
+        expected_edge_score = float(_to_float(context.get("expected_edge_score"), 0.0))
+        expected_edge_bps = float(
+            max(
+                0.0,
+                _to_float(
+                    context.get("expected_edge_bps"),
+                    expected_edge_score * max(1e-6, float(cfg.edge_score_to_bps_scale)),
+                ),
+            )
+        )
         orders.append(
             {
                 "symbol": symbol,
@@ -343,6 +366,9 @@ def build_investment_rebalance_orders(
                 "score_before_cost": float(_to_float(context.get("score_before_cost"), _to_float(context.get("score"), 0.0))),
                 "model_recommendation_score": float(_to_float(context.get("model_recommendation_score"), _to_float(context.get("score"), 0.0))),
                 "execution_score": float(_to_float(context.get("execution_score"), 0.0)),
+                "expected_edge_threshold": expected_edge_threshold,
+                "expected_edge_score": expected_edge_score,
+                "expected_edge_bps": expected_edge_bps,
                 "expected_cost_bps": float(_to_float(context.get("expected_cost_bps"), 0.0)),
                 "spread_proxy_bps": float(_to_float(context.get("spread_proxy_bps"), 0.0)),
                 "slippage_proxy_bps": float(_to_float(context.get("slippage_proxy_bps"), 0.0)),
@@ -419,6 +445,17 @@ def build_investment_rebalance_orders(
             continue
         next_qty = float(current_qty + buy_qty)
         context = _priority_context(symbol, priority_context_map)
+        expected_edge_threshold = float(_to_float(context.get("expected_edge_threshold"), 0.0))
+        expected_edge_score = float(_to_float(context.get("expected_edge_score"), 0.0))
+        expected_edge_bps = float(
+            max(
+                0.0,
+                _to_float(
+                    context.get("expected_edge_bps"),
+                    expected_edge_score * max(1e-6, float(cfg.edge_score_to_bps_scale)),
+                ),
+            )
+        )
         orders.append(
             {
                 "symbol": symbol,
@@ -441,6 +478,9 @@ def build_investment_rebalance_orders(
                 "score_before_cost": float(_to_float(context.get("score_before_cost"), _to_float(context.get("score"), 0.0))),
                 "model_recommendation_score": float(_to_float(context.get("model_recommendation_score"), _to_float(context.get("score"), 0.0))),
                 "execution_score": float(_to_float(context.get("execution_score"), 0.0)),
+                "expected_edge_threshold": expected_edge_threshold,
+                "expected_edge_score": expected_edge_score,
+                "expected_edge_bps": expected_edge_bps,
                 "expected_cost_bps": float(_to_float(context.get("expected_cost_bps"), 0.0)),
                 "spread_proxy_bps": float(_to_float(context.get("spread_proxy_bps"), 0.0)),
                 "slippage_proxy_bps": float(_to_float(context.get("slippage_proxy_bps"), 0.0)),
