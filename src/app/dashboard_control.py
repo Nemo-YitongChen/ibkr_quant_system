@@ -55,16 +55,25 @@ class DashboardControlService:
             def log_message(self, format: str, *args: Any) -> None:
                 return
 
+            @staticmethod
+            def _is_client_disconnect(exc: BaseException) -> bool:
+                return isinstance(exc, (BrokenPipeError, ConnectionResetError, ConnectionAbortedError))
+
             def _send_json(self, status_code: int, payload: Dict[str, Any]) -> None:
                 body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-                self.send_response(int(status_code))
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Content-Length", str(len(body)))
-                self.send_header("Access-Control-Allow-Origin", "*")
-                self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-                self.send_header("Access-Control-Allow-Headers", "Content-Type")
-                self.end_headers()
-                self.wfile.write(body)
+                try:
+                    self.send_response(int(status_code))
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+                    self.send_header("Access-Control-Allow-Headers", "Content-Type")
+                    self.end_headers()
+                    self.wfile.write(body)
+                except OSError as exc:
+                    if self._is_client_disconnect(exc):
+                        return
+                    raise
 
             def _read_payload(self) -> Dict[str, Any]:
                 try:
