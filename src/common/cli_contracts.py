@@ -122,3 +122,12 @@ class ExecutionReviewSummary(MarketPortfolioRunSummary):
     planned_orders: int
     fills: int
     realized_net_pnl: str
+
+
+@dataclass(frozen=True)
+class WalkForwardSummary(CliSummaryContract):
+    market_count: int
+    window_count: int
+    recommended_patch_count: int
+    best_market: str
+    best_candidate: str

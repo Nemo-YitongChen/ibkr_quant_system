@@ -3,12 +3,14 @@ from __future__ import annotations
 from src.tools import generate_trade_report
 from src.tools import label_investment_snapshots
 from src.tools import review_investment_execution
+from src.tools import review_market_walk_forward
 from src.tools import sync_short_safety_from_ibkr
 
 
 def test_maintenance_cli_help_includes_examples_and_repo_path_note() -> None:
     cases = [
         (review_investment_execution.build_parser, ["ibkr-quant-execution-review", "reports_investment_execution", "Examples:"]),
+        (review_market_walk_forward.build_parser, ["ibkr-quant-walk-forward", "reports_walk_forward", "Examples:"]),
         (label_investment_snapshots.build_parser, ["ibkr-quant-label-snapshots", "reports_investment_labels", "Examples:"]),
         (generate_trade_report.build_parser, ["ibkr-quant-trade-report", "SPY,TSLA,AAPL,MSFT,NVDA", "Examples:"]),
         (sync_short_safety_from_ibkr.build_parser, ["ibkr-quant-short-safety-sync", "--market_data_type", "Examples:"]),
@@ -25,6 +27,10 @@ def test_maintenance_cli_parse_args_accepts_explicit_argv() -> None:
     execution_args = review_investment_execution.parse_args(["--market", "HK", "--days", "7"])
     assert execution_args.market == "HK"
     assert execution_args.days == 7
+
+    walk_forward_args = review_market_walk_forward.parse_args(["--markets", "US,HK", "--train_weeks", "10"])
+    assert walk_forward_args.markets == "US,HK"
+    assert walk_forward_args.train_weeks == 10
 
     labeling_args = label_investment_snapshots.parse_args(["--market", "US", "--stage", "deep", "--limit", "25"])
     assert labeling_args.market == "US"
