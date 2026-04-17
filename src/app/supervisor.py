@@ -19,6 +19,11 @@ from zoneinfo import ZoneInfo
 import yaml
 
 from ..common.logger import get_logger
+from ..common.adaptive_strategy import (
+    adaptive_strategy_config_path,
+    adaptive_strategy_market_profile,
+    load_adaptive_strategy,
+)
 from ..common.markets import market_config_path, market_timezone_name, resolve_market_code
 from ..common.runtime_paths import resolve_repo_path, resolve_scoped_runtime_path, scope_from_ibkr_config
 from ..enrichment.providers import EnrichmentProviders
@@ -53,6 +58,16 @@ EXECUTION_CONTROL_FIELDS = {
     "submit_investment_guard",
 }
 EXECUTION_CONTROL_MODE_VALUES = {"AUTO", "REVIEW_ONLY", "PAUSED"}
+MARKET_PROFILE_PATCH_REVIEW_VALUES = {"APPROVED", "REJECTED", "APPLIED", "CLEAR"}
+MARKET_PROFILE_PATCH_REVIEW_ACTIVE_VALUES = {"APPROVED", "REJECTED", "APPLIED"}
+MARKET_PROFILE_PATCH_REVIEW_HISTORY_LIMIT = 20
+MARKET_PROFILE_PATCH_REVIEW_LABELS = {
+    "PENDING": "待审批",
+    "APPROVED": "已批准",
+    "REJECTED": "已驳回",
+    "APPLIED": "已应用",
+    "CLEAR": "已清除",
+}
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
@@ -79,6 +94,238 @@ def _load_json_file(path: Path) -> Dict[str, Any]:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return {}
+
+
+def _market_profile_review_draft(row: Dict[str, Any] | None) -> Dict[str, Any]:
+    payload = dict(row or {})
+    if not payload:
+        return {}
+    market = resolve_market_code(
+        str(payload.get("market") or payload.get("adaptive_strategy_active_market_profile") or "")
+    )
+    profile = str(payload.get("adaptive_strategy_active_market_profile") or market or "").strip().upper()
+    tuning_target = str(payload.get("market_profile_tuning_target") or "").strip().upper()
+    tuning_action = str(payload.get("market_profile_tuning_action") or "").strip().upper()
+    tuning_note = str(payload.get("market_profile_tuning_note") or "").strip()
+    plan_summary = str(payload.get("adaptive_strategy_active_market_plan_summary") or "").strip()
+    regime_summary = str(payload.get("adaptive_strategy_active_market_regime_summary") or "").strip()
+    execution_summary = str(payload.get("adaptive_strategy_active_market_execution_summary") or "").strip()
+
+    draft: Dict[str, Any] = {
+        "market": market,
+        "profile": profile,
+        "tuning_target": tuning_target,
+        "tuning_action": tuning_action,
+        "review_required": False,
+        "scope": "WATCH",
+        "scope_label": "继续观察",
+        "summary": tuning_note or "当前还没有足够强的信号去调整 market profile。",
+        "ready_for_manual_apply": bool(int(payload.get("market_profile_ready_for_manual_apply", 0) or 0)),
+        "readiness_label": str(payload.get("market_profile_readiness_label") or ""),
+        "readiness_summary": str(payload.get("market_profile_readiness_summary") or ""),
+        "items": [],
+    }
+
+    if tuning_action == "REVIEW_EXECUTION_GATE" or tuning_target == "EXECUTION_GATE":
+        draft.update(
+            {
+                "review_required": True,
+                "scope": "EXECUTION",
+                "scope_label": "执行门槛",
+                "items": [
+                    {
+                        "config_path": f"market_profiles.{profile}.min_expected_edge_bps",
+                        "field": "min_expected_edge_bps",
+                        "field_label": "min expected edge",
+                        "change_hint": "RELAX_LOWER",
+                        "change_hint_label": "按放松方向温和下调",
+                        "current_summary": execution_summary,
+                    },
+                    {
+                        "config_path": f"market_profiles.{profile}.edge_cost_buffer_bps",
+                        "field": "edge_cost_buffer_bps",
+                        "field_label": "edge cost buffer",
+                        "change_hint": "RELAX_LOWER",
+                        "change_hint_label": "按放松方向温和下调",
+                        "current_summary": execution_summary,
+                    },
+                ],
+            }
+        )
+        draft["summary"] = (
+            f"建议复核 {market}/{profile} 执行门槛："
+            "min_expected_edge_bps, edge_cost_buffer_bps。"
+            f"当前执行档案={execution_summary or '-'}。"
+            f"{tuning_note}"
+        )
+    elif tuning_action == "REVIEW_REGIME_PLAN" or tuning_target == "REGIME_PLAN":
+        draft.update(
+            {
+                "review_required": True,
+                "scope": "REGIME_PLAN",
+                "scope_label": "Regime / 计划参数",
+                "items": [
+                    {
+                        "config_path": f"market_profiles.{profile}.regime_risk_on_threshold",
+                        "field": "regime_risk_on_threshold",
+                        "field_label": "risk_on threshold",
+                        "change_hint": "RECALIBRATE_RELAX",
+                        "change_hint_label": "按放松方向复核",
+                        "current_summary": regime_summary,
+                    },
+                    {
+                        "config_path": f"market_profiles.{profile}.regime_hard_risk_off_threshold",
+                        "field": "regime_hard_risk_off_threshold",
+                        "field_label": "hard risk-off threshold",
+                        "change_hint": "RECALIBRATE_RELAX",
+                        "change_hint_label": "按放松方向复核",
+                        "current_summary": regime_summary,
+                    },
+                    {
+                        "config_path": f"market_profiles.{profile}.no_trade_band_pct",
+                        "field": "no_trade_band_pct",
+                        "field_label": "no-trade band",
+                        "change_hint": "REDUCE",
+                        "change_hint_label": "优先缩小",
+                        "current_summary": plan_summary,
+                    },
+                    {
+                        "config_path": f"market_profiles.{profile}.turnover_penalty_scale",
+                        "field": "turnover_penalty_scale",
+                        "field_label": "turnover penalty",
+                        "change_hint": "REDUCE",
+                        "change_hint_label": "优先降低",
+                        "current_summary": plan_summary,
+                    },
+                ],
+            }
+        )
+        draft["summary"] = (
+            f"建议复核 {market}/{profile} regime/计划参数："
+            "regime_risk_on_threshold, regime_hard_risk_off_threshold, no_trade_band_pct, turnover_penalty_scale。"
+            f"当前计划档案={plan_summary or '-'}；当前 regime 档案={regime_summary or '-'}。"
+            f"{tuning_note}"
+        )
+    elif tuning_action == "KEEP_RISK_OVERLAY":
+        draft.update(
+            {
+                "scope": "RISK_OVERLAY",
+                "scope_label": "风险 Overlay",
+                "summary": f"当前更像是风险 overlay 主导，暂不建议改 {market}/{profile} 的 market profile。{tuning_note}",
+            }
+        )
+    elif tuning_action in {"KEEP_EXECUTION_RELAX", "KEEP_RISK_RELAX"}:
+        draft.update(
+            {
+                "scope": tuning_target or "WATCH",
+                "scope_label": "继续试运行",
+                "summary": f"当前建议继续保留这轮放宽，不急着重写 {market}/{profile} 的 market profile。{tuning_note}",
+            }
+        )
+    if draft.get("review_required", False) and not str(draft.get("readiness_summary") or "").strip():
+        draft["readiness_label"] = str(draft.get("readiness_label") or "OBSERVE_COHORT")
+        draft["readiness_summary"] = "当前仅连续 1 周维持同方向，先继续观察到至少 2 周再决定是否人工应用。"
+    return draft
+
+
+def _market_profile_patch_value(field: str, current_value: Any, change_hint: str) -> Any:
+    try:
+        current = float(current_value)
+    except Exception:
+        return current_value
+    direction = str(change_hint or "").strip().upper()
+    step_map = {
+        "min_expected_edge_bps": 2.0,
+        "edge_cost_buffer_bps": 1.0,
+        "regime_risk_on_threshold": 0.02,
+        "regime_hard_risk_off_threshold": 0.02,
+        "no_trade_band_pct": 0.005,
+        "turnover_penalty_scale": 0.03,
+    }
+    bounds_map = {
+        "min_expected_edge_bps": (4.0, 60.0, 1),
+        "edge_cost_buffer_bps": (1.0, 20.0, 1),
+        "regime_risk_on_threshold": (0.20, 0.90, 2),
+        "regime_hard_risk_off_threshold": (0.05, 0.60, 2),
+        "no_trade_band_pct": (0.005, 0.20, 3),
+        "turnover_penalty_scale": (0.0, 0.60, 2),
+    }
+    step = float(step_map.get(field, 0.0) or 0.0)
+    lower, upper, precision = bounds_map.get(field, (-1e9, 1e9, 4))
+    if direction in {"RELAX_LOWER", "REDUCE", "RECALIBRATE_RELAX"}:
+        proposed = current - step
+    elif direction in {"TIGHTEN_HIGHER", "INCREASE"}:
+        proposed = current + step
+    else:
+        proposed = current
+    proposed = _clamp_float(proposed, lower, upper)
+    return round(float(proposed), int(precision))
+
+
+def _market_profile_patch_priority(scope: str, field: str) -> tuple[int, str, str, str]:
+    scope_code = str(scope or "").strip().upper()
+    field_name = str(field or "").strip()
+    if scope_code == "EXECUTION":
+        ranking = {
+            "edge_cost_buffer_bps": (1, "先改低风险 buffer", "LOW", "低风险"),
+            "min_expected_edge_bps": (2, "再改主门槛", "MEDIUM", "中风险"),
+        }
+        return ranking.get(field_name, (9, "后续再评估", "MEDIUM", "中风险"))
+    if scope_code == "REGIME_PLAN":
+        ranking = {
+            "no_trade_band_pct": (1, "先改 no-trade band", "LOW", "低风险"),
+            "turnover_penalty_scale": (2, "再改 turnover penalty", "LOW", "低风险"),
+            "regime_risk_on_threshold": (3, "然后复核 risk-on", "MEDIUM", "中风险"),
+            "regime_hard_risk_off_threshold": (4, "最后再动 hard-off", "HIGH", "高风险"),
+        }
+        return ranking.get(field_name, (9, "后续再评估", "MEDIUM", "中风险"))
+    return (9, "后续再评估", "MEDIUM", "中风险")
+
+
+def _market_profile_manual_apply_patch(patch: Dict[str, Any] | None) -> Dict[str, Any]:
+    payload = dict(patch or {})
+    if not payload:
+        return {}
+    primary_item = dict(payload.get("primary_item") or {})
+    items = [dict(row) for row in list(payload.get("items") or []) if isinstance(row, dict)]
+    if not primary_item and items:
+        primary_item = dict(items[0])
+    if not primary_item:
+        return {}
+    ready = bool(payload.get("ready_for_manual_apply", False))
+    deferred_items = items[1:] if len(items) > 1 else []
+    candidate_text = (
+        f"{str(primary_item.get('field') or '')}: "
+        f"{primary_item.get('current_value')} -> {primary_item.get('suggested_value')}"
+    )
+    if ready:
+        summary = (
+            f"建议先人工应用 1 项：{candidate_text}；"
+            f"其余 {len(deferred_items)} 项继续观察 {int(payload.get('observe_window_weeks', 2) or 2)} 周。"
+        )
+    else:
+        summary = f"当前未到人工应用阶段；若 cohort 持续一致，优先先人工应用 {candidate_text}。"
+    return {
+        "mode": "PRIMARY_ONLY" if ready else "OBSERVE_ONLY",
+        "ready": ready,
+        "market": str(payload.get("market") or ""),
+        "profile": str(payload.get("profile") or ""),
+        "config_file": str(payload.get("config_file") or ""),
+        "observe_window_weeks": int(payload.get("observe_window_weeks", 2) or 2),
+        "apply_item_count": 1 if ready else 0,
+        "deferred_item_count": int(len(deferred_items)),
+        "candidate_item": primary_item,
+        "apply_items": [primary_item] if ready else [],
+        "deferred_items": deferred_items,
+        "summary": summary,
+    }
+
+
+def _file_sha1(path: Path) -> str:
+    try:
+        return hashlib.sha1(path.read_bytes()).hexdigest()
+    except Exception:
+        return ""
 
 
 def _slugify_name(name: str) -> str:
@@ -161,6 +408,7 @@ class Supervisor:
         self._last_market_summary_signatures: Dict[str, str] = {}
         self._dashboard_opened_once = False
         self._runtime_scope_cache: Dict[str, Any] = {}
+        self._adaptive_strategy_cache: Dict[str, Any] = {}
         self._cycle_running = False
         self._dashboard_control_lock = threading.Lock()
         self._dashboard_control_service: Optional[DashboardControlService] = None
@@ -353,6 +601,13 @@ class Supervisor:
     def _dashboard_control_state_path(self) -> Path:
         return self._summary_output_dir() / "dashboard_control_state.json"
 
+    def _market_profile_manual_patch_artifact_paths(self) -> tuple[Path, Path]:
+        out_dir = self._summary_output_dir()
+        return (
+            out_dir / "market_profile_manual_patch_candidates.json",
+            out_dir / "market_profile_manual_patch_candidates.yaml",
+        )
+
     def _dashboard_control_base_flags(self, item: Dict[str, Any]) -> Dict[str, bool]:
         base = item.get("_dashboard_control_base_flags")
         if isinstance(base, dict) and base:
@@ -414,6 +669,13 @@ class Supervisor:
         shadow_row = self._weekly_feedback_row_for_item(item, report_market)
         risk_row = self._weekly_risk_feedback_row_for_item(item, report_market)
         execution_row = self._weekly_execution_feedback_row_for_item(item, report_market)
+        market_profile_tuning_row = self._weekly_market_profile_tuning_row_for_item(item, report_market)
+        market_profile_review_draft = _market_profile_review_draft(market_profile_tuning_row)
+        market_profile_suggested_patch = self._market_profile_suggested_patch_for_item(
+            item,
+            report_market,
+            review_draft=market_profile_review_draft,
+        )
         automation_rows = self._weekly_feedback_automation_rows_for_item(item, report_market)
         threshold_rows = self._weekly_feedback_threshold_suggestion_rows_for_market(report_market)
         tuning_rows = self._weekly_feedback_threshold_tuning_rows_for_market(report_market)
@@ -427,6 +689,12 @@ class Supervisor:
             payload["risk_feedback"] = dict(risk_row)
         if execution_row:
             payload["execution_feedback"] = dict(execution_row)
+        if market_profile_tuning_row:
+            payload["market_profile_tuning"] = dict(market_profile_tuning_row)
+        if market_profile_review_draft:
+            payload["market_profile_review_draft"] = dict(market_profile_review_draft)
+        if market_profile_suggested_patch:
+            payload["market_profile_suggested_patch"] = dict(market_profile_suggested_patch)
         if automation_rows:
             payload["feedback_automation"] = dict(automation_rows)
         if threshold_rows:
@@ -450,6 +718,211 @@ class Supervisor:
     def _weekly_feedback_confirmed_ts_for_item(self, item: Dict[str, Any]) -> str:
         return str(item.get("_dashboard_control_weekly_feedback_confirmed_ts", "") or "").strip()
 
+    def _market_profile_patch_review_evidence_for_item(
+        self,
+        item: Dict[str, Any],
+        report_market: str,
+        *,
+        feedback_signature: str,
+        suggested_patch: Dict[str, Any] | None = None,
+        reviewed_ts: str = "",
+        config_commit_sha: str = "",
+        config_diff_note: str = "",
+        operator_note: str = "",
+    ) -> Dict[str, Any]:
+        patch = dict(suggested_patch or {})
+        primary_item = dict(patch.get("primary_item") or {})
+        config_file = str(patch.get("config_file") or self._adaptive_strategy_config_path_for(item, report_market))
+        config_path = Path(config_file)
+        git_head = ""
+        try:
+            completed = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=str(BASE_DIR),
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=2.0,
+            )
+            if completed.returncode == 0:
+                git_head = str(completed.stdout or "").strip()
+        except Exception:
+            git_head = ""
+        summary_bits = [
+            f"config={config_path.name or config_file}",
+            f"sha1={_file_sha1(config_path)[:10] or '-'}",
+        ]
+        commit_sha = str(config_commit_sha or git_head or "").strip()
+        if commit_sha:
+            summary_bits.append(f"git={commit_sha[:10]}")
+        if str(primary_item.get("config_path") or "").strip():
+            summary_bits.append(f"field={str(primary_item.get('config_path') or '')}")
+        diff_note = str(config_diff_note or "").strip()
+        user_note = str(operator_note or "").strip()
+        if diff_note:
+            summary_bits.append(f"diff={diff_note}")
+        if user_note:
+            summary_bits.append(f"note={user_note}")
+        return {
+            "captured_ts": str(reviewed_ts or datetime.now(self.tz).isoformat()),
+            "feedback_signature": str(feedback_signature or ""),
+            "config_file": str(config_file),
+            "config_file_sha1": str(_file_sha1(config_path)),
+            "git_head": str(git_head),
+            "config_commit_sha": str(commit_sha),
+            "config_diff_note": diff_note,
+            "operator_note": user_note,
+            "market": str(report_market or ""),
+            "profile": str(patch.get("profile") or ""),
+            "primary_item": primary_item,
+            "summary": " | ".join(summary_bits),
+        }
+
+    def _market_profile_patch_review_history_for_item(
+        self,
+        item: Dict[str, Any],
+        report_market: str,
+        *,
+        feedback_signature: str = "",
+        review_required: bool = False,
+    ) -> List[Dict[str, Any]]:
+        if not bool(review_required):
+            return []
+        current_signature = str(feedback_signature or self._weekly_feedback_signature_for_item(item, report_market) or "").strip()
+        raw_events = list(item.get("_dashboard_control_market_profile_patch_review_history") or [])
+        history: List[Dict[str, Any]] = []
+        for raw in raw_events:
+            row = dict(raw or {})
+            status = str(row.get("status") or "").strip().upper()
+            if status not in MARKET_PROFILE_PATCH_REVIEW_VALUES:
+                continue
+            event_signature = str(row.get("feedback_signature") or "").strip()
+            if current_signature and event_signature and event_signature != current_signature:
+                continue
+            ts = str(row.get("ts") or "").strip()
+            status_label = str(row.get("status_label") or MARKET_PROFILE_PATCH_REVIEW_LABELS.get(status, status or "-"))
+            evidence_summary = str(row.get("evidence_summary") or "").strip()
+            summary = str(row.get("summary") or "").strip()
+            if not summary:
+                summary = status_label
+                if ts:
+                    summary = f"{summary} @ {ts[:19]}"
+                if evidence_summary:
+                    summary = f"{summary} | {evidence_summary}"
+            history.append(
+                {
+                    "ts": ts,
+                    "status": status,
+                    "status_label": status_label,
+                    "feedback_signature": event_signature,
+                    "evidence_summary": evidence_summary,
+                    "config_commit_sha": str(row.get("config_commit_sha") or "").strip(),
+                    "config_diff_note": str(row.get("config_diff_note") or "").strip(),
+                    "operator_note": str(row.get("operator_note") or "").strip(),
+                    "summary": summary,
+                }
+            )
+        return history[-MARKET_PROFILE_PATCH_REVIEW_HISTORY_LIMIT:]
+
+    def _market_profile_patch_review_history_summary(self, history: List[Dict[str, Any]] | None, *, limit: int = 3) -> str:
+        rows = list(history or [])
+        if not rows:
+            return ""
+        recent_rows = rows[-max(int(limit or 0), 1) :]
+        return " -> ".join(str(dict(row).get("summary") or "").strip() for row in recent_rows if str(dict(row).get("summary") or "").strip())
+
+    def _append_market_profile_patch_review_history_for_item(
+        self,
+        item: Dict[str, Any],
+        *,
+        feedback_signature: str,
+        decision: str,
+        reviewed_ts: str,
+        evidence: Dict[str, Any] | None = None,
+    ) -> List[Dict[str, Any]]:
+        status = str(decision or "").strip().upper()
+        if status not in MARKET_PROFILE_PATCH_REVIEW_VALUES:
+            return list(item.get("_dashboard_control_market_profile_patch_review_history") or [])
+        evidence_payload = dict(evidence or {})
+        status_label = str(MARKET_PROFILE_PATCH_REVIEW_LABELS.get(status, status or "-"))
+        evidence_summary = str(evidence_payload.get("summary") or "").strip()
+        summary = status_label
+        if reviewed_ts:
+            summary = f"{summary} @ {reviewed_ts[:19]}"
+        if evidence_summary:
+            summary = f"{summary} | {evidence_summary}"
+        history = list(item.get("_dashboard_control_market_profile_patch_review_history") or [])
+        history.append(
+            {
+                "ts": str(reviewed_ts or ""),
+                "status": status,
+                "status_label": status_label,
+                "feedback_signature": str(feedback_signature or ""),
+                "evidence_summary": evidence_summary,
+                "config_commit_sha": str(evidence_payload.get("config_commit_sha") or "").strip(),
+                "config_diff_note": str(evidence_payload.get("config_diff_note") or "").strip(),
+                "operator_note": str(evidence_payload.get("operator_note") or "").strip(),
+                "summary": summary,
+            }
+        )
+        history = history[-MARKET_PROFILE_PATCH_REVIEW_HISTORY_LIMIT:]
+        item["_dashboard_control_market_profile_patch_review_history"] = history
+        return history
+
+    def _market_profile_patch_review_state_for_item(
+        self,
+        item: Dict[str, Any],
+        report_market: str,
+        *,
+        feedback_signature: str = "",
+        review_required: bool = False,
+    ) -> Dict[str, Any]:
+        if not bool(review_required):
+            return {
+                "status": "",
+                "status_label": "-",
+                "status_summary": "-",
+                "reviewed_ts": "",
+                "applied_ts": "",
+                "pending": False,
+                "signature": "",
+                "evidence": {},
+                "evidence_summary": "",
+            }
+        current_signature = str(feedback_signature or self._weekly_feedback_signature_for_item(item, report_market) or "").strip()
+        stored_signature = str(item.get("_dashboard_control_market_profile_patch_review_signature", "") or "").strip()
+        stored_status = str(item.get("_dashboard_control_market_profile_patch_review_status", "") or "").strip().upper()
+        stored_ts = str(item.get("_dashboard_control_market_profile_patch_review_ts", "") or "").strip()
+        stored_evidence = dict(item.get("_dashboard_control_market_profile_patch_review_evidence") or {})
+        if current_signature and stored_signature == current_signature and stored_status in MARKET_PROFILE_PATCH_REVIEW_ACTIVE_VALUES:
+            label = str(MARKET_PROFILE_PATCH_REVIEW_LABELS.get(stored_status, stored_status or "待审批"))
+            summary = f"{label} @ {stored_ts[:19]}" if stored_ts else label
+            evidence_summary = str(stored_evidence.get("summary") or "")
+            if stored_status == "APPLIED" and evidence_summary:
+                summary = f"{summary} | {evidence_summary}"
+            return {
+                "status": stored_status,
+                "status_label": label,
+                "status_summary": summary,
+                "reviewed_ts": stored_ts,
+                "applied_ts": stored_ts if stored_status == "APPLIED" else "",
+                "pending": False,
+                "signature": current_signature,
+                "evidence": stored_evidence,
+                "evidence_summary": evidence_summary,
+            }
+        return {
+            "status": "PENDING",
+            "status_label": "待审批",
+            "status_summary": "待审批",
+            "reviewed_ts": "",
+            "applied_ts": "",
+            "pending": True,
+            "signature": current_signature,
+            "evidence": {},
+            "evidence_summary": "",
+        }
+
     def _dashboard_control_portfolios(self) -> Dict[str, Dict[str, Any]]:
         rows: Dict[str, Dict[str, Any]] = {}
         for market in self.markets:
@@ -462,6 +935,28 @@ class Supervisor:
                 portfolio_id = self._portfolio_id_for_item(item, report_market)
                 feedback_signature = self._weekly_feedback_signature_for_item(item, report_market)
                 confirmed_signature = self._weekly_feedback_confirmed_signature_for_item(item)
+                market_profile_tuning_row = self._weekly_market_profile_tuning_row_for_item(item, report_market)
+                market_profile_review_draft = _market_profile_review_draft(market_profile_tuning_row)
+                market_profile_suggested_patch = self._market_profile_suggested_patch_for_item(
+                    item,
+                    report_market,
+                    review_draft=market_profile_review_draft,
+                )
+                market_profile_review_state = self._market_profile_patch_review_state_for_item(
+                    item,
+                    report_market,
+                    feedback_signature=feedback_signature,
+                    review_required=bool(market_profile_review_draft.get("review_required", False)),
+                )
+                market_profile_review_history = self._market_profile_patch_review_history_for_item(
+                    item,
+                    report_market,
+                    feedback_signature=feedback_signature,
+                    review_required=bool(market_profile_review_draft.get("review_required", False)),
+                )
+                market_profile_review_history_summary = self._market_profile_patch_review_history_summary(
+                    market_profile_review_history
+                )
                 live_auto_apply_enabled = bool(self.cfg.get("weekly_review_auto_apply_live", False))
                 automation_rows = self._weekly_feedback_automation_rows_for_item(item, report_market)
                 confirmable_feedback_present = (
@@ -493,6 +988,79 @@ class Supervisor:
                         kind: str(dict(row).get("calibration_apply_mode") or "")
                         for kind, row in automation_rows.items()
                     },
+                    "weekly_feedback_market_profile_tuning_action": str(
+                        market_profile_tuning_row.get("market_profile_tuning_action") or ""
+                    ),
+                    "weekly_feedback_market_profile_tuning_target": str(
+                        market_profile_tuning_row.get("market_profile_tuning_target") or ""
+                    ),
+                    "weekly_feedback_market_profile_tuning_note": str(
+                        market_profile_tuning_row.get("market_profile_tuning_note") or ""
+                    ),
+                    "weekly_feedback_market_profile_review_required": bool(
+                        market_profile_review_draft.get("review_required", False)
+                    ),
+                    "weekly_feedback_market_profile_review_summary": str(
+                        market_profile_review_draft.get("summary") or ""
+                    ),
+                    "weekly_feedback_market_profile_review_draft": dict(market_profile_review_draft),
+                    "weekly_feedback_market_profile_suggested_patch_summary": str(
+                        market_profile_suggested_patch.get("summary") or ""
+                    ),
+                    "weekly_feedback_market_profile_primary_summary": str(
+                        market_profile_suggested_patch.get("primary_summary") or ""
+                    ),
+                    "weekly_feedback_market_profile_primary_item": dict(
+                        market_profile_suggested_patch.get("primary_item") or {}
+                    ),
+                    "weekly_feedback_market_profile_manual_apply_summary": str(
+                        market_profile_suggested_patch.get("manual_apply_summary") or ""
+                    ),
+                    "weekly_feedback_market_profile_manual_apply_patch": dict(
+                        market_profile_suggested_patch.get("manual_apply_patch") or {}
+                    ),
+                    "weekly_feedback_market_profile_review_status": str(
+                        market_profile_review_state.get("status") or ""
+                    ),
+                    "weekly_feedback_market_profile_review_status_label": str(
+                        market_profile_review_state.get("status_label") or "-"
+                    ),
+                    "weekly_feedback_market_profile_review_status_summary": str(
+                        market_profile_review_state.get("status_summary") or "-"
+                    ),
+                    "weekly_feedback_market_profile_reviewed_ts": str(
+                        market_profile_review_state.get("reviewed_ts") or ""
+                    ),
+                    "weekly_feedback_market_profile_applied_ts": str(
+                        market_profile_review_state.get("applied_ts") or ""
+                    ),
+                    "weekly_feedback_market_profile_review_evidence_summary": str(
+                        market_profile_review_state.get("evidence_summary") or ""
+                    ),
+                    "weekly_feedback_market_profile_review_evidence": dict(
+                        market_profile_review_state.get("evidence") or {}
+                    ),
+                    "weekly_feedback_market_profile_review_history_summary": str(
+                        market_profile_review_history_summary or ""
+                    ),
+                    "weekly_feedback_market_profile_review_history": list(
+                        market_profile_review_history
+                    ),
+                    "weekly_feedback_market_profile_review_pending": bool(
+                        market_profile_review_state.get("pending", False)
+                    ),
+                    "weekly_feedback_market_profile_review_signature": str(
+                        market_profile_review_state.get("signature") or ""
+                    ),
+                    "weekly_feedback_market_profile_suggested_patch": dict(market_profile_suggested_patch),
+                    "weekly_feedback_market_profile_ready_for_manual_apply": bool(
+                        market_profile_suggested_patch.get("ready_for_manual_apply", False)
+                    ),
+                    "weekly_feedback_market_profile_readiness_summary": str(
+                        market_profile_suggested_patch.get("readiness_summary")
+                        or market_profile_review_draft.get("readiness_summary")
+                        or ""
+                    ),
                     "weekly_feedback_pending_live_confirm": bool(
                         account_mode == "live"
                         and feedback_signature
@@ -505,6 +1073,7 @@ class Supervisor:
         return rows
 
     def _dashboard_control_state_payload(self, *, service_status: str = "running") -> Dict[str, Any]:
+        manual_patch_json_path, manual_patch_yaml_path = self._market_profile_manual_patch_artifact_paths()
         return {
             "ts": datetime.now(self.tz).isoformat(),
             "service": {
@@ -523,8 +1092,90 @@ class Supervisor:
                 "last_error": str(self._dashboard_control_last_error or ""),
                 "preflight_summary_path": str(self._preflight_output_dir() / "supervisor_preflight_summary.json"),
             },
+            "artifacts": {
+                "dashboard_control_state_path": str(self._dashboard_control_state_path()),
+                "market_profile_manual_patch_json_path": str(manual_patch_json_path),
+                "market_profile_manual_patch_yaml_path": str(manual_patch_yaml_path),
+            },
             "portfolios": self._dashboard_control_portfolios(),
         }
+
+    def _market_profile_manual_patch_artifact_payload(self, control_payload: Dict[str, Any] | None = None) -> Dict[str, Any]:
+        payload = dict(control_payload or {})
+        json_path, yaml_path = self._market_profile_manual_patch_artifact_paths()
+        service = dict(payload.get("service") or {})
+        portfolios = dict(payload.get("portfolios") or {})
+        candidates: List[Dict[str, Any]] = []
+        for portfolio_id, raw in portfolios.items():
+            row = dict(raw or {})
+            suggested_patch = dict(row.get("weekly_feedback_market_profile_suggested_patch") or {})
+            manual_apply_patch = dict(row.get("weekly_feedback_market_profile_manual_apply_patch") or {})
+            if not bool(row.get("weekly_feedback_market_profile_review_required", False)) and not suggested_patch and not manual_apply_patch:
+                continue
+            candidates.append(
+                {
+                    "portfolio_id": str(portfolio_id),
+                    "market": str(row.get("market") or ""),
+                    "watchlist": str(row.get("watchlist") or ""),
+                    "account_mode": str(row.get("account_mode") or ""),
+                    "execution_control_mode": str(row.get("execution_control_mode") or ""),
+                    "tuning_action": str(row.get("weekly_feedback_market_profile_tuning_action") or ""),
+                    "tuning_target": str(row.get("weekly_feedback_market_profile_tuning_target") or ""),
+                    "tuning_note": str(row.get("weekly_feedback_market_profile_tuning_note") or ""),
+                    "review_required": bool(row.get("weekly_feedback_market_profile_review_required", False)),
+                    "review_summary": str(row.get("weekly_feedback_market_profile_review_summary") or ""),
+                    "suggested_patch_summary": str(row.get("weekly_feedback_market_profile_suggested_patch_summary") or ""),
+                    "primary_summary": str(row.get("weekly_feedback_market_profile_primary_summary") or ""),
+                    "manual_apply_summary": str(row.get("weekly_feedback_market_profile_manual_apply_summary") or ""),
+                    "review_status": str(row.get("weekly_feedback_market_profile_review_status") or ""),
+                    "review_status_label": str(row.get("weekly_feedback_market_profile_review_status_label") or "-"),
+                    "review_status_summary": str(row.get("weekly_feedback_market_profile_review_status_summary") or "-"),
+                    "reviewed_ts": str(row.get("weekly_feedback_market_profile_reviewed_ts") or ""),
+                    "applied_ts": str(row.get("weekly_feedback_market_profile_applied_ts") or ""),
+                    "review_evidence_summary": str(row.get("weekly_feedback_market_profile_review_evidence_summary") or ""),
+                    "review_evidence": dict(row.get("weekly_feedback_market_profile_review_evidence") or {}),
+                    "review_history_summary": str(row.get("weekly_feedback_market_profile_review_history_summary") or ""),
+                    "review_history": list(row.get("weekly_feedback_market_profile_review_history") or []),
+                    "ready_for_manual_apply": bool(row.get("weekly_feedback_market_profile_ready_for_manual_apply", False)),
+                    "readiness_summary": str(row.get("weekly_feedback_market_profile_readiness_summary") or ""),
+                    "manual_apply_patch": manual_apply_patch,
+                    "suggested_patch": suggested_patch,
+                }
+            )
+        candidates.sort(
+            key=lambda row: (
+                0 if bool(row.get("ready_for_manual_apply", False)) else 1,
+                str(row.get("market") or ""),
+                str(row.get("portfolio_id") or ""),
+            )
+        )
+        return {
+            "ts": str(payload.get("ts") or datetime.now(self.tz).isoformat()),
+            "service_status": str(service.get("status") or ""),
+            "dashboard_control_state_path": str(self._dashboard_control_state_path()),
+            "artifact_paths": {
+                "json": str(json_path),
+                "yaml": str(yaml_path),
+            },
+            "candidate_count": int(len(candidates)),
+            "ready_for_manual_apply_count": int(sum(1 for row in candidates if bool(row.get("ready_for_manual_apply", False)))),
+            "patch_candidates": candidates,
+        }
+
+    def _write_market_profile_manual_patch_artifacts(self, control_payload: Dict[str, Any] | None = None) -> None:
+        payload = self._market_profile_manual_patch_artifact_payload(control_payload)
+        json_path, yaml_path = self._market_profile_manual_patch_artifact_paths()
+        try:
+            json_path.parent.mkdir(parents=True, exist_ok=True)
+            json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            yaml_path.write_text(yaml.safe_dump(payload, sort_keys=False, allow_unicode=True), encoding="utf-8")
+        except OSError as e:
+            log.warning(
+                "Failed to write market profile manual patch artifacts: json=%s yaml=%s error=%s",
+                json_path,
+                yaml_path,
+                e,
+            )
 
     def _write_dashboard_control_state(self, *, service_status: str = "running") -> None:
         if not self._dashboard_control_enabled():
@@ -534,6 +1185,7 @@ class Supervisor:
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            self._write_market_profile_manual_patch_artifacts(payload)
         except OSError as e:
             log.warning("Failed to write dashboard control state: path=%s error=%s", path, e)
 
@@ -564,6 +1216,26 @@ class Supervisor:
                     item["_dashboard_control_weekly_feedback_confirmed_signature"] = str(row.get("weekly_feedback_confirmed_signature") or "")
                 if "weekly_feedback_confirmed_ts" in row:
                     item["_dashboard_control_weekly_feedback_confirmed_ts"] = str(row.get("weekly_feedback_confirmed_ts") or "")
+                if "weekly_feedback_market_profile_review_signature" in row:
+                    item["_dashboard_control_market_profile_patch_review_signature"] = str(
+                        row.get("weekly_feedback_market_profile_review_signature") or ""
+                    )
+                if "weekly_feedback_market_profile_review_status" in row:
+                    item["_dashboard_control_market_profile_patch_review_status"] = str(
+                        row.get("weekly_feedback_market_profile_review_status") or ""
+                    )
+                if "weekly_feedback_market_profile_reviewed_ts" in row:
+                    item["_dashboard_control_market_profile_patch_review_ts"] = str(
+                        row.get("weekly_feedback_market_profile_reviewed_ts") or ""
+                    )
+                if "weekly_feedback_market_profile_review_evidence" in row:
+                    item["_dashboard_control_market_profile_patch_review_evidence"] = dict(
+                        row.get("weekly_feedback_market_profile_review_evidence") or {}
+                    )
+                if "weekly_feedback_market_profile_review_history" in row:
+                    item["_dashboard_control_market_profile_patch_review_history"] = list(
+                        row.get("weekly_feedback_market_profile_review_history") or []
+                    )
 
     def _set_dashboard_control_flag(self, *, portfolio_id: str, field: str, value: bool) -> Dict[str, Any]:
         target_portfolio = str(portfolio_id or "").strip()
@@ -748,6 +1420,105 @@ class Supervisor:
             self._refresh_dashboard()
         return result
 
+    def _dashboard_control_review_market_profile_patch(self, payload: Dict[str, Any] | None = None) -> Dict[str, Any]:
+        row = dict(payload or {})
+        target_portfolio = str(row.get("portfolio_id", "") or "").strip()
+        decision = str(row.get("status") or row.get("decision") or "").strip().upper()
+        config_commit_sha = str(row.get("config_commit_sha", "") or "").strip()
+        config_diff_note = str(row.get("config_diff_note", "") or "").strip()
+        operator_note = str(row.get("operator_note", "") or "").strip()
+        if not target_portfolio:
+            return {"ok": False, "error": "missing_portfolio_id"}
+        if decision not in MARKET_PROFILE_PATCH_REVIEW_VALUES:
+            return {"ok": False, "error": "unsupported_review_status", "status": decision}
+        for market in self.markets:
+            for item in list(market.reports or []):
+                if str(item.get("kind", "investment") or "investment").strip().lower() != "investment":
+                    continue
+                report_market = resolve_market_code(str(item.get("market", market.market_code)))
+                item_portfolio_id = self._portfolio_id_for_item(item, report_market)
+                if item_portfolio_id != target_portfolio:
+                    continue
+                feedback_signature = self._weekly_feedback_signature_for_item(item, report_market)
+                if not feedback_signature:
+                    return {"ok": False, "error": "weekly_feedback_not_available", "portfolio_id": target_portfolio}
+                market_profile_tuning_row = self._weekly_market_profile_tuning_row_for_item(item, report_market)
+                market_profile_review_draft = _market_profile_review_draft(market_profile_tuning_row)
+                market_profile_suggested_patch = self._market_profile_suggested_patch_for_item(
+                    item,
+                    report_market,
+                    review_draft=market_profile_review_draft,
+                )
+                if not bool(market_profile_review_draft.get("review_required", False)):
+                    return {"ok": False, "error": "market_profile_review_not_available", "portfolio_id": target_portfolio}
+                if decision in {"APPROVED", "APPLIED"} and not bool(market_profile_suggested_patch.get("ready_for_manual_apply", False)):
+                    return {"ok": False, "error": "manual_patch_not_ready", "portfolio_id": target_portfolio}
+                reviewed_ts = datetime.now(self.tz).isoformat()
+                review_evidence: Dict[str, Any] = {}
+                if decision == "CLEAR":
+                    item["_dashboard_control_market_profile_patch_review_signature"] = ""
+                    item["_dashboard_control_market_profile_patch_review_status"] = ""
+                    item["_dashboard_control_market_profile_patch_review_ts"] = ""
+                    item["_dashboard_control_market_profile_patch_review_evidence"] = {}
+                else:
+                    if decision == "APPLIED":
+                        review_evidence = self._market_profile_patch_review_evidence_for_item(
+                            item,
+                            report_market,
+                            feedback_signature=feedback_signature,
+                            suggested_patch=market_profile_suggested_patch,
+                            reviewed_ts=reviewed_ts,
+                            config_commit_sha=config_commit_sha,
+                            config_diff_note=config_diff_note,
+                            operator_note=operator_note,
+                        )
+                    item["_dashboard_control_market_profile_patch_review_signature"] = feedback_signature
+                    item["_dashboard_control_market_profile_patch_review_status"] = decision
+                    item["_dashboard_control_market_profile_patch_review_ts"] = reviewed_ts
+                    item["_dashboard_control_market_profile_patch_review_evidence"] = review_evidence
+                self._append_market_profile_patch_review_history_for_item(
+                    item,
+                    feedback_signature=feedback_signature,
+                    decision=decision,
+                    reviewed_ts=reviewed_ts,
+                    evidence=review_evidence,
+                )
+                review_state = self._market_profile_patch_review_state_for_item(
+                    item,
+                    report_market,
+                    feedback_signature=feedback_signature,
+                    review_required=True,
+                )
+                review_history_rows = self._market_profile_patch_review_history_for_item(
+                    item,
+                    report_market,
+                    feedback_signature=feedback_signature,
+                    review_required=True,
+                )
+                self._dashboard_control_last_action = f"review_market_profile_patch:{target_portfolio}:{decision.lower()}"
+                self._dashboard_control_last_action_ts = reviewed_ts
+                self._dashboard_control_last_error = ""
+                self._write_dashboard_control_state()
+                self._refresh_dashboard()
+                return {
+                    "ok": True,
+                    "portfolio_id": target_portfolio,
+                    "review_status": str(review_state.get("status") or ""),
+                    "review_status_label": str(review_state.get("status_label") or ""),
+                    "review_status_summary": str(review_state.get("status_summary") or ""),
+                    "reviewed_ts": str(review_state.get("reviewed_ts") or ""),
+                    "applied_ts": str(review_state.get("applied_ts") or ""),
+                    "review_evidence_summary": str(review_state.get("evidence_summary") or ""),
+                    "review_evidence": dict(review_state.get("evidence") or {}),
+                    "config_commit_sha": str(dict(review_state.get("evidence") or {}).get("config_commit_sha") or ""),
+                    "config_diff_note": str(dict(review_state.get("evidence") or {}).get("config_diff_note") or ""),
+                    "operator_note": str(dict(review_state.get("evidence") or {}).get("operator_note") or ""),
+                    "review_history_summary": self._market_profile_patch_review_history_summary(review_history_rows),
+                    "review_history": review_history_rows,
+                    "manual_apply_summary": str(market_profile_suggested_patch.get("manual_apply_summary") or ""),
+                }
+        return {"ok": False, "error": "portfolio_not_found", "portfolio_id": target_portfolio}
+
     def _dashboard_control_apply_weekly_feedback(self, payload: Dict[str, Any] | None = None) -> Dict[str, Any]:
         row = dict(payload or {})
         target_portfolio = str(row.get("portfolio_id", "") or "").strip()
@@ -764,6 +1535,19 @@ class Supervisor:
                 feedback_signature = self._weekly_feedback_signature_for_item(item, report_market)
                 if not feedback_signature:
                     return {"ok": False, "error": "weekly_feedback_not_available", "portfolio_id": target_portfolio}
+                market_profile_tuning_row = self._weekly_market_profile_tuning_row_for_item(item, report_market)
+                market_profile_review_draft = _market_profile_review_draft(market_profile_tuning_row)
+                market_profile_suggested_patch = self._market_profile_suggested_patch_for_item(
+                    item,
+                    report_market,
+                    review_draft=market_profile_review_draft,
+                )
+                market_profile_review_state = self._market_profile_patch_review_state_for_item(
+                    item,
+                    report_market,
+                    feedback_signature=feedback_signature,
+                    review_required=bool(market_profile_review_draft.get("review_required", False)),
+                )
                 confirmed_ts = datetime.now(self.tz).isoformat()
                 item["_dashboard_control_weekly_feedback_confirmed_signature"] = feedback_signature
                 item["_dashboard_control_weekly_feedback_confirmed_ts"] = confirmed_ts
@@ -785,6 +1569,81 @@ class Supervisor:
                     "execution_config_path": execution_cfg,
                     "paper_config_path": paper_cfg,
                     "feedback_thresholds_config_path": threshold_cfg,
+                    "market_profile_tuning_action": str(
+                        market_profile_tuning_row.get("market_profile_tuning_action") or ""
+                    ),
+                    "market_profile_tuning_target": str(
+                        market_profile_tuning_row.get("market_profile_tuning_target") or ""
+                    ),
+                    "market_profile_tuning_note": str(
+                        market_profile_tuning_row.get("market_profile_tuning_note") or ""
+                    ),
+                    "market_profile_review_required": bool(
+                        market_profile_review_draft.get("review_required", False)
+                    ),
+                    "market_profile_review_summary": str(
+                        market_profile_review_draft.get("summary") or ""
+                    ),
+                    "market_profile_review_draft": dict(market_profile_review_draft),
+                    "market_profile_suggested_patch_summary": str(
+                        market_profile_suggested_patch.get("summary") or ""
+                    ),
+                    "market_profile_primary_summary": str(
+                        market_profile_suggested_patch.get("primary_summary") or ""
+                    ),
+                    "market_profile_primary_item": dict(
+                        market_profile_suggested_patch.get("primary_item") or {}
+                    ),
+                    "market_profile_manual_apply_summary": str(
+                        market_profile_suggested_patch.get("manual_apply_summary") or ""
+                    ),
+                    "market_profile_manual_apply_patch": dict(
+                        market_profile_suggested_patch.get("manual_apply_patch") or {}
+                    ),
+                    "market_profile_review_status": str(
+                        market_profile_review_state.get("status") or ""
+                    ),
+                    "market_profile_review_status_label": str(
+                        market_profile_review_state.get("status_label") or "-"
+                    ),
+                    "market_profile_review_status_summary": str(
+                        market_profile_review_state.get("status_summary") or "-"
+                    ),
+                    "market_profile_reviewed_ts": str(
+                        market_profile_review_state.get("reviewed_ts") or ""
+                    ),
+                    "market_profile_applied_ts": str(
+                        market_profile_review_state.get("applied_ts") or ""
+                    ),
+                    "market_profile_review_evidence_summary": str(
+                        market_profile_review_state.get("evidence_summary") or ""
+                    ),
+                    "market_profile_review_evidence": dict(
+                        market_profile_review_state.get("evidence") or {}
+                    ),
+                    "market_profile_review_history_summary": self._market_profile_patch_review_history_summary(
+                        self._market_profile_patch_review_history_for_item(
+                            item,
+                            report_market,
+                            feedback_signature=feedback_signature,
+                            review_required=bool(market_profile_review_draft.get("review_required", False)),
+                        )
+                    ),
+                    "market_profile_review_history": self._market_profile_patch_review_history_for_item(
+                        item,
+                        report_market,
+                        feedback_signature=feedback_signature,
+                        review_required=bool(market_profile_review_draft.get("review_required", False)),
+                    ),
+                    "market_profile_suggested_patch": dict(market_profile_suggested_patch),
+                    "market_profile_ready_for_manual_apply": bool(
+                        market_profile_suggested_patch.get("ready_for_manual_apply", False)
+                    ),
+                    "market_profile_readiness_summary": str(
+                        market_profile_suggested_patch.get("readiness_summary")
+                        or market_profile_review_draft.get("readiness_summary")
+                        or ""
+                    ),
                 }
         return {"ok": False, "error": "portfolio_not_found", "portfolio_id": target_portfolio}
 
@@ -799,6 +1658,7 @@ class Supervisor:
             run_preflight=self._dashboard_control_run_preflight,
             run_weekly_review=self._dashboard_control_run_weekly_review,
             apply_weekly_feedback=self._dashboard_control_apply_weekly_feedback,
+            review_market_profile_patch=self._dashboard_control_review_market_profile_patch,
             refresh_dashboard=self._dashboard_control_refresh_dashboard,
             toggle_flag=self._dashboard_control_toggle_flag,
             set_execution_mode=self._dashboard_control_set_execution_mode,
@@ -1167,6 +2027,113 @@ class Supervisor:
         self._runtime_scope_cache[cfg_path] = scope
         return scope
 
+    def _adaptive_strategy_config_path_for(self, item: Dict[str, Any], report_market: str) -> Path:
+        ibkr_cfg = _load_yaml(self._ibkr_config_path_for(item, report_market))
+        raw = str(ibkr_cfg.get("adaptive_strategy_config", "config/adaptive_strategy_framework.yaml") or "").strip()
+        return adaptive_strategy_config_path(BASE_DIR, raw or None)
+
+    def _adaptive_strategy_config_for(self, item: Dict[str, Any], report_market: str):
+        cfg_path = self._adaptive_strategy_config_path_for(item, report_market)
+        cache_key = str(cfg_path)
+        cached = self._adaptive_strategy_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        cfg = load_adaptive_strategy(BASE_DIR, cache_key)
+        self._adaptive_strategy_cache[cache_key] = cfg
+        return cfg
+
+    def _market_profile_suggested_patch_for_item(
+        self,
+        item: Dict[str, Any],
+        report_market: str,
+        review_draft: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        draft = dict(review_draft or {})
+        if not draft:
+            tuning_row = self._weekly_market_profile_tuning_row_for_item(item, report_market)
+            draft = _market_profile_review_draft(tuning_row)
+        if not draft or not bool(draft.get("review_required", False)):
+            return {}
+        adaptive_cfg_path = self._adaptive_strategy_config_path_for(item, report_market)
+        adaptive_cfg = self._adaptive_strategy_config_for(item, report_market)
+        market = resolve_market_code(str(draft.get("market") or report_market or ""))
+        profile_key, profile = adaptive_strategy_market_profile(adaptive_cfg, market)
+        effective_profile = str(profile_key or draft.get("profile") or market or "DEFAULT").strip().upper()
+        items: List[Dict[str, Any]] = []
+        for raw in list(draft.get("items") or []):
+            row = dict(raw or {})
+            field = str(row.get("field") or "").strip()
+            if not field:
+                continue
+            current_value = getattr(profile, field, None) if profile is not None else None
+            if current_value is None:
+                continue
+            suggested_value = _market_profile_patch_value(field, current_value, str(row.get("change_hint") or ""))
+            try:
+                delta_value = round(float(suggested_value) - float(current_value), 6)
+            except Exception:
+                delta_value = 0.0
+            priority_rank, priority_label, risk_level, risk_level_label = _market_profile_patch_priority(
+                str(draft.get("scope") or ""),
+                field,
+            )
+            item_row = dict(row)
+            item_row.update(
+                {
+                    "config_file": str(adaptive_cfg_path),
+                    "config_path": f"market_profiles.{effective_profile}.{field}",
+                    "current_value": current_value,
+                    "suggested_value": suggested_value,
+                    "delta_value": delta_value,
+                    "priority_rank": int(priority_rank),
+                    "priority_label": priority_label,
+                    "risk_level": risk_level,
+                    "risk_level_label": risk_level_label,
+                }
+            )
+            items.append(item_row)
+        if not items:
+            return {}
+        items.sort(
+            key=lambda row: (
+                int(row.get("priority_rank", 99) or 99),
+                str(row.get("field") or ""),
+            )
+        )
+        summary_bits = [
+            f"{str(row.get('field') or '')}: {row.get('current_value')} -> {row.get('suggested_value')}"
+            for row in items
+        ]
+        primary_item = dict(items[0])
+        primary_summary = (
+            f"优先改 {str(primary_item.get('field') or '')}: "
+            f"{primary_item.get('current_value')} -> {primary_item.get('suggested_value')} "
+            f"({str(primary_item.get('priority_label') or '')} / {str(primary_item.get('risk_level_label') or '')})"
+        )
+        summary = (
+            f"建议先调整 {effective_profile} 市场档案："
+            + "；".join(summary_bits)
+            + "；再观察 2 周。"
+        )
+        patch = {
+            "market": market,
+            "profile": effective_profile,
+            "config_file": str(adaptive_cfg_path),
+            "observe_window_weeks": 2,
+            "item_count": int(len(items)),
+            "summary": summary,
+            "ready_for_manual_apply": bool(draft.get("ready_for_manual_apply", False)),
+            "readiness_label": str(draft.get("readiness_label") or ""),
+            "readiness_summary": str(draft.get("readiness_summary") or ""),
+            "primary_summary": primary_summary,
+            "primary_item": primary_item,
+            "items": items,
+        }
+        manual_apply_patch = _market_profile_manual_apply_patch(patch)
+        patch["manual_apply_summary"] = str(manual_apply_patch.get("summary") or "")
+        patch["manual_apply_patch"] = manual_apply_patch
+        return patch
+
     def _should_run_local_paper_after_report(self, item: Dict[str, Any], report_market: str) -> bool:
         if not bool(item.get("run_investment_paper", False)):
             return False
@@ -1276,6 +2243,13 @@ class Supervisor:
             return [dict(row) for row in rows if isinstance(row, dict)]
         return []
 
+    def _weekly_market_profile_tuning_rows(self) -> List[Dict[str, Any]]:
+        payload = _load_json_file(self._weekly_review_output_dir() / "weekly_review_summary.json")
+        rows = payload.get("market_profile_tuning_summary")
+        if isinstance(rows, list):
+            return [dict(row) for row in rows if isinstance(row, dict)]
+        return []
+
     def _weekly_feedback_threshold_suggestion_rows_for_market(self, report_market: str) -> List[Dict[str, Any]]:
         market_code = resolve_market_code(str(report_market or ""))
         rows: List[Dict[str, Any]] = []
@@ -1307,6 +2281,17 @@ class Supervisor:
             )
         )
         return rows
+
+    def _weekly_market_profile_tuning_row_for_item(self, item: Dict[str, Any], report_market: str) -> Dict[str, Any]:
+        portfolio_id = self._portfolio_id_for_item(item, report_market)
+        for row in self._weekly_market_profile_tuning_rows():
+            if str(row.get("portfolio_id") or "") != portfolio_id:
+                continue
+            market = str(row.get("market") or "").upper().strip()
+            if market and market != str(report_market or "").upper():
+                continue
+            return dict(row)
+        return {}
 
     def _weekly_feedback_row_for_item(self, item: Dict[str, Any], report_market: str) -> Dict[str, Any]:
         portfolio_id = self._portfolio_id_for_item(item, report_market)
@@ -1508,6 +2493,13 @@ class Supervisor:
         base_path = self._base_investment_config_path(item, report_market)
         feedback_row = self._weekly_feedback_row_for_item(item, report_market)
         execution_feedback_row = self._weekly_execution_feedback_row_for_item(item, report_market)
+        market_profile_tuning_row = self._weekly_market_profile_tuning_row_for_item(item, report_market)
+        market_profile_review_draft = _market_profile_review_draft(market_profile_tuning_row)
+        market_profile_suggested_patch = self._market_profile_suggested_patch_for_item(
+            item,
+            report_market,
+            review_draft=market_profile_review_draft,
+        )
         shadow_auto_apply_enabled = self._weekly_feedback_kind_auto_apply_enabled(item, report_market, "shadow")
         execution_auto_apply_enabled = self._weekly_feedback_kind_auto_apply_enabled(item, report_market, "execution")
         overlay_path = self._weekly_feedback_overlay_dir(item, report_market) / "investment_auto_feedback.yaml"
@@ -1607,6 +2599,80 @@ class Supervisor:
                 or "paper_only"
             ),
             "feedback_reason": " ".join(part for part in feedback_reason_parts if part),
+            "market_profile": str(
+                market_profile_tuning_row.get("adaptive_strategy_active_market_profile")
+                or existing_weekly_feedback.get("market_profile")
+                or ""
+            ),
+            "market_profile_note": str(
+                market_profile_tuning_row.get("adaptive_strategy_market_profile_note")
+                or existing_weekly_feedback.get("market_profile_note")
+                or ""
+            ),
+            "market_profile_tuning_target": str(
+                market_profile_tuning_row.get("market_profile_tuning_target")
+                or existing_weekly_feedback.get("market_profile_tuning_target")
+                or ""
+            ),
+            "market_profile_tuning_action": str(
+                market_profile_tuning_row.get("market_profile_tuning_action")
+                or existing_weekly_feedback.get("market_profile_tuning_action")
+                or ""
+            ),
+            "market_profile_tuning_bias": str(
+                market_profile_tuning_row.get("market_profile_tuning_bias")
+                or existing_weekly_feedback.get("market_profile_tuning_bias")
+                or ""
+            ),
+            "market_profile_tuning_note": str(
+                market_profile_tuning_row.get("market_profile_tuning_note")
+                or existing_weekly_feedback.get("market_profile_tuning_note")
+                or ""
+            ),
+            "market_profile_review_required": bool(
+                str(
+                    market_profile_tuning_row.get("market_profile_tuning_action")
+                    or existing_weekly_feedback.get("market_profile_tuning_action")
+                    or ""
+                ).upper()
+                in {"REVIEW_EXECUTION_GATE", "REVIEW_REGIME_PLAN"}
+            ),
+            "market_profile_review_summary": str(
+                market_profile_review_draft.get("summary")
+                or existing_weekly_feedback.get("market_profile_review_summary")
+                or ""
+            ),
+            "market_profile_review_draft": dict(
+                market_profile_review_draft
+                or dict(existing_weekly_feedback.get("market_profile_review_draft") or {})
+            ),
+            "market_profile_suggested_patch_summary": str(
+                market_profile_suggested_patch.get("summary")
+                or existing_weekly_feedback.get("market_profile_suggested_patch_summary")
+                or ""
+            ),
+            "market_profile_primary_summary": str(
+                market_profile_suggested_patch.get("primary_summary")
+                or existing_weekly_feedback.get("market_profile_primary_summary")
+                or ""
+            ),
+            "market_profile_primary_item": dict(
+                market_profile_suggested_patch.get("primary_item")
+                or dict(existing_weekly_feedback.get("market_profile_primary_item") or {})
+            ),
+            "market_profile_manual_apply_summary": str(
+                market_profile_suggested_patch.get("manual_apply_summary")
+                or existing_weekly_feedback.get("market_profile_manual_apply_summary")
+                or ""
+            ),
+            "market_profile_manual_apply_patch": dict(
+                market_profile_suggested_patch.get("manual_apply_patch")
+                or dict(existing_weekly_feedback.get("market_profile_manual_apply_patch") or {})
+            ),
+            "market_profile_suggested_patch": dict(
+                market_profile_suggested_patch
+                or dict(existing_weekly_feedback.get("market_profile_suggested_patch") or {})
+            ),
             "signal_penalties": signal_penalties,
             "execution_penalties": execution_penalties,
         }
@@ -1616,6 +2682,13 @@ class Supervisor:
         base_path = self._base_execution_config_path(item, report_market)
         shadow_feedback_row = self._weekly_feedback_row_for_item(item, report_market)
         execution_feedback_row = self._weekly_execution_feedback_row_for_item(item, report_market)
+        market_profile_tuning_row = self._weekly_market_profile_tuning_row_for_item(item, report_market)
+        market_profile_review_draft = _market_profile_review_draft(market_profile_tuning_row)
+        market_profile_suggested_patch = self._market_profile_suggested_patch_for_item(
+            item,
+            report_market,
+            review_draft=market_profile_review_draft,
+        )
         shadow_auto_apply_enabled = self._weekly_feedback_kind_auto_apply_enabled(item, report_market, "shadow")
         execution_auto_apply_enabled = self._weekly_feedback_kind_auto_apply_enabled(item, report_market, "execution")
         overlay_path = self._weekly_feedback_overlay_dir(item, report_market) / "execution_auto_feedback.yaml"
@@ -1817,6 +2890,80 @@ class Supervisor:
                 or existing_weekly_feedback.get("execution_hotspots_json")
                 or ""
             ),
+            "market_profile": str(
+                market_profile_tuning_row.get("adaptive_strategy_active_market_profile")
+                or existing_weekly_feedback.get("market_profile")
+                or ""
+            ),
+            "market_profile_note": str(
+                market_profile_tuning_row.get("adaptive_strategy_market_profile_note")
+                or existing_weekly_feedback.get("market_profile_note")
+                or ""
+            ),
+            "market_profile_tuning_target": str(
+                market_profile_tuning_row.get("market_profile_tuning_target")
+                or existing_weekly_feedback.get("market_profile_tuning_target")
+                or ""
+            ),
+            "market_profile_tuning_action": str(
+                market_profile_tuning_row.get("market_profile_tuning_action")
+                or existing_weekly_feedback.get("market_profile_tuning_action")
+                or ""
+            ),
+            "market_profile_tuning_bias": str(
+                market_profile_tuning_row.get("market_profile_tuning_bias")
+                or existing_weekly_feedback.get("market_profile_tuning_bias")
+                or ""
+            ),
+            "market_profile_tuning_note": str(
+                market_profile_tuning_row.get("market_profile_tuning_note")
+                or existing_weekly_feedback.get("market_profile_tuning_note")
+                or ""
+            ),
+            "market_profile_review_required": bool(
+                str(
+                    market_profile_tuning_row.get("market_profile_tuning_action")
+                    or existing_weekly_feedback.get("market_profile_tuning_action")
+                    or ""
+                ).upper()
+                in {"REVIEW_EXECUTION_GATE", "REVIEW_REGIME_PLAN"}
+            ),
+            "market_profile_review_summary": str(
+                market_profile_review_draft.get("summary")
+                or existing_weekly_feedback.get("market_profile_review_summary")
+                or ""
+            ),
+            "market_profile_review_draft": dict(
+                market_profile_review_draft
+                or dict(existing_weekly_feedback.get("market_profile_review_draft") or {})
+            ),
+            "market_profile_suggested_patch_summary": str(
+                market_profile_suggested_patch.get("summary")
+                or existing_weekly_feedback.get("market_profile_suggested_patch_summary")
+                or ""
+            ),
+            "market_profile_primary_summary": str(
+                market_profile_suggested_patch.get("primary_summary")
+                or existing_weekly_feedback.get("market_profile_primary_summary")
+                or ""
+            ),
+            "market_profile_primary_item": dict(
+                market_profile_suggested_patch.get("primary_item")
+                or dict(existing_weekly_feedback.get("market_profile_primary_item") or {})
+            ),
+            "market_profile_manual_apply_summary": str(
+                market_profile_suggested_patch.get("manual_apply_summary")
+                or existing_weekly_feedback.get("market_profile_manual_apply_summary")
+                or ""
+            ),
+            "market_profile_manual_apply_patch": dict(
+                market_profile_suggested_patch.get("manual_apply_patch")
+                or dict(existing_weekly_feedback.get("market_profile_manual_apply_patch") or {})
+            ),
+            "market_profile_suggested_patch": dict(
+                market_profile_suggested_patch
+                or dict(existing_weekly_feedback.get("market_profile_suggested_patch") or {})
+            ),
             "execution_hotspot_penalties": execution_hotspot_penalties,
         }
         return self._write_yaml_file(overlay_path, base_cfg)
@@ -1824,6 +2971,13 @@ class Supervisor:
     def _effective_paper_config_path(self, item: Dict[str, Any], report_market: str) -> Path:
         base_path = self._base_paper_config_path(item, report_market)
         feedback_row = self._weekly_risk_feedback_row_for_item(item, report_market)
+        market_profile_tuning_row = self._weekly_market_profile_tuning_row_for_item(item, report_market)
+        market_profile_review_draft = _market_profile_review_draft(market_profile_tuning_row)
+        market_profile_suggested_patch = self._market_profile_suggested_patch_for_item(
+            item,
+            report_market,
+            review_draft=market_profile_review_draft,
+        )
         if not self._weekly_feedback_kind_auto_apply_enabled(item, report_market, "risk"):
             feedback_row = {}
         if not feedback_row or not self._weekly_feedback_auto_apply_enabled(item, report_market):
@@ -1906,6 +3060,24 @@ class Supervisor:
             "risk_feedback_confidence": float(_feedback_confidence_value(feedback_row)),
             "feedback_scope": str(feedback_row.get("feedback_scope") or "paper_only"),
             "feedback_reason": str(feedback_row.get("feedback_reason") or ""),
+            "market_profile": str(market_profile_tuning_row.get("adaptive_strategy_active_market_profile") or ""),
+            "market_profile_note": str(market_profile_tuning_row.get("adaptive_strategy_market_profile_note") or ""),
+            "market_profile_tuning_target": str(market_profile_tuning_row.get("market_profile_tuning_target") or ""),
+            "market_profile_tuning_action": str(market_profile_tuning_row.get("market_profile_tuning_action") or ""),
+            "market_profile_tuning_bias": str(market_profile_tuning_row.get("market_profile_tuning_bias") or ""),
+            "market_profile_tuning_note": str(market_profile_tuning_row.get("market_profile_tuning_note") or ""),
+            "market_profile_review_required": bool(
+                str(market_profile_tuning_row.get("market_profile_tuning_action") or "").upper()
+                in {"REVIEW_EXECUTION_GATE", "REVIEW_REGIME_PLAN"}
+            ),
+            "market_profile_review_summary": str(market_profile_review_draft.get("summary") or ""),
+            "market_profile_review_draft": dict(market_profile_review_draft),
+            "market_profile_suggested_patch_summary": str(market_profile_suggested_patch.get("summary") or ""),
+            "market_profile_primary_summary": str(market_profile_suggested_patch.get("primary_summary") or ""),
+            "market_profile_primary_item": dict(market_profile_suggested_patch.get("primary_item") or {}),
+            "market_profile_manual_apply_summary": str(market_profile_suggested_patch.get("manual_apply_summary") or ""),
+            "market_profile_manual_apply_patch": dict(market_profile_suggested_patch.get("manual_apply_patch") or {}),
+            "market_profile_suggested_patch": dict(market_profile_suggested_patch),
         }
         return self._write_yaml_file(
             self._weekly_feedback_overlay_dir(item, report_market) / "paper_auto_feedback.yaml",

@@ -37,12 +37,16 @@ def write_weekly_review_markdown(
     feedback_threshold_tuning_rows: List[Dict[str, Any]],
     labeling_summary: Dict[str, Any],
     labeling_skip_rows: List[Dict[str, Any]],
+    outcome_spread_rows: List[Dict[str, Any]],
+    edge_realization_rows: List[Dict[str, Any]],
+    blocked_edge_attribution_rows: List[Dict[str, Any]],
     attribution_rows: List[Dict[str, Any]],
     risk_review_rows: List[Dict[str, Any]],
     risk_feedback_rows: List[Dict[str, Any]],
     execution_session_rows: List[Dict[str, Any]],
     execution_hotspot_rows: List[Dict[str, Any]],
     execution_feedback_rows: List[Dict[str, Any]],
+    control_timeseries_rows: List[Dict[str, Any]],
     window_label: str,
 ) -> None:
     lines = [
@@ -84,6 +88,12 @@ def write_weekly_review_markdown(
                 if row.get("adaptive_strategy_summary"):
                     strategy_text = f"{strategy_text} / {row.get('adaptive_strategy_summary')}"
                 lines.append(f"  策略框架: {strategy_text}")
+            if row.get("adaptive_strategy_market_profile_note"):
+                lines.append(f"  市场档案: {row['adaptive_strategy_market_profile_note']}")
+            if row.get("market_profile_tuning_note"):
+                lines.append(f"  参数调优: {row['market_profile_tuning_note']}")
+            if row.get("market_profile_readiness_summary"):
+                lines.append(f"  建议状态: {row['market_profile_readiness_summary']}")
             if row.get("strategy_effective_controls_note"):
                 lines.append(f"  策略控仓: {row['strategy_effective_controls_note']}")
             if row.get("execution_gate_summary"):
@@ -190,6 +200,25 @@ def write_weekly_review_markdown(
                 )
 
     lines.append("")
+    lines.append("## Weekly Outcome Spread")
+    if not outcome_spread_rows:
+        lines.append("- (no outcome spread rows)")
+    else:
+        for row in outcome_spread_rows:
+            lines.append(
+                f"- **{row['portfolio_id']} / {int(row.get('horizon_days', 0) or 0)}d** market={row['market']} "
+                f"selected_vs_unselected={float(row.get('selected_spread_vs_unselected_bps', 0.0) or 0.0):.1f}bps "
+                f"top_vs_unselected={float(row.get('top_ranked_spread_vs_unselected_bps', 0.0) or 0.0):.1f}bps "
+                f"executed_vs_blocked_edge={float(row.get('executed_spread_vs_blocked_edge_bps', 0.0) or 0.0):.1f}bps"
+            )
+            lines.append(
+                f"  样本: universe={int(row.get('universe_sample_count', 0) or 0)} "
+                f"selected={int(row.get('selected_sample_count', 0) or 0)} "
+                f"executed={int(row.get('executed_sample_count', 0) or 0)} "
+                f"blocked_edge={int(row.get('blocked_edge_sample_count', 0) or 0)}"
+            )
+
+    lines.append("")
     lines.append("## Weekly Proxy Attribution")
     if not attribution_rows:
         lines.append("- (no attribution rows)")
@@ -220,6 +249,44 @@ def write_weekly_review_markdown(
             if row.get("control_split_text"):
                 lines.append(f"  控制拆解: {row.get('control_split_text', '')}")
             lines.append(f"  建议: {row.get('diagnosis', '')}")
+
+    lines.append("")
+    lines.append("## Weekly Edge Realization")
+    if not edge_realization_rows:
+        lines.append("- (no edge realization rows)")
+    else:
+        for row in edge_realization_rows:
+            lines.append(
+                f"- **{row['portfolio_id']}** market={row['market']} "
+                f"expected_edge={float(row.get('avg_expected_edge_bps', 0.0) or 0.0):.1f}bps "
+                f"realized_cost={float(row.get('avg_realized_total_cost_bps', 0.0) or 0.0):.1f}bps "
+                f"capture={float(row.get('avg_execution_capture_bps', 0.0) or 0.0):.1f}bps "
+                f"fill_delay={float(row.get('avg_fill_delay_seconds', 0.0) or 0.0):.1f}s"
+            )
+            lines.append(
+                f"  成熟结果: 5d={float(row.get('matured_5d_avg_realized_edge_bps', 0.0) or 0.0):.1f}bps "
+                f"20d={float(row.get('matured_20d_avg_realized_edge_bps', 0.0) or 0.0):.1f}bps "
+                f"60d={float(row.get('matured_60d_avg_realized_edge_bps', 0.0) or 0.0):.1f}bps"
+            )
+
+    lines.append("")
+    lines.append("## Weekly Blocked Edge Attribution")
+    if not blocked_edge_attribution_rows:
+        lines.append("- (no blocked edge attribution rows)")
+    else:
+        for row in blocked_edge_attribution_rows:
+            lines.append(
+                f"- **{row['portfolio_id']}** market={row['market']} "
+                f"blocked_value={float(row.get('blocked_edge_order_value', 0.0) or 0.0):.2f} "
+                f"blocked_weight={float(row.get('blocked_edge_weight', 0.0) or 0.0):.2%} "
+                f"expected_edge={float(row.get('avg_expected_edge_bps', 0.0) or 0.0):.1f}bps "
+                f"required_gap={float(row.get('avg_required_gap_bps', 0.0) or 0.0):.1f}bps"
+            )
+            lines.append(
+                f"  反事实: 5d={float(row.get('matured_5d_avg_counterfactual_edge_bps', 0.0) or 0.0):.1f}bps "
+                f"20d={float(row.get('matured_20d_avg_counterfactual_edge_bps', 0.0) or 0.0):.1f}bps "
+                f"60d={float(row.get('matured_60d_avg_counterfactual_edge_bps', 0.0) or 0.0):.1f}bps"
+            )
 
     lines.append("")
     lines.append("## Weekly Risk Overlay Review")
@@ -288,6 +355,25 @@ def write_weekly_review_markdown(
             if row.get("execution_style_breakdown"):
                 lines.append(f"  风格分布: {row.get('execution_style_breakdown', '')}")
             lines.append(f"  说明: {row.get('hotspot_reason', '')}")
+
+    lines.append("")
+    lines.append("## Weekly Control Timeseries")
+    if not control_timeseries_rows:
+        lines.append("- (no control timeseries rows)")
+    else:
+        by_portfolio: Dict[str, List[Dict[str, Any]]] = {}
+        for row in control_timeseries_rows:
+            by_portfolio.setdefault(str(row.get("portfolio_id") or ""), []).append(dict(row))
+        for portfolio_id, rows in sorted(by_portfolio.items()):
+            lines.append(f"- **{portfolio_id}**")
+            for row in rows[-4:]:
+                lines.append(
+                    f"  {row.get('week_label', '-') or '-'} "
+                    f"strategy={float(row.get('strategy_control_weight_delta', 0.0) or 0.0):.2%} "
+                    f"risk={float(row.get('risk_overlay_weight_delta', 0.0) or 0.0):.2%} "
+                    f"execution={float(row.get('execution_gate_blocked_weight', 0.0) or 0.0):.2%} "
+                    f"driver={row.get('dominant_driver', '-') or '-'}"
+                )
 
     lines.append("")
     lines.append("## Shadow Review Weekly Summary")

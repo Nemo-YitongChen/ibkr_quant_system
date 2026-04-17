@@ -340,6 +340,35 @@ def adaptive_strategy_runtime_note(summary: Dict[str, Any] | None) -> str:
     return f"enabled=true defensive_caps={defensive_caps}"
 
 
+def adaptive_strategy_active_market_human_note(payload: Dict[str, Any] | None) -> str:
+    payload = dict(payload or {})
+    active_market_plan = dict(payload.get("active_market_plan") or {})
+    active_market_regime = dict(payload.get("active_market_regime") or {})
+    active_market_execution = dict(payload.get("active_market_execution") or {})
+    profile_label = str(
+        active_market_plan.get("profile_label")
+        or active_market_regime.get("profile_label")
+        or active_market_execution.get("profile_label")
+        or active_market_plan.get("profile_key")
+        or active_market_regime.get("profile_key")
+        or active_market_execution.get("profile_key")
+        or ""
+    ).strip()
+    if not profile_label:
+        return ""
+    parts = [f"当前使用 {profile_label} 市场档案"]
+    plan_summary = str(active_market_plan.get("summary_text") or "").strip()
+    regime_summary = str(active_market_regime.get("summary_text") or "").strip()
+    execution_summary = str(active_market_execution.get("summary_text") or "").strip()
+    if plan_summary:
+        parts.append(f"计划={plan_summary}")
+    if regime_summary:
+        parts.append(f"regime={regime_summary}")
+    if execution_summary:
+        parts.append(f"执行={execution_summary}")
+    return "；".join(parts) + "。"
+
+
 def _market_profile_key(market: str) -> str:
     return str(market or "").strip().upper() or "DEFAULT"
 
@@ -719,6 +748,7 @@ def adaptive_strategy_summary_fields(payload: Dict[str, Any] | None) -> Dict[str
     active_market_plan = dict(payload.get("active_market_plan") or {})
     active_market_regime = dict(payload.get("active_market_regime") or {})
     active_market_execution = dict(payload.get("active_market_execution") or {})
+    active_market_note = adaptive_strategy_active_market_human_note(payload)
     active_regime_states = [
         str(state).strip().upper()
         for state in list(runtime_summary.get("active_regime_states", []) or [])
@@ -753,6 +783,7 @@ def adaptive_strategy_summary_fields(payload: Dict[str, Any] | None) -> Dict[str
         "adaptive_strategy_active_market_plan_summary": str(active_market_plan.get("summary_text", "") or ""),
         "adaptive_strategy_active_market_regime_summary": str(active_market_regime.get("summary_text", "") or ""),
         "adaptive_strategy_active_market_execution_summary": str(active_market_execution.get("summary_text", "") or ""),
+        "adaptive_strategy_active_market_note": active_market_note,
     }
 
 

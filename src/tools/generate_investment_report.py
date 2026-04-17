@@ -230,6 +230,15 @@ def _persist_candidate_snapshots(
                 "execution_score_before_cost": float(
                     row.get("execution_score_before_cost", plan.get("execution_score_before_cost", row.get("execution_score", 0.0))) or 0.0
                 ),
+                "expected_edge_threshold": float(
+                    row.get("expected_edge_threshold", plan.get("expected_edge_threshold", 0.0)) or 0.0
+                ),
+                "expected_edge_score": float(
+                    row.get("expected_edge_score", plan.get("expected_edge_score", 0.0)) or 0.0
+                ),
+                "expected_edge_bps": float(
+                    row.get("expected_edge_bps", plan.get("expected_edge_bps", 0.0)) or 0.0
+                ),
                 "scan_tier": str(row.get("scan_tier") or normalized_stage),
                 "source_reasons": ",".join(source_reasons),
                 "entry_style": str(plan.get("entry_style") or ""),

@@ -17,12 +17,22 @@ from src.tools.review_investment_weekly import (
     _build_feedback_threshold_suggestion_rows,
     _build_feedback_effect_market_summary,
     _build_feedback_automation_rows,
+    _build_execution_parent_rows,
     _build_execution_feedback_rows,
     _build_feedback_calibration_rows,
     _build_execution_hotspot_penalties,
     _build_execution_hotspot_rows,
     _build_execution_session_rows,
     _build_execution_gate_rows,
+    _build_weekly_blocked_edge_attribution_rows,
+    _build_weekly_control_timeseries_rows,
+    _build_weekly_edge_realization_rows,
+    _build_market_profile_patch_readiness,
+    _build_weekly_outcome_spread_rows,
+    _build_weekly_tuning_dataset_rows,
+    _build_weekly_tuning_dataset_summary,
+    _link_execution_orders_to_candidate_snapshots,
+    _build_market_profile_tuning_summary,
     _build_risk_feedback_rows,
     _build_risk_review_rows,
     _build_broker_summary_rows,
@@ -35,9 +45,12 @@ from src.tools.review_investment_weekly import (
     _build_shadow_review_summary_rows,
     _build_position_snapshots,
     _persist_feedback_automation_history,
+    _persist_market_profile_patch_history,
+    _persist_weekly_tuning_history,
     _persist_feedback_threshold_history,
     _run_source,
     _build_sector_rows,
+    _build_weekly_tuning_history_overview,
     _max_drawdown,
 )
 from src.common.storage import Storage
@@ -345,6 +358,203 @@ class ReviewInvestmentWeeklyTests(unittest.TestCase):
         self.assertEqual(int(row["execution_max_slices_per_symbol_delta"]), 0)
         self.assertEqual(str(row["feedback_control_driver"]), "EXECUTION")
         self.assertIn("执行 gate 阻断", str(row["feedback_reason"]))
+
+    def test_market_profile_tuning_summary_flags_execution_gate_as_too_tight(self):
+        rows = _build_market_profile_tuning_summary(
+            [
+                {
+                    "portfolio_id": "P1",
+                    "market": "US",
+                    "adaptive_strategy_active_market_profile": "US",
+                    "adaptive_strategy_active_market_execution_summary": "min_edge=16.0bps | edge_buffer=5.0bps",
+                    "adaptive_strategy_market_profile_note": "当前使用 US trend-first 市场档案。",
+                }
+            ],
+            [
+                {
+                    "portfolio_id": "P1",
+                    "market": "US",
+                    "strategy_control_weight_delta": 0.01,
+                    "risk_overlay_weight_delta": 0.00,
+                    "execution_gate_blocked_weight": 0.08,
+                    "execution_gate_blocked_order_ratio": 0.60,
+                    "execution_gate_blocked_order_count": 2,
+                    "control_split_text": "策略 1.0% | 风险 0.0% | 执行 8.0%",
+                }
+            ],
+            [
+                {
+                    "portfolio_id": "P1",
+                    "market": "US",
+                    "risk_feedback_action": "HOLD",
+                }
+            ],
+            [
+                {
+                    "portfolio_id": "P1",
+                    "market": "US",
+                    "execution_feedback_action": "HOLD",
+                }
+            ],
+        )
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(str(row["market_profile_tuning_target"]), "EXECUTION_GATE")
+        self.assertEqual(str(row["market_profile_tuning_bias"]), "TOO_TIGHT")
+        self.assertEqual(
+            str(row["adaptive_strategy_active_market_execution_summary"]),
+            "min_edge=16.0bps | edge_buffer=5.0bps",
+        )
+        self.assertIn("min_expected_edge_bps", str(row["market_profile_tuning_note"]))
+
+    def test_weekly_tuning_dataset_rows_merge_strategy_outcome_and_execution_views(self):
+        rows = _build_weekly_tuning_dataset_rows(
+            [
+                {
+                    "portfolio_id": "US:watchlist",
+                    "market": "US",
+                    "weekly_return": 0.021,
+                    "max_drawdown": -0.015,
+                    "turnover": 0.31,
+                    "latest_equity": 102000.0,
+                    "strategy_effective_controls_applied": True,
+                    "market_profile_ready_for_manual_apply": 1,
+                    "market_profile_readiness_label": "READY_FOR_MANUAL_APPLY",
+                    "market_profile_readiness_summary": "连续 2 周一致，建议人工先改 1 项。",
+                    "market_profile_cohort_weeks": 2,
+                }
+            ],
+            strategy_context_rows=[
+                {
+                    "portfolio_id": "US:watchlist",
+                    "market": "US",
+                    "adaptive_strategy_active_market_profile": "US",
+                    "adaptive_strategy_market_profile_note": "当前使用 US trend-first 市场档案。",
+                    "strategy_effective_controls_note": "策略主动转入防守。",
+                    "execution_gate_summary": "边际收益 gate 阻断 1 单。",
+                }
+            ],
+            attribution_rows=[
+                {
+                    "portfolio_id": "US:watchlist",
+                    "market": "US",
+                    "planned_execution_cost_total": 18.0,
+                    "execution_cost_total": 29.5,
+                    "execution_cost_gap": 11.5,
+                    "avg_expected_cost_bps": 14.0,
+                    "avg_actual_slippage_bps": 25.0,
+                    "strategy_control_weight_delta": 0.06,
+                    "risk_overlay_weight_delta": 0.01,
+                    "execution_gate_blocked_order_count": 1,
+                    "execution_gate_blocked_order_value": 4200.0,
+                    "execution_gate_blocked_order_ratio": 0.25,
+                    "execution_gate_blocked_weight": 0.04,
+                    "control_split_text": "策略 6.0% | 风险 1.0% | 执行 4.0%",
+                    "dominant_driver": "EXECUTION",
+                }
+            ],
+            risk_review_rows=[
+                {
+                    "portfolio_id": "US:watchlist",
+                    "dominant_risk_driver": "CORRELATION",
+                    "risk_diagnosis": "组合拥挤度偏高。",
+                }
+            ],
+            risk_feedback_rows=[
+                {
+                    "portfolio_id": "US:watchlist",
+                    "risk_feedback_action": "HOLD",
+                    "feedback_confidence": 0.22,
+                    "feedback_confidence_label": "LOW",
+                    "feedback_reason": "当前先保持风险预算不变。",
+                }
+            ],
+            execution_feedback_rows=[
+                {
+                    "portfolio_id": "US:watchlist",
+                    "execution_feedback_action": "TIGHTEN",
+                    "feedback_confidence": 0.74,
+                    "feedback_confidence_label": "MEDIUM",
+                    "feedback_reason": "实际执行成本高于计划。",
+                    "dominant_execution_session_label": "开盘",
+                    "dominant_execution_hotspot_symbol": "AAPL",
+                    "execution_penalty_symbol_count": 2,
+                    "feedback_control_driver": "EXECUTION",
+                    "feedback_control_driver_label": "执行 gate",
+                }
+            ],
+            market_profile_tuning_rows=[
+                {
+                    "portfolio_id": "US:watchlist",
+                    "market_profile_tuning_target": "EXECUTION_GATE",
+                    "market_profile_tuning_bias": "TOO_TIGHT",
+                    "market_profile_tuning_action": "REVIEW_EXECUTION_GATE",
+                    "market_profile_tuning_note": "优先复核 min_expected_edge_bps / edge_cost_buffer_bps。",
+                }
+            ],
+            feedback_calibration_rows=[
+                {
+                    "portfolio_id": "US:watchlist",
+                    "outcome_sample_count": 18,
+                    "outcome_positive_rate": 0.61,
+                    "outcome_broken_rate": 0.11,
+                    "signal_quality_score": 0.67,
+                    "calibration_confidence": 0.71,
+                    "calibration_confidence_label": "MEDIUM",
+                    "latest_outcome_ts": "2026-03-20T00:00:00+00:00",
+                    "selection_scope_label": "final 可执行候选",
+                    "selected_horizon_days": "20",
+                }
+            ],
+            feedback_automation_rows=[
+                {
+                    "portfolio_id": "US:watchlist",
+                    "feedback_kind": "shadow",
+                    "calibration_apply_mode": "SUGGEST_ONLY",
+                    "calibration_apply_mode_label": "仅建议",
+                    "outcome_maturity_label": "BUILDING",
+                },
+                {
+                    "portfolio_id": "US:watchlist",
+                    "feedback_kind": "risk",
+                    "calibration_apply_mode": "HOLD",
+                    "calibration_apply_mode_label": "继续观察",
+                    "outcome_maturity_label": "LATE",
+                },
+                {
+                    "portfolio_id": "US:watchlist",
+                    "feedback_kind": "execution",
+                    "calibration_apply_mode": "AUTO_APPLY",
+                    "calibration_apply_mode_label": "自动应用",
+                    "outcome_maturity_label": "LATE",
+                    "market_data_gate_status": "OK",
+                    "market_data_gate_label": "IBKR正常",
+                },
+            ],
+            week_label="2026-W12",
+            window_start="2026-03-15T00:00:00+00:00",
+            window_end="2026-03-22T00:00:00+00:00",
+        )
+
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row["portfolio_id"], "US:watchlist")
+        self.assertEqual(row["adaptive_strategy_active_market_profile"], "US")
+        self.assertEqual(row["outcome_sample_count"], 18)
+        self.assertEqual(row["execution_feedback_action"], "TIGHTEN")
+        self.assertEqual(row["execution_apply_mode"], "AUTO_APPLY")
+        self.assertEqual(row["market_profile_tuning_action"], "REVIEW_EXECUTION_GATE")
+        self.assertEqual(row["market_profile_ready_for_manual_apply"], 1)
+        self.assertEqual(row["dominant_driver"], "EXECUTION")
+        self.assertEqual(row["execution_gate_blocked_order_count"], 1)
+        self.assertIn("策略 6.0%", row["control_split_text"])
+
+        summary = _build_weekly_tuning_dataset_summary(rows)
+        self.assertEqual(int(summary["portfolio_count"]), 1)
+        self.assertEqual(int(summary["execution_driver_count"]), 1)
+        self.assertEqual(int(summary["execution_tighten_count"]), 1)
+        self.assertEqual(int(summary["ready_for_manual_apply_count"]), 1)
+        self.assertAlmostEqual(float(summary["avg_signal_quality_score"]), 0.67, places=6)
 
     def test_feedback_calibration_rows_build_support_scores_from_recent_outcomes(self):
         outcome_rows = []
@@ -1011,6 +1221,408 @@ class ReviewInvestmentWeeklyTests(unittest.TestCase):
             self.assertEqual(tuning_row["suggestion_action"], "KEEP_RELAX")
             self.assertEqual(tuning_row["suggestion_label"], "继续放宽试运行")
             self.assertIn("连续出现改善", str(tuning_row["reason"]))
+
+    def test_market_profile_patch_readiness_requires_two_consistent_weeks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "audit.db"
+            row_w13 = {
+                "portfolio_id": "US:watchlist",
+                "market": "US",
+                "adaptive_strategy_active_market_profile": "US",
+                "market_profile_tuning_target": "EXECUTION_GATE",
+                "market_profile_tuning_action": "REVIEW_EXECUTION_GATE",
+                "market_profile_tuning_bias": "TOO_TIGHT",
+                "market_profile_tuning_note": "优先复核 edge gate。",
+                "adaptive_strategy_active_market_execution_summary": "min_edge=16.0bps | edge_buffer=5.0bps",
+                "execution_feedback_action": "HOLD",
+                "risk_feedback_action": "HOLD",
+                "strategy_control_weight_delta": 0.01,
+                "risk_overlay_weight_delta": 0.00,
+                "execution_gate_blocked_weight": 0.08,
+            }
+            row_w14 = dict(row_w13)
+            _persist_market_profile_patch_history(
+                db_path,
+                [row_w13],
+                week_label="2026-W13",
+                week_start="2026-03-23",
+                window_start="2026-03-17T00:00:00+00:00",
+                window_end="2026-03-24T00:00:00+00:00",
+            )
+            _persist_market_profile_patch_history(
+                db_path,
+                [row_w14],
+                week_label="2026-W14",
+                week_start="2026-03-30",
+                window_start="2026-03-24T00:00:00+00:00",
+                window_end="2026-03-31T00:00:00+00:00",
+            )
+            rows = _build_market_profile_patch_readiness(db_path, [row_w14])
+            self.assertEqual(len(rows), 1)
+            row = rows[0]
+            self.assertEqual(str(row["market_profile_readiness_label"]), "READY_FOR_MANUAL_APPLY")
+            self.assertEqual(int(row["market_profile_cohort_weeks"]), 2)
+            self.assertEqual(str(row["market_profile_baseline_week"]), "2026-W13")
+            self.assertEqual(int(row["market_profile_ready_for_manual_apply"]), 1)
+            self.assertIn("可升级为人工应用候选", str(row["market_profile_readiness_summary"]))
+            self.assertIn("2026-W13:REVIEW_EXECUTION_GATE", str(row["market_profile_action_chain"]))
+
+    def test_weekly_tuning_history_persists_and_builds_overview(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "audit.db"
+            row_w13 = {
+                "portfolio_id": "US:watchlist",
+                "market": "US",
+                "adaptive_strategy_active_market_profile": "US",
+                "dominant_driver": "EXECUTION",
+                "market_profile_tuning_action": "REVIEW_EXECUTION_GATE",
+                "weekly_return": 0.011,
+                "max_drawdown": -0.021,
+                "turnover": 0.28,
+                "outcome_sample_count": 12,
+                "signal_quality_score": 0.54,
+                "execution_cost_gap": 18.0,
+                "execution_gate_blocked_weight": 0.06,
+                "strategy_control_weight_delta": 0.03,
+                "risk_overlay_weight_delta": 0.01,
+                "risk_feedback_action": "HOLD",
+                "execution_feedback_action": "TIGHTEN",
+                "shadow_apply_mode": "SUGGEST_ONLY",
+                "risk_apply_mode": "HOLD",
+                "execution_apply_mode": "SUGGEST_ONLY",
+                "market_profile_ready_for_manual_apply": 0,
+            }
+            row_w14 = dict(row_w13)
+            row_w14.update(
+                {
+                    "weekly_return": 0.019,
+                    "outcome_sample_count": 18,
+                    "signal_quality_score": 0.66,
+                    "execution_cost_gap": 7.5,
+                    "execution_gate_blocked_weight": 0.03,
+                    "execution_apply_mode": "AUTO_APPLY",
+                    "market_profile_ready_for_manual_apply": 1,
+                }
+            )
+
+            _persist_weekly_tuning_history(
+                db_path,
+                [row_w13],
+                week_label="2026-W13",
+                week_start="2026-03-23",
+                window_start="2026-03-17T00:00:00+00:00",
+                window_end="2026-03-24T00:00:00+00:00",
+            )
+            _persist_weekly_tuning_history(
+                db_path,
+                [row_w14],
+                week_label="2026-W14",
+                week_start="2026-03-30",
+                window_start="2026-03-24T00:00:00+00:00",
+                window_end="2026-03-31T00:00:00+00:00",
+            )
+
+            history_rows = Storage(str(db_path)).get_recent_investment_weekly_tuning_history(
+                "US",
+                portfolio_id="US:watchlist",
+                limit=5,
+            )
+            self.assertEqual(len(history_rows), 2)
+            self.assertEqual(str(history_rows[0]["week_label"]), "2026-W14")
+            self.assertEqual(str(history_rows[0]["dominant_driver"]), "EXECUTION")
+            self.assertEqual(int(history_rows[0]["market_profile_ready_for_manual_apply"]), 1)
+            self.assertAlmostEqual(float(history_rows[0]["signal_quality_score"]), 0.66, places=6)
+            self.assertAlmostEqual(float(history_rows[0]["execution_cost_gap"]), 7.5, places=6)
+            self.assertEqual(str(history_rows[0]["details_json"]["execution_apply_mode"]), "AUTO_APPLY")
+
+            overview_rows = _build_weekly_tuning_history_overview(
+                db_path,
+                [row_w14],
+            )
+            self.assertEqual(len(overview_rows), 1)
+            row = overview_rows[0]
+            self.assertEqual(str(row["latest_week_label"]), "2026-W14")
+            self.assertEqual(str(row["baseline_week_label"]), "2026-W13")
+            self.assertEqual(int(row["weeks_tracked"]), 2)
+            self.assertEqual(str(row["latest_market_profile_tuning_action"]), "REVIEW_EXECUTION_GATE")
+            self.assertAlmostEqual(float(row["signal_quality_delta"]), 0.12, places=6)
+            self.assertEqual(str(row["signal_quality_trend"]), "IMPROVING")
+            self.assertAlmostEqual(float(row["execution_cost_gap_delta"]), -10.5, places=6)
+            self.assertEqual(str(row["execution_cost_gap_trend"]), "IMPROVING")
+            self.assertAlmostEqual(float(row["execution_gate_blocked_weight_delta"]), -0.03, places=6)
+            self.assertEqual(str(row["execution_gate_pressure_trend"]), "IMPROVING")
+            self.assertIn("2026-W13:EXECUTION", str(row["driver_chain"]))
+            self.assertIn("2026-W14:REVIEW_EXECUTION_GATE", str(row["tuning_action_chain"]))
+
+    def test_outcome_spread_edge_realization_and_blocked_edge_attribution(self):
+        portfolio_id = "US:watchlist"
+        snapshot_rows = [
+            {
+                "snapshot_id": "RUN1|final|AAA",
+                "market": "US",
+                "portfolio_id": portfolio_id,
+                "report_dir": "/tmp/report-run-1",
+                "analysis_run_id": "RUN1",
+                "stage": "final",
+                "symbol": "AAA",
+                "direction": "LONG",
+                "score": 0.82,
+                "score_before_cost": 0.90,
+                "expected_cost_bps": 10.0,
+                "expected_edge_threshold": 0.20,
+                "expected_edge_score": 0.30,
+                "expected_edge_bps": 50.0,
+                "details": json.dumps({"stage_rank": 1}),
+            },
+            {
+                "snapshot_id": "RUN2|final|BBB",
+                "market": "US",
+                "portfolio_id": portfolio_id,
+                "report_dir": "/tmp/report-run-2",
+                "analysis_run_id": "RUN2",
+                "stage": "final",
+                "symbol": "BBB",
+                "direction": "LONG",
+                "score": 0.48,
+                "score_before_cost": 0.40,
+                "expected_cost_bps": 8.0,
+                "expected_edge_threshold": 0.18,
+                "expected_edge_score": 0.07,
+                "expected_edge_bps": 12.0,
+                "details": json.dumps({"stage_rank": 2}),
+            },
+            {
+                "snapshot_id": "RUN1|deep|CCC",
+                "market": "US",
+                "portfolio_id": portfolio_id,
+                "report_dir": "/tmp/report-run-1",
+                "analysis_run_id": "RUN1",
+                "stage": "deep",
+                "symbol": "CCC",
+                "direction": "LONG",
+                "score": 0.31,
+                "score_before_cost": 0.28,
+                "expected_cost_bps": 9.0,
+                "expected_edge_threshold": 0.15,
+                "expected_edge_score": 0.04,
+                "expected_edge_bps": 9.0,
+                "details": json.dumps({"stage_rank": 1}),
+            },
+        ]
+        outcome_rows = []
+        for horizon_days, aaa_ret, bbb_ret, ccc_ret in (
+            (5, 0.03, 0.01, 0.005),
+            (20, 0.08, 0.03, 0.01),
+            (60, 0.15, 0.05, 0.02),
+        ):
+            outcome_rows.extend(
+                [
+                    {
+                        "snapshot_id": "RUN1|final|AAA",
+                        "market": "US",
+                        "portfolio_id": portfolio_id,
+                        "symbol": "AAA",
+                        "direction": "LONG",
+                        "horizon_days": horizon_days,
+                        "future_return": aaa_ret,
+                    },
+                    {
+                        "snapshot_id": "RUN2|final|BBB",
+                        "market": "US",
+                        "portfolio_id": portfolio_id,
+                        "symbol": "BBB",
+                        "direction": "LONG",
+                        "horizon_days": horizon_days,
+                        "future_return": bbb_ret,
+                    },
+                    {
+                        "snapshot_id": "RUN1|deep|CCC",
+                        "market": "US",
+                        "portfolio_id": portfolio_id,
+                        "symbol": "CCC",
+                        "direction": "LONG",
+                        "horizon_days": horizon_days,
+                        "future_return": ccc_ret,
+                    },
+                ]
+            )
+        execution_run_rows = [
+            {
+                "run_id": "EX1",
+                "market": "US",
+                "portfolio_id": portfolio_id,
+                "report_dir": "/tmp/report-run-1",
+            },
+            {
+                "run_id": "EX2",
+                "market": "US",
+                "portfolio_id": portfolio_id,
+                "report_dir": "/tmp/report-run-2",
+            },
+        ]
+        execution_order_rows = [
+            {
+                "run_id": "EX1",
+                "ts": "2026-03-01T14:30:00+00:00",
+                "market": "US",
+                "portfolio_id": portfolio_id,
+                "symbol": "AAA",
+                "action": "BUY",
+                "current_qty": 0.0,
+                "target_qty": 10.0,
+                "delta_qty": 10.0,
+                "target_weight": 0.10,
+                "order_value": 1000.0,
+                "broker_order_id": 101,
+                "status": "FILLED",
+                "score_before_cost": 0.90,
+                "expected_cost_bps": 10.0,
+                "expected_edge_threshold": 0.20,
+                "expected_edge_score": 0.30,
+                "expected_edge_bps": 50.0,
+                "edge_gate_threshold_bps": 18.0,
+                "details": json.dumps({"parent_order_key": "AAA-parent"}),
+            },
+            {
+                "run_id": "EX2",
+                "ts": "2026-03-02T14:30:00+00:00",
+                "market": "US",
+                "portfolio_id": portfolio_id,
+                "symbol": "BBB",
+                "action": "BUY",
+                "current_qty": 0.0,
+                "target_qty": 12.0,
+                "delta_qty": 12.0,
+                "target_weight": 0.12,
+                "order_value": 1200.0,
+                "broker_order_id": 0,
+                "status": "BLOCKED_EDGE",
+                "score_before_cost": 0.40,
+                "expected_cost_bps": 8.0,
+                "expected_edge_threshold": 0.18,
+                "expected_edge_score": 0.07,
+                "expected_edge_bps": 12.0,
+                "edge_gate_threshold_bps": 18.0,
+                "details": json.dumps({"parent_order_key": "BBB-parent"}),
+            },
+        ]
+        fill_rows = [
+            {
+                "ts": "2026-03-01T14:31:30+00:00",
+                "order_id": 101,
+                "exec_id": "EXEC-AAA-1",
+                "symbol": "AAA",
+                "qty": 10.0,
+                "price": 100.0,
+                "actual_slippage_bps": 6.0,
+                "portfolio_id": portfolio_id,
+                "fill_delay_seconds": 90.0,
+            }
+        ]
+        commission_rows = [
+            {
+                "exec_id": "EXEC-AAA-1",
+                "value": 2.0,
+                "portfolio_id": portfolio_id,
+            }
+        ]
+
+        linked_orders = _link_execution_orders_to_candidate_snapshots(
+            execution_order_rows,
+            execution_run_rows,
+            snapshot_rows,
+        )
+        self.assertEqual(str(linked_orders[0]["linked_snapshot_id"]), "RUN1|final|AAA")
+        self.assertEqual(str(linked_orders[1]["linked_snapshot_id"]), "RUN2|final|BBB")
+
+        parent_rows = _build_execution_parent_rows(
+            linked_orders,
+            fill_rows,
+            commission_rows,
+            outcome_rows,
+        )
+        outcome_spread_rows = _build_weekly_outcome_spread_rows(
+            snapshot_rows,
+            outcome_rows,
+            parent_rows,
+        )
+        edge_rows = _build_weekly_edge_realization_rows(parent_rows)
+        blocked_rows = _build_weekly_blocked_edge_attribution_rows(parent_rows)
+
+        outcome_20d = next(row for row in outcome_spread_rows if int(row["horizon_days"]) == 20)
+        self.assertEqual(int(outcome_20d["selected_sample_count"]), 2)
+        self.assertEqual(int(outcome_20d["blocked_edge_sample_count"]), 1)
+        self.assertAlmostEqual(float(outcome_20d["selected_spread_vs_unselected_bps"]), 450.0, places=6)
+        self.assertAlmostEqual(float(outcome_20d["executed_spread_vs_blocked_edge_bps"]), 500.0, places=6)
+
+        self.assertEqual(len(edge_rows), 1)
+        edge_row = edge_rows[0]
+        self.assertAlmostEqual(float(edge_row["avg_expected_edge_bps"]), 29.272727, places=5)
+        self.assertAlmostEqual(float(edge_row["avg_realized_total_cost_bps"]), 26.0, places=6)
+        self.assertAlmostEqual(float(edge_row["avg_execution_capture_bps"]), 24.0, places=6)
+        self.assertAlmostEqual(float(edge_row["avg_fill_delay_seconds"]), 90.0, places=6)
+        self.assertAlmostEqual(float(edge_row["matured_20d_avg_realized_edge_bps"]), 774.0, places=6)
+
+        self.assertEqual(len(blocked_rows), 1)
+        blocked_row = blocked_rows[0]
+        self.assertEqual(int(blocked_row["blocked_edge_parent_count"]), 1)
+        self.assertAlmostEqual(float(blocked_row["avg_required_gap_bps"]), 6.0, places=6)
+        self.assertAlmostEqual(float(blocked_row["blocked_expected_edge_value"]), 1.44, places=6)
+        self.assertAlmostEqual(float(blocked_row["matured_20d_avg_counterfactual_edge_bps"]), 292.0, places=6)
+
+    def test_weekly_control_timeseries_rows_build_from_history(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "audit.db"
+            row_w13 = {
+                "portfolio_id": "US:watchlist",
+                "market": "US",
+                "dominant_driver": "RISK",
+                "market_profile_tuning_action": "OBSERVE",
+                "weekly_return": 0.01,
+                "signal_quality_score": 0.55,
+                "execution_cost_gap": 9.0,
+                "execution_gate_blocked_weight": 0.01,
+                "strategy_control_weight_delta": 0.02,
+                "risk_overlay_weight_delta": 0.05,
+            }
+            row_w14 = dict(row_w13)
+            row_w14.update(
+                {
+                    "dominant_driver": "EXECUTION",
+                    "weekly_return": 0.02,
+                    "signal_quality_score": 0.61,
+                    "execution_cost_gap": 4.0,
+                    "execution_gate_blocked_weight": 0.04,
+                    "strategy_control_weight_delta": 0.04,
+                    "risk_overlay_weight_delta": 0.02,
+                }
+            )
+            _persist_weekly_tuning_history(
+                db_path,
+                [row_w13],
+                week_label="2026-W13",
+                week_start="2026-03-23",
+                window_start="2026-03-17T00:00:00+00:00",
+                window_end="2026-03-24T00:00:00+00:00",
+            )
+            _persist_weekly_tuning_history(
+                db_path,
+                [row_w14],
+                week_label="2026-W14",
+                week_start="2026-03-30",
+                window_start="2026-03-24T00:00:00+00:00",
+                window_end="2026-03-31T00:00:00+00:00",
+            )
+
+            rows = _build_weekly_control_timeseries_rows(db_path, [row_w14], limit=6)
+            self.assertEqual(len(rows), 2)
+            latest = rows[-1]
+            self.assertEqual(str(latest["week_label"]), "2026-W14")
+            self.assertEqual(str(latest["dominant_driver"]), "EXECUTION")
+            self.assertAlmostEqual(float(latest["control_total_weight"]), 0.10, places=6)
+            self.assertAlmostEqual(float(latest["strategy_control_share"]), 0.4, places=6)
+            self.assertAlmostEqual(float(latest["risk_overlay_share"]), 0.2, places=6)
+            self.assertAlmostEqual(float(latest["execution_gate_share"]), 0.4, places=6)
 
     def test_execution_session_rows_and_feedback_track_open_session_hotspot(self):
         execution_orders = [

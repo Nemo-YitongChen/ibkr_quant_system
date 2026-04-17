@@ -208,6 +208,15 @@ class InvestmentOrderService:
                 "broker_order_id": int(order_id),
                 "status": "CREATED",
                 "reason": str(plan_row.get("reason") or ""),
+                "score_before_cost": float(plan_row.get("score_before_cost", plan_row.get("score", 0.0)) or 0.0),
+                "expected_cost_bps": float(plan_row.get("expected_cost_bps", 0.0) or 0.0),
+                "expected_edge_threshold": float(plan_row.get("expected_edge_threshold", 0.0) or 0.0),
+                "expected_edge_score": float(plan_row.get("expected_edge_score", 0.0) or 0.0),
+                "expected_edge_bps": float(plan_row.get("expected_edge_bps", 0.0) or 0.0),
+                "edge_gate_threshold_bps": float(plan_row.get("edge_gate_threshold_bps", 0.0) or 0.0),
+                "session_bucket": str(plan_row.get("session_bucket") or ""),
+                "session_label": str(plan_row.get("session_label") or ""),
+                "execution_style": str(plan_row.get("execution_style") or ""),
                 "details": details,
             }
         )

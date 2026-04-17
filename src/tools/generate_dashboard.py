@@ -56,6 +56,19 @@ DASHBOARD_MODE_DISPLAY_LABELS: Dict[str, str] = {
 DASHBOARD_TRANSLATIONS_EN.update({
     "开市中": "Market Open",
     "已闭市": "Market Closed",
+    "人工审批": "Manual Review",
+    "批准草案": "Approve Draft",
+    "驳回草案": "Reject Draft",
+    "标记已应用": "Mark Applied",
+    "清除审批": "Clear Review",
+    "审批状态": "Review Status",
+    "审批历史": "Review History",
+    "人工首改": "Manual First Patch",
+    "应用凭证": "Apply Evidence",
+    "待审批": "Pending Review",
+    "已批准": "Approved",
+    "已驳回": "Rejected",
+    "已应用": "Applied",
     "只研究不下单": "Research Only",
     "Paper 自动执行": "Paper Auto Execute",
     "Paper 模拟运行": "Paper Dry Run",
@@ -5323,6 +5336,11 @@ def _render_card(card: Dict[str, Any]) -> str:
     recommendation_differs = bool(execution_mode_recommendation.get("differs_from_current", False))
     weekly_feedback_pending_live_confirm = bool(control_portfolio.get("weekly_feedback_pending_live_confirm", False))
     weekly_feedback_confirmed_ts = str(control_portfolio.get("weekly_feedback_confirmed_ts", "") or "")
+    market_profile_review_required = bool(control_portfolio.get("weekly_feedback_market_profile_review_required", False))
+    market_profile_review_ready = bool(control_portfolio.get("weekly_feedback_market_profile_ready_for_manual_apply", False))
+    market_profile_review_status_summary = str(
+        control_portfolio.get("weekly_feedback_market_profile_review_status_summary", "") or "-"
+    )
     control_buttons: List[str] = []
     for field in control_fields:
         label = CONTROL_BUTTON_LABELS.get(field, field)
@@ -5351,6 +5369,21 @@ def _render_card(card: Dict[str, Any]) -> str:
             f'<button type="button" class="control-weekly-feedback" '
             f'data-portfolio-id="{html.escape(portfolio_id)}">确认应用 Weekly Feedback（含阈值建议）</button>'
         )
+    market_profile_review_buttons: List[str] = []
+    if control_enabled and (not is_dry_run_view) and market_profile_review_required:
+        review_actions = [
+            ("APPROVED", "批准草案"),
+            ("REJECTED", "驳回草案"),
+            ("APPLIED", "标记已应用"),
+            ("CLEAR", "清除审批"),
+        ]
+        for review_status, review_label in review_actions:
+            market_profile_review_buttons.append(
+                f'<button type="button" class="control-market-profile-review" '
+                f'data-portfolio-id="{html.escape(portfolio_id)}" '
+                f'data-review-status="{html.escape(review_status)}" '
+                f'data-ready-for-apply="{str(market_profile_review_ready).lower()}">{html.escape(review_label)}</button>'
+            )
     control_panel = (
         f"""
   <div class="card-control">
@@ -5360,6 +5393,7 @@ def _render_card(card: Dict[str, Any]) -> str:
     <div class="meta">{html.escape(str(execution_mode_recommendation.get('reason', '') or '当前没有需要切换执行模式的额外提示。'))}</div>
     <div class="meta"><span data-i18n-zh="反馈校准">反馈校准</span>：{html.escape(feedback_automation_label)}</div>
     <div class="meta"><span data-i18n-zh="周度反馈">周度反馈</span>：<span class="weekly-feedback-status" data-portfolio-id="{html.escape(portfolio_id)}">{html.escape(_dashboard_weekly_feedback_status_label(weekly_feedback_pending_live_confirm, weekly_feedback_confirmed_ts))}</span> | <span data-i18n-zh="阈值同步">阈值同步</span>：<span class="threshold-sync-status" data-portfolio-id="{html.escape(portfolio_id)}">{html.escape(_dashboard_threshold_sync_status_label(weekly_feedback_pending_live_confirm))}</span></div>
+    <div class="meta"><span data-i18n-zh="人工审批">人工审批</span>：<span class="market-profile-review-status" data-portfolio-id="{html.escape(portfolio_id)}">{html.escape(market_profile_review_status_summary)}</span></div>
     <div class="control-toolbar">
       {''.join(mode_buttons)}
     </div>
@@ -5367,11 +5401,14 @@ def _render_card(card: Dict[str, Any]) -> str:
       {''.join(weekly_feedback_buttons)}
     </div>
     <div class="control-toolbar">
+      {''.join(market_profile_review_buttons)}
+    </div>
+    <div class="control-toolbar">
       {''.join(control_buttons)}
     </div>
   </div>
 """
-        if control_enabled and (control_buttons or mode_buttons)
+        if control_enabled and (control_buttons or mode_buttons or market_profile_review_buttons)
         else ""
     )
     if is_dry_run_view:
@@ -6345,6 +6382,7 @@ def _weekly_strategy_note_text(card: Dict[str, Any]) -> str:
 
 def _simple_weekly_strategy_context_rows(card: Dict[str, Any]) -> List[List[str]]:
     weekly_context = dict(card.get("weekly_strategy_context", {}) or {})
+    control_portfolio = dict(card.get("dashboard_control", {}).get("portfolio", {}) or {})
     market_structure = dict(card.get("market_structure_summary", {}) or {})
     profile_summary = dict(card.get("account_profile_summary", {}) or {})
     rows = [
@@ -6365,6 +6403,46 @@ def _simple_weekly_strategy_context_rows(card: Dict[str, Any]) -> List[List[str]
             _weekly_strategy_note_text(card),
         ],
     ]
+    if str(weekly_context.get("adaptive_strategy_market_profile_note") or "").strip():
+        rows.append(["市场档案", str(weekly_context.get("adaptive_strategy_market_profile_note") or "").strip()])
+    if str(weekly_context.get("market_profile_tuning_note") or "").strip():
+        rows.append(["调优方向", str(weekly_context.get("market_profile_tuning_note") or "").strip()])
+    review_summary = str(
+        control_portfolio.get("weekly_feedback_market_profile_review_summary")
+        or weekly_context.get("market_profile_review_summary")
+        or ""
+    ).strip()
+    if review_summary:
+        rows.append(["复核草案", review_summary])
+    suggested_patch_summary = str(
+        control_portfolio.get("weekly_feedback_market_profile_suggested_patch_summary")
+        or weekly_context.get("market_profile_suggested_patch_summary")
+        or ""
+    ).strip()
+    if suggested_patch_summary:
+        rows.append(["建议改动", suggested_patch_summary])
+    primary_summary = str(control_portfolio.get("weekly_feedback_market_profile_primary_summary") or "").strip()
+    if primary_summary:
+        rows.append(["优先改动", primary_summary])
+    manual_apply_summary = str(control_portfolio.get("weekly_feedback_market_profile_manual_apply_summary") or "").strip()
+    if manual_apply_summary:
+        rows.append(["人工首改", manual_apply_summary])
+    review_status_summary = str(control_portfolio.get("weekly_feedback_market_profile_review_status_summary") or "").strip()
+    if review_status_summary:
+        rows.append(["审批状态", review_status_summary])
+    review_history_summary = str(control_portfolio.get("weekly_feedback_market_profile_review_history_summary") or "").strip()
+    if review_history_summary:
+        rows.append(["审批历史", review_history_summary])
+    review_evidence_summary = str(control_portfolio.get("weekly_feedback_market_profile_review_evidence_summary") or "").strip()
+    if review_evidence_summary:
+        rows.append(["应用凭证", review_evidence_summary])
+    readiness_summary = str(
+        control_portfolio.get("weekly_feedback_market_profile_readiness_summary")
+        or weekly_context.get("market_profile_readiness_summary")
+        or ""
+    ).strip()
+    if readiness_summary:
+        rows.append(["建议状态", readiness_summary])
     if str(weekly_context.get("strategy_effective_controls_note") or "").strip():
         rows.append(["策略控仓", str(weekly_context.get("strategy_effective_controls_note") or "").strip()])
     if str(weekly_context.get("execution_gate_summary") or "").strip():
@@ -8177,12 +8255,14 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     const controlStatus = document.getElementById('control-status');
     const controlActions = Array.from(document.querySelectorAll('.control-action'));
     const controlWeeklyFeedbackButtons = Array.from(document.querySelectorAll('.control-weekly-feedback'));
+    const controlMarketProfileReviewButtons = Array.from(document.querySelectorAll('.control-market-profile-review'));
     const controlToggles = Array.from(document.querySelectorAll('.control-toggle'));
     const controlModes = Array.from(document.querySelectorAll('.control-mode'));
     const executionModeMarketButtons = Array.from(document.querySelectorAll('.execution-mode-market-filter'));
     const executionModeCurrentLabels = Array.from(document.querySelectorAll('.execution-mode-current'));
     const executionModeRecommendedLabels = Array.from(document.querySelectorAll('.execution-mode-recommended'));
     const executionModeChangeLabels = Array.from(document.querySelectorAll('.execution-mode-change'));
+    const marketProfileReviewStatusLabels = Array.from(document.querySelectorAll('.market-profile-review-status'));
     const executionModeSummaryCard = document.getElementById('execution-mode-summary');
     const weeklyFeedbackStatusLabels = Array.from(document.querySelectorAll('.weekly-feedback-status'));
     const thresholdSyncStatusLabels = Array.from(document.querySelectorAll('.threshold-sync-status'));
@@ -8491,6 +8571,16 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
         btn.disabled = busy || !pending;
         btn.style.display = pending ? '' : 'none';
       }});
+      controlMarketProfileReviewButtons.forEach((btn) => {{
+        const row = portfolios[btn.dataset.portfolioId] || {{}};
+        const reviewRequired = !!row.weekly_feedback_market_profile_review_required;
+        const readyForApply = !!row.weekly_feedback_market_profile_ready_for_manual_apply;
+        const reviewStatus = btn.dataset.reviewStatus || '';
+        const needsReady = reviewStatus === 'APPROVED' || reviewStatus === 'APPLIED';
+        btn.disabled = busy || !reviewRequired || (needsReady && !readyForApply);
+        btn.style.display = reviewRequired ? '' : 'none';
+        btn.classList.toggle('active', (row.weekly_feedback_market_profile_review_status || '') === reviewStatus);
+      }});
       weeklyFeedbackStatusLabels.forEach((node) => {{
         const row = portfolios[node.dataset.portfolioId] || {{}};
         node.textContent = weeklyFeedbackStatusText(row);
@@ -8498,6 +8588,10 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
       thresholdSyncStatusLabels.forEach((node) => {{
         const row = portfolios[node.dataset.portfolioId] || {{}};
         node.textContent = thresholdSyncStatusText(row);
+      }});
+      marketProfileReviewStatusLabels.forEach((node) => {{
+        const row = portfolios[node.dataset.portfolioId] || {{}};
+        node.textContent = row.weekly_feedback_market_profile_review_status_summary || '-';
       }});
       executionModeCurrentLabels.forEach((node) => {{
         const row = portfolios[node.dataset.portfolioId] || {{}};
@@ -8677,6 +8771,51 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
       try {{
         await postControl('/apply_weekly_feedback', {{
           portfolio_id: btn.dataset.portfolioId,
+        }});
+        window.setTimeout(fetchControlState, 400);
+      }} catch (error) {{
+        if (controlStatus) {{
+          controlStatus.textContent = renderControlStatusText({{ status: 'unreachable', url: controlUrl }}, {{ last_action: '-', last_error: error.message }}, error.message);
+        }}
+      }} finally {{
+        btn.disabled = false;
+      }}
+    }}));
+    controlMarketProfileReviewButtons.forEach((btn) => btn.addEventListener('click', async () => {{
+      btn.disabled = true;
+      try {{
+        const reviewPayload = {{
+          portfolio_id: btn.dataset.portfolioId,
+          status: btn.dataset.reviewStatus,
+        }};
+        if ((btn.dataset.reviewStatus || '') === 'APPLIED') {{
+          const commitLabel = currentLanguage === 'en'
+            ? 'Optional config commit SHA (leave blank to use current HEAD)'
+            : '可选配置提交 SHA（留空则自动使用当前 HEAD）';
+          const diffLabel = currentLanguage === 'en'
+            ? 'Optional config diff note'
+            : '可选配置变更说明';
+          const noteLabel = currentLanguage === 'en'
+            ? 'Optional operator note'
+            : '可选操作备注';
+          const commitValue = window.prompt(commitLabel, '');
+          if (commitValue === null) {{
+            return;
+          }}
+          const diffValue = window.prompt(diffLabel, '');
+          if (diffValue === null) {{
+            return;
+          }}
+          const noteValue = window.prompt(noteLabel, '');
+          if (noteValue === null) {{
+            return;
+          }}
+          reviewPayload.config_commit_sha = commitValue.trim();
+          reviewPayload.config_diff_note = diffValue.trim();
+          reviewPayload.operator_note = noteValue.trim();
+        }}
+        await postControl('/review_market_profile_patch', {{
+          ...reviewPayload,
         }});
         window.setTimeout(fetchControlState, 400);
       }} catch (error) {{

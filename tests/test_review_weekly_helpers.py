@@ -69,6 +69,9 @@ def test_read_csv_rows_and_markdown_writer(tmp_path: Path):
                 "market_rules_summary": "settlement=T+1 | buy_lot=1 | ETF-first below 25000.00",
                 "adaptive_strategy_name": "ACM-RS",
                 "adaptive_strategy_summary": "ACM-RS | RS=126/63/20 | rebalance=weekly | entry_delay=15-30m",
+                "adaptive_strategy_market_profile_note": "当前使用 US trend-first 市场档案；计划=staged=3x | no_trade_band=3.0%；regime=vol=1.00%/1.80% | risk_on=0.50；执行=min_edge=16.0bps | edge_buffer=5.0bps。",
+                "market_profile_tuning_note": "本周压仓主要来自策略主动控仓，优先复核 risk_on / hard_risk_off、no_trade_band 和 turnover_penalty，而不是先改风险 overlay。（策略 6.0% | 风险 12.0% | 执行 0.0%）",
+                "market_profile_readiness_summary": "当前仅连续 1 周维持同方向，先继续观察到至少 2 周再决定是否人工应用。",
                 "strategy_effective_controls_note": "策略主动转入防守，按 中等资金 上限把有效目标仓位从 36% 收到 30%。",
                 "execution_gate_summary": "另外有 2 笔计划单因执行 gate 暂未下发（流动性 1，人工复核 1）。",
                 "weekly_strategy_note": "本周有 2 个新开仓机会因防守环境被降级为观察，先不把回撤信号直接转成加仓动作。",
@@ -91,6 +94,9 @@ def test_read_csv_rows_and_markdown_writer(tmp_path: Path):
         feedback_threshold_tuning_rows=[],
         labeling_summary={},
         labeling_skip_rows=[],
+        outcome_spread_rows=[],
+        edge_realization_rows=[],
+        blocked_edge_attribution_rows=[],
         attribution_rows=[
             {
                 "portfolio_id": "US:watchlist",
@@ -116,6 +122,7 @@ def test_read_csv_rows_and_markdown_writer(tmp_path: Path):
         execution_session_rows=[],
         execution_hotspot_rows=[],
         execution_feedback_rows=[],
+        control_timeseries_rows=[],
         window_label="2026-W13",
     )
     text = out_path.read_text(encoding="utf-8")
@@ -124,6 +131,9 @@ def test_read_csv_rows_and_markdown_writer(tmp_path: Path):
     assert "账户档位: 小资金" in text
     assert "市场约束: settlement=T+1" in text
     assert "策略框架: ACM-RS" in text
+    assert "市场档案: 当前使用 US trend-first 市场档案" in text
+    assert "参数调优: 本周压仓主要来自策略主动控仓" in text
+    assert "建议状态: 当前仅连续 1 周维持同方向" in text
     assert "策略控仓: 策略主动转入防守" in text
     assert "执行阻断: 另外有 2 笔计划单因执行 gate 暂未下发" in text
     assert "周度解释: 本周有 2 个新开仓机会因防守环境被降级为观察" in text

@@ -97,6 +97,12 @@ class EnrichmentProvidersTests(unittest.TestCase):
             def _finnhub_api_key() -> str:
                 return "test"
 
+            def _read_generic_cache(self, namespace, key, ttl_sec=0):
+                return None
+
+            def _write_generic_cache(self, namespace, key, value):
+                return None
+
             def _finnhub_get(self, path, params, **kwargs):
                 if path != "stock/recommendation":
                     raise AssertionError(path)

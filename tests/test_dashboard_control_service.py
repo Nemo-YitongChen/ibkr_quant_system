@@ -16,6 +16,7 @@ class DashboardControlServiceTests(unittest.TestCase):
             run_preflight=lambda payload: {"ok": True, "payload": payload},
             run_weekly_review=lambda payload: {"ok": True, "payload": payload},
             apply_weekly_feedback=lambda payload: {"ok": True, "payload": payload},
+            review_market_profile_patch=lambda payload: {"ok": True, "payload": payload},
             refresh_dashboard=lambda payload: {"ok": True},
             toggle_flag=lambda payload: {"ok": True},
             set_execution_mode=lambda payload: {"ok": True, "payload": payload},

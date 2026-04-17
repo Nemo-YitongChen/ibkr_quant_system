@@ -224,6 +224,23 @@ class SupervisorCliTests(unittest.TestCase):
                                 "feedback_reason": "execution hotspot",
                             }
                         ],
+                        "market_profile_tuning_summary": [
+                            {
+                                "portfolio_id": "US:watchlist",
+                                "market": "US",
+                                "adaptive_strategy_active_market_profile": "US",
+                                "adaptive_strategy_market_profile_note": "US market profile active",
+                                "adaptive_strategy_active_market_plan_summary": "staged=3x | no_trade_band=3.0%",
+                                "adaptive_strategy_active_market_regime_summary": "vol=1.00%/1.80% | risk_on=0.50 | hard_off=0.25",
+                                "market_profile_tuning_target": "REGIME_PLAN",
+                                "market_profile_tuning_action": "REVIEW_REGIME_PLAN",
+                                "market_profile_tuning_bias": "TOO_TIGHT",
+                                "market_profile_tuning_note": (
+                                    "本周压仓主要来自策略主动控仓，优先复核 risk_on / hard_risk_off、"
+                                    "no_trade_band 和 turnover_penalty，而不是先改风险 overlay。"
+                                ),
+                            }
+                        ],
                     }
                 ),
                 encoding="utf-8",
@@ -251,6 +268,33 @@ class SupervisorCliTests(unittest.TestCase):
             )
             supervisor = Supervisor(str(cfg_path))
             item = dict(supervisor.markets[0].reports[0])
+            control_portfolio = supervisor._dashboard_control_portfolios()["US:watchlist"]
+            self.assertTrue(bool(control_portfolio["weekly_feedback_market_profile_review_required"]))
+            self.assertIn(
+                "regime_risk_on_threshold",
+                str(control_portfolio["weekly_feedback_market_profile_review_summary"]),
+            )
+            self.assertIn(
+                "no_trade_band_pct: 0.03 -> 0.025",
+                str(control_portfolio["weekly_feedback_market_profile_suggested_patch_summary"]),
+            )
+            self.assertIn(
+                "优先改 no_trade_band_pct: 0.03 -> 0.025",
+                str(control_portfolio["weekly_feedback_market_profile_primary_summary"]),
+            )
+            self.assertIn(
+                "当前未到人工应用阶段",
+                str(control_portfolio["weekly_feedback_market_profile_manual_apply_summary"]),
+            )
+            self.assertEqual(
+                len(dict(control_portfolio["weekly_feedback_market_profile_manual_apply_patch"]).get("apply_items", [])),
+                0,
+            )
+            self.assertFalse(bool(control_portfolio["weekly_feedback_market_profile_ready_for_manual_apply"]))
+            self.assertIn(
+                "至少 2 周",
+                str(control_portfolio["weekly_feedback_market_profile_readiness_summary"]),
+            )
             effective_investment = supervisor._effective_investment_config_path(item, "US")
             effective_execution = supervisor._effective_execution_config_path(item, "US")
             self.assertNotEqual(effective_investment, investment_cfg_path.resolve())
@@ -262,10 +306,43 @@ class SupervisorCliTests(unittest.TestCase):
             self.assertEqual(int(effective_investment_cfg["plan"]["review_window_days"]), 97)
             self.assertEqual(effective_investment_cfg["weekly_feedback"]["signal_penalties"][0]["symbol"], "AAPL")
             self.assertEqual(effective_investment_cfg["weekly_feedback"]["execution_penalties"][0]["symbol"], "AAPL")
+            self.assertEqual(str(effective_investment_cfg["weekly_feedback"]["market_profile_tuning_action"]), "REVIEW_REGIME_PLAN")
+            self.assertEqual(str(effective_investment_cfg["weekly_feedback"]["market_profile"]), "US")
+            self.assertTrue(bool(effective_investment_cfg["weekly_feedback"]["market_profile_review_required"]))
+            self.assertIn(
+                "regime_risk_on_threshold",
+                str(effective_investment_cfg["weekly_feedback"]["market_profile_review_summary"]),
+            )
+            self.assertEqual(
+                str(effective_investment_cfg["weekly_feedback"]["market_profile_review_draft"]["scope"]),
+                "REGIME_PLAN",
+            )
+            self.assertEqual(
+                str(effective_investment_cfg["weekly_feedback"]["market_profile_primary_summary"]),
+                "优先改 no_trade_band_pct: 0.03 -> 0.025 (先改 no-trade band / 低风险)",
+            )
+            self.assertIn(
+                "当前未到人工应用阶段",
+                str(effective_investment_cfg["weekly_feedback"]["market_profile_manual_apply_summary"]),
+            )
+            self.assertEqual(
+                len(dict(effective_investment_cfg["weekly_feedback"]["market_profile_manual_apply_patch"]).get("apply_items", [])),
+                0,
+            )
+            self.assertEqual(
+                str(effective_investment_cfg["weekly_feedback"]["market_profile_suggested_patch"]["items"][0]["field"]),
+                "no_trade_band_pct",
+            )
+            self.assertEqual(
+                float(effective_investment_cfg["weekly_feedback"]["market_profile_suggested_patch"]["items"][0]["suggested_value"]),
+                0.025,
+            )
             self.assertAlmostEqual(float(effective_execution_cfg["execution"]["shadow_ml_min_score_auto_submit"]), 0.00, places=6)
             self.assertAlmostEqual(float(effective_execution_cfg["execution"]["shadow_ml_min_positive_prob_auto_submit"]), 0.50, places=6)
             self.assertEqual(effective_execution_cfg["execution"]["execution_hotspot_penalties"][0]["symbol"], "AAPL")
             self.assertEqual(effective_execution_cfg["weekly_feedback"]["execution_hotspot_penalties"][0]["symbol"], "AAPL")
+            self.assertEqual(str(effective_execution_cfg["weekly_feedback"]["market_profile_tuning_action"]), "REVIEW_REGIME_PLAN")
+            self.assertIn("turnover_penalty", str(effective_execution_cfg["weekly_feedback"]["market_profile_tuning_note"]))
 
     def test_supervisor_paper_weekly_feedback_decays_previous_execution_penalties(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -496,6 +573,22 @@ class SupervisorCliTests(unittest.TestCase):
                                 "feedback_reason": "execution tighten",
                             }
                         ],
+                        "market_profile_tuning_summary": [
+                            {
+                                "portfolio_id": "US:watchlist",
+                                "market": "US",
+                                "adaptive_strategy_active_market_profile": "US",
+                                "adaptive_strategy_market_profile_note": "US market profile active",
+                                "adaptive_strategy_active_market_execution_summary": "min_edge=18.0bps | edge_buffer=6.0bps",
+                                "market_profile_tuning_target": "EXECUTION_GATE",
+                                "market_profile_tuning_action": "REVIEW_EXECUTION_GATE",
+                                "market_profile_tuning_bias": "TOO_TIGHT",
+                                "market_profile_tuning_note": (
+                                    "本周更明显的阻断来自 execution edge gate，优先复核 "
+                                    "min_expected_edge_bps / edge_cost_buffer_bps，而不是继续收紧执行节奏。"
+                                ),
+                            }
+                        ],
                     }
                 ),
                 encoding="utf-8",
@@ -526,13 +619,122 @@ class SupervisorCliTests(unittest.TestCase):
             item = supervisor.markets[0].reports[0]
             self.assertFalse(supervisor._weekly_feedback_auto_apply_enabled(item, "US"))
             self.assertEqual(supervisor._effective_execution_config_path(item, "US"), execution_cfg_path.resolve())
+            control_portfolio = supervisor._dashboard_control_portfolios()["US:watchlist"]
+            self.assertIn(
+                "min_expected_edge_bps",
+                str(control_portfolio["weekly_feedback_market_profile_review_summary"]),
+            )
+            self.assertIn(
+                "edge_cost_buffer_bps: 5.0 -> 4.0",
+                str(control_portfolio["weekly_feedback_market_profile_suggested_patch_summary"]),
+            )
+            self.assertIn(
+                "优先改 edge_cost_buffer_bps: 5.0 -> 4.0",
+                str(control_portfolio["weekly_feedback_market_profile_primary_summary"]),
+            )
+            self.assertIn(
+                "当前未到人工应用阶段",
+                str(control_portfolio["weekly_feedback_market_profile_manual_apply_summary"]),
+            )
+            review_result = supervisor._dashboard_control_review_market_profile_patch(
+                {"portfolio_id": "US:watchlist", "status": "APPROVED"}
+            )
+            self.assertFalse(bool(review_result.get("ok", False)))
+            self.assertEqual(str(review_result.get("error") or ""), "manual_patch_not_ready")
+            reject_result = supervisor._dashboard_control_review_market_profile_patch(
+                {"portfolio_id": "US:watchlist", "status": "REJECTED"}
+            )
+            self.assertTrue(bool(reject_result.get("ok", False)))
+            self.assertEqual(str(reject_result.get("review_status") or ""), "REJECTED")
+            self.assertIn("已驳回", str(reject_result.get("review_status_summary") or ""))
+            self.assertEqual(len(list(reject_result.get("review_history") or [])), 1)
+            self.assertEqual(str(list(reject_result.get("review_history") or [])[0]["status"]), "REJECTED")
+            clear_result = supervisor._dashboard_control_review_market_profile_patch(
+                {"portfolio_id": "US:watchlist", "status": "CLEAR"}
+            )
+            self.assertTrue(bool(clear_result.get("ok", False)))
+            self.assertEqual(str(clear_result.get("review_status") or ""), "PENDING")
+            self.assertIn("已驳回", str(clear_result.get("review_history_summary") or ""))
+            self.assertIn("已清除", str(clear_result.get("review_history_summary") or ""))
+            self.assertEqual(len(list(clear_result.get("review_history") or [])), 2)
+            self.assertEqual(str(list(clear_result.get("review_history") or [])[1]["status"]), "CLEAR")
+            self.assertFalse(bool(control_portfolio["weekly_feedback_market_profile_ready_for_manual_apply"]))
             result = supervisor._dashboard_control_apply_weekly_feedback({"portfolio_id": "US:watchlist"})
             self.assertTrue(bool(result.get("ok", False)))
             self.assertTrue(str(result.get("weekly_feedback_signature", "") or "").strip())
+            self.assertEqual(str(result.get("market_profile_tuning_action") or ""), "REVIEW_EXECUTION_GATE")
+            self.assertEqual(str(result.get("market_profile_tuning_target") or ""), "EXECUTION_GATE")
+            self.assertIn("min_expected_edge_bps", str(result.get("market_profile_tuning_note") or ""))
+            self.assertTrue(bool(result.get("market_profile_review_required", False)))
+            self.assertIn("min_expected_edge_bps", str(result.get("market_profile_review_summary") or ""))
+            self.assertEqual(str(dict(result.get("market_profile_review_draft") or {}).get("scope") or ""), "EXECUTION")
+            self.assertIn("edge_cost_buffer_bps: 5.0 -> 4.0", str(result.get("market_profile_suggested_patch_summary") or ""))
+            self.assertEqual(
+                str(result.get("market_profile_primary_summary") or ""),
+                "优先改 edge_cost_buffer_bps: 5.0 -> 4.0 (先改低风险 buffer / 低风险)",
+            )
+            self.assertIn("当前未到人工应用阶段", str(result.get("market_profile_manual_apply_summary") or ""))
+            self.assertEqual(
+                len(dict(result.get("market_profile_manual_apply_patch") or {}).get("apply_items", [])),
+                0,
+            )
+            self.assertFalse(bool(result.get("market_profile_ready_for_manual_apply", False)))
+            self.assertIn("至少 2 周", str(result.get("market_profile_readiness_summary") or ""))
+            self.assertEqual(len(list(result.get("market_profile_review_history") or [])), 2)
+            self.assertIn("已清除", str(result.get("market_profile_review_history_summary") or ""))
+            self.assertEqual(
+                str(dict(result.get("market_profile_suggested_patch") or {}).get("items", [])[0]["field"]),
+                "edge_cost_buffer_bps",
+            )
+            self.assertEqual(
+                float(dict(result.get("market_profile_suggested_patch") or {}).get("items", [])[0]["suggested_value"]),
+                4.0,
+            )
+            supervisor._write_dashboard_control_state()
+            reloaded = Supervisor(str(cfg_path))
+            reloaded_portfolio = reloaded._dashboard_control_portfolios()["US:watchlist"]
+            self.assertEqual(len(list(reloaded_portfolio.get("weekly_feedback_market_profile_review_history") or [])), 2)
+            self.assertIn(
+                "已清除",
+                str(reloaded_portfolio.get("weekly_feedback_market_profile_review_history_summary") or ""),
+            )
+            patch_json = summary_dir / "market_profile_manual_patch_candidates.json"
+            artifact_payload = json.loads(patch_json.read_text(encoding="utf-8"))
+            self.assertEqual(len(list(artifact_payload["patch_candidates"][0]["review_history"] or [])), 2)
+            self.assertEqual(str(artifact_payload["patch_candidates"][0]["review_history"][1]["status"]), "CLEAR")
             self.assertTrue(supervisor._weekly_feedback_auto_apply_enabled(item, "US"))
             self.assertNotEqual(supervisor._effective_execution_config_path(item, "US"), execution_cfg_path.resolve())
             self.assertNotEqual(supervisor._effective_investment_config_path(item, "US"), investment_cfg_path.resolve())
             self.assertNotEqual(supervisor._effective_paper_config_path(item, "US"), paper_cfg_path.resolve())
+            effective_execution_cfg = yaml.safe_load(
+                supervisor._effective_execution_config_path(item, "US").read_text(encoding="utf-8")
+            )
+            self.assertEqual(str(effective_execution_cfg["weekly_feedback"]["market_profile_tuning_action"]), "REVIEW_EXECUTION_GATE")
+            self.assertTrue(bool(effective_execution_cfg["weekly_feedback"]["market_profile_review_required"]))
+            self.assertEqual(
+                str(effective_execution_cfg["weekly_feedback"]["market_profile_review_draft"]["scope"]),
+                "EXECUTION",
+            )
+            self.assertEqual(
+                str(effective_execution_cfg["weekly_feedback"]["market_profile_primary_summary"]),
+                "优先改 edge_cost_buffer_bps: 5.0 -> 4.0 (先改低风险 buffer / 低风险)",
+            )
+            self.assertIn(
+                "当前未到人工应用阶段",
+                str(effective_execution_cfg["weekly_feedback"]["market_profile_manual_apply_summary"]),
+            )
+            self.assertEqual(
+                len(dict(effective_execution_cfg["weekly_feedback"]["market_profile_manual_apply_patch"]).get("apply_items", [])),
+                0,
+            )
+            self.assertEqual(
+                str(effective_execution_cfg["weekly_feedback"]["market_profile_suggested_patch"]["items"][0]["field"]),
+                "edge_cost_buffer_bps",
+            )
+            self.assertEqual(
+                float(effective_execution_cfg["weekly_feedback"]["market_profile_suggested_patch"]["items"][0]["suggested_value"]),
+                4.0,
+            )
 
     def test_supervisor_paper_weekly_execution_feedback_builds_effective_execution_overlay(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -888,6 +1090,206 @@ class SupervisorCliTests(unittest.TestCase):
             result = supervisor._dashboard_control_apply_weekly_feedback({"portfolio_id": "US:watchlist"})
             self.assertTrue(bool(result.get("ok", False)))
             self.assertNotEqual(supervisor._effective_execution_config_path(item, "US"), execution_cfg_path.resolve())
+
+    def test_supervisor_market_profile_manual_apply_patch_promotes_primary_item_only_when_ready(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            summary_dir = base / "reports_supervisor"
+            weekly_dir = base / "reports_investment_weekly"
+            weekly_dir.mkdir(parents=True, exist_ok=True)
+            execution_cfg_path = base / "investment_execution_us.yaml"
+            ibkr_cfg_path = base / "ibkr_us.yaml"
+            execution_cfg_path.write_text(
+                "\n".join(
+                    [
+                        "execution:",
+                        "  adv_max_participation_pct: 0.05",
+                        "  adv_split_trigger_pct: 0.02",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            ibkr_cfg_path.write_text(
+                "\n".join(
+                    [
+                        'mode: "paper"',
+                        'execution_mode: "investment_only"',
+                        'account_id: "DU1234567"',
+                        f'investment_execution_config: "{execution_cfg_path}"',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (weekly_dir / "weekly_review_summary.json").write_text(
+                json.dumps(
+                    {
+                        "market_profile_tuning_summary": [
+                            {
+                                "portfolio_id": "US:watchlist",
+                                "market": "US",
+                                "adaptive_strategy_active_market_profile": "US",
+                                "adaptive_strategy_market_profile_note": "US market profile active",
+                                "adaptive_strategy_active_market_execution_summary": "min_edge=16.0bps | edge_buffer=5.0bps",
+                                "market_profile_tuning_target": "EXECUTION_GATE",
+                                "market_profile_tuning_action": "REVIEW_EXECUTION_GATE",
+                                "market_profile_tuning_bias": "TOO_TIGHT",
+                                "market_profile_tuning_note": "最近两周都显示 execution gate 偏紧，先尝试一档更温和的 buffer。",
+                                "market_profile_ready_for_manual_apply": 1,
+                                "market_profile_readiness_label": "READY_FOR_MANUAL_APPLY",
+                                "market_profile_readiness_summary": "连续 2 周同方向且无冲突，可升级为人工应用候选。",
+                            }
+                        ]
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            cfg_path = base / "supervisor.yaml"
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        f'summary_out_dir: "{summary_dir}"',
+                        "dashboard_control_enabled: true",
+                        f'dashboard_weekly_review_dir: "{weekly_dir}"',
+                        "weekly_review_auto_apply_paper: true",
+                        "weekly_review_auto_apply_live: false",
+                        "markets:",
+                        '  - name: "us"',
+                        '    market: "US"',
+                        "    enabled: true",
+                        "    reports:",
+                        '      - kind: "investment"',
+                        '        watchlist_yaml: "config/watchlist.yaml"',
+                        f'        ibkr_config: "{ibkr_cfg_path}"',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(cfg_path))
+            control_portfolio = supervisor._dashboard_control_portfolios()["US:watchlist"]
+            self.assertTrue(bool(control_portfolio["weekly_feedback_market_profile_ready_for_manual_apply"]))
+            self.assertIn(
+                "建议先人工应用 1 项",
+                str(control_portfolio["weekly_feedback_market_profile_manual_apply_summary"]),
+            )
+            control_patch = dict(control_portfolio["weekly_feedback_market_profile_manual_apply_patch"] or {})
+            self.assertEqual(str(control_patch.get("mode") or ""), "PRIMARY_ONLY")
+            self.assertEqual(int(control_patch.get("apply_item_count") or 0), 1)
+            self.assertEqual(int(control_patch.get("deferred_item_count") or 0), 1)
+            self.assertEqual(str(control_patch.get("apply_items", [])[0]["field"]), "edge_cost_buffer_bps")
+            self.assertEqual(float(control_patch.get("apply_items", [])[0]["suggested_value"]), 4.0)
+            approve_result = supervisor._dashboard_control_review_market_profile_patch(
+                {"portfolio_id": "US:watchlist", "status": "APPROVED"}
+            )
+            self.assertTrue(bool(approve_result.get("ok", False)))
+            self.assertEqual(str(approve_result.get("review_status") or ""), "APPROVED")
+            self.assertIn("已批准", str(approve_result.get("review_status_summary") or ""))
+            self.assertEqual(len(list(approve_result.get("review_history") or [])), 1)
+            self.assertEqual(str(list(approve_result.get("review_history") or [])[0]["status"]), "APPROVED")
+            self.assertIn("已批准", str(approve_result.get("review_history_summary") or ""))
+            applied_result = supervisor._dashboard_control_review_market_profile_patch(
+                {
+                    "portfolio_id": "US:watchlist",
+                    "status": "APPLIED",
+                    "config_commit_sha": "deadbeef1234567890",
+                    "config_diff_note": "reduced edge buffer by 1bp after 2-week cohort",
+                    "operator_note": "approved after manual review",
+                }
+            )
+            self.assertTrue(bool(applied_result.get("ok", False)))
+            self.assertEqual(str(applied_result.get("review_status") or ""), "APPLIED")
+            self.assertTrue(str(applied_result.get("applied_ts") or "").strip())
+            self.assertIn("config=", str(applied_result.get("review_evidence_summary") or ""))
+            self.assertTrue(str(dict(applied_result.get("review_evidence") or {}).get("config_file") or "").endswith(".yaml"))
+            self.assertEqual(str(applied_result.get("config_commit_sha") or ""), "deadbeef1234567890")
+            self.assertEqual(
+                str(dict(applied_result.get("review_evidence") or {}).get("config_diff_note") or ""),
+                "reduced edge buffer by 1bp after 2-week cohort",
+            )
+            self.assertEqual(
+                str(dict(applied_result.get("review_evidence") or {}).get("operator_note") or ""),
+                "approved after manual review",
+            )
+            self.assertEqual(len(list(applied_result.get("review_history") or [])), 2)
+            self.assertEqual(str(list(applied_result.get("review_history") or [])[0]["status"]), "APPROVED")
+            self.assertEqual(str(list(applied_result.get("review_history") or [])[1]["status"]), "APPLIED")
+            self.assertIn("已应用", str(applied_result.get("review_history_summary") or ""))
+            result = supervisor._dashboard_control_apply_weekly_feedback({"portfolio_id": "US:watchlist"})
+            self.assertTrue(bool(result.get("ok", False)))
+            self.assertTrue(bool(result.get("market_profile_ready_for_manual_apply", False)))
+            self.assertIn("建议先人工应用 1 项", str(result.get("market_profile_manual_apply_summary") or ""))
+            self.assertEqual(str(result.get("market_profile_review_status") or ""), "APPLIED")
+            self.assertIn("已应用", str(result.get("market_profile_review_status_summary") or ""))
+            self.assertEqual(len(list(result.get("market_profile_review_history") or [])), 2)
+            self.assertIn("已批准", str(result.get("market_profile_review_history_summary") or ""))
+            self.assertIn("已应用", str(result.get("market_profile_review_history_summary") or ""))
+            self.assertIn("config=", str(result.get("market_profile_review_evidence_summary") or ""))
+            self.assertTrue(str(dict(result.get("market_profile_review_evidence") or {}).get("config_file") or "").endswith(".yaml"))
+            self.assertEqual(str(dict(result.get("market_profile_review_evidence") or {}).get("config_commit_sha") or ""), "deadbeef1234567890")
+            self.assertEqual(
+                str(dict(result.get("market_profile_review_evidence") or {}).get("config_diff_note") or ""),
+                "reduced edge buffer by 1bp after 2-week cohort",
+            )
+            self.assertEqual(
+                str(dict(result.get("market_profile_review_evidence") or {}).get("operator_note") or ""),
+                "approved after manual review",
+            )
+            result_patch = dict(result.get("market_profile_manual_apply_patch") or {})
+            self.assertEqual(str(result_patch.get("mode") or ""), "PRIMARY_ONLY")
+            self.assertEqual(int(result_patch.get("apply_item_count") or 0), 1)
+            self.assertEqual(str(result_patch.get("candidate_item", {}).get("field") or ""), "edge_cost_buffer_bps")
+            self.assertEqual(str(result_patch.get("apply_items", [])[0]["field"]), "edge_cost_buffer_bps")
+            supervisor._write_dashboard_control_state()
+            artifact_json = summary_dir / "market_profile_manual_patch_candidates.json"
+            artifact_yaml = summary_dir / "market_profile_manual_patch_candidates.yaml"
+            self.assertTrue(artifact_json.exists())
+            self.assertTrue(artifact_yaml.exists())
+            artifact_payload = json.loads(artifact_json.read_text(encoding="utf-8"))
+            self.assertEqual(int(artifact_payload["candidate_count"]), 1)
+            self.assertEqual(int(artifact_payload["ready_for_manual_apply_count"]), 1)
+            self.assertEqual(str(artifact_payload["patch_candidates"][0]["portfolio_id"]), "US:watchlist")
+            self.assertEqual(str(artifact_payload["patch_candidates"][0]["review_status"]), "APPLIED")
+            self.assertIn("已应用", str(artifact_payload["patch_candidates"][0]["review_status_summary"]))
+            self.assertEqual(len(list(artifact_payload["patch_candidates"][0]["review_history"] or [])), 2)
+            self.assertIn("已批准", str(artifact_payload["patch_candidates"][0]["review_history_summary"] or ""))
+            self.assertIn("已应用", str(artifact_payload["patch_candidates"][0]["review_history_summary"] or ""))
+            self.assertIn("config=", str(artifact_payload["patch_candidates"][0]["review_evidence_summary"]))
+            self.assertTrue(
+                str(dict(artifact_payload["patch_candidates"][0]["review_evidence"]).get("config_file") or "").endswith(".yaml")
+            )
+            self.assertEqual(
+                str(dict(artifact_payload["patch_candidates"][0]["review_evidence"]).get("config_commit_sha") or ""),
+                "deadbeef1234567890",
+            )
+            self.assertEqual(
+                str(dict(artifact_payload["patch_candidates"][0]["review_evidence"]).get("config_diff_note") or ""),
+                "reduced edge buffer by 1bp after 2-week cohort",
+            )
+            self.assertEqual(
+                str(dict(artifact_payload["patch_candidates"][0]["review_evidence"]).get("operator_note") or ""),
+                "approved after manual review",
+            )
+            self.assertEqual(
+                str(artifact_payload["patch_candidates"][0]["manual_apply_patch"]["mode"]),
+                "PRIMARY_ONLY",
+            )
+            self.assertEqual(
+                str(artifact_payload["patch_candidates"][0]["manual_apply_patch"]["apply_items"][0]["field"]),
+                "edge_cost_buffer_bps",
+            )
+            artifact_yaml_payload = yaml.safe_load(artifact_yaml.read_text(encoding="utf-8"))
+            self.assertEqual(
+                str(artifact_yaml_payload["patch_candidates"][0]["manual_apply_patch"]["candidate_item"]["field"]),
+                "edge_cost_buffer_bps",
+            )
+            self.assertEqual(len(list(artifact_yaml_payload["patch_candidates"][0]["review_history"] or [])), 2)
+            self.assertIn("config=", str(artifact_yaml_payload["patch_candidates"][0]["review_evidence_summary"]))
+            self.assertEqual(
+                str(dict(artifact_yaml_payload["patch_candidates"][0]["review_evidence"]).get("config_commit_sha") or ""),
+                "deadbeef1234567890",
+            )
 
     def test_supervisor_paper_weekly_execution_feedback_can_target_open_session_only(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1446,6 +1848,19 @@ class SupervisorCliTests(unittest.TestCase):
                     if mock_weekly.called:
                         break
                     time.sleep(0.01)
+                control_state_path = summary_dir / "dashboard_control_state.json"
+                patch_json_path = summary_dir / "market_profile_manual_patch_candidates.json"
+                patch_yaml_path = summary_dir / "market_profile_manual_patch_candidates.yaml"
+                for _ in range(80):
+                    if (
+                        (not supervisor._dashboard_control_weekly_review_in_progress)
+                        and control_state_path.exists()
+                        and patch_json_path.exists()
+                        and patch_yaml_path.exists()
+                    ):
+                        break
+                    time.sleep(0.01)
+                time.sleep(0.02)
             mock_weekly.assert_called()
             self.assertTrue(bool(mock_weekly.call_args.kwargs.get("force", False)))
             mock_refresh.assert_called()
@@ -4074,12 +4489,71 @@ class SupervisorCliTests(unittest.TestCase):
                                 "market_rules_summary": "settlement=T+1 / no same-day round trip",
                                 "adaptive_strategy_name": "ACM-RS",
                                 "adaptive_strategy_summary": "上涨做相对强弱，高波动看回撤，下跌先防守；周调仓。",
+                                "adaptive_strategy_market_profile_note": "当前使用 US trend-first 市场档案；计划=staged=3x | no_trade_band=3.0%；regime=vol=1.00%/1.80% | risk_on=0.50；执行=min_edge=16.0bps | edge_buffer=5.0bps。",
+                                "market_profile_tuning_note": "本周压仓主要来自策略主动控仓，优先复核 risk_on / hard_risk_off、no_trade_band 和 turnover_penalty，而不是先改风险 overlay。",
                                 "strategy_effective_controls_note": "策略主动转入防守，按 中等资金 上限把有效目标仓位从 36% 收到 30%。",
                                 "execution_gate_summary": "另外有 2 笔计划单因执行 gate 暂未下发（流动性 1，人工复核 1）。",
                                 "weekly_strategy_note": "本周有 2 个新开仓机会因防守环境被降级为观察，先不把回撤信号直接转成加仓动作。",
                             }
                         ]
                     }
+                ),
+                encoding="utf-8",
+            )
+            summary_dir.mkdir(parents=True, exist_ok=True)
+            (summary_dir / "dashboard_control_state.json").write_text(
+                json.dumps(
+                    {
+                        "service": {
+                            "enabled": True,
+                            "status": "running",
+                            "host": "127.0.0.1",
+                            "port": 8877,
+                            "url": "http://127.0.0.1:8877",
+                        },
+                        "actions": {
+                            "run_once_in_progress": False,
+                            "weekly_review_in_progress": False,
+                            "last_action": "refresh_dashboard",
+                            "last_action_ts": "2026-03-23T12:00:00",
+                            "last_error": "",
+                        },
+                        "portfolios": {
+                            "US:watchlist": {
+                                "portfolio_id": "US:watchlist",
+                                "market": "US",
+                                "watchlist": "watchlist",
+                                "account_mode": "paper",
+                                "execution_control_mode": "AUTO",
+                                "weekly_feedback_market_profile_review_summary": (
+                                    "建议复核 US/US regime/计划参数：regime_risk_on_threshold, "
+                                    "regime_hard_risk_off_threshold, no_trade_band_pct, turnover_penalty_scale。"
+                                ),
+                                "weekly_feedback_market_profile_primary_summary": (
+                                    "优先改 no_trade_band_pct: 0.03 -> 0.025 (先改 no-trade band / 低风险)"
+                                ),
+                                "weekly_feedback_market_profile_manual_apply_summary": (
+                                    "当前未到人工应用阶段；若 cohort 持续一致，优先先人工应用 "
+                                    "no_trade_band_pct: 0.03 -> 0.025。"
+                                ),
+                                "weekly_feedback_market_profile_review_status_summary": "待审批",
+                                "weekly_feedback_market_profile_review_history_summary": (
+                                    "已驳回 @ 2026-03-21T09:30:00 -> 已清除 @ 2026-03-21T10:15:00"
+                                ),
+                                "weekly_feedback_market_profile_suggested_patch_summary": (
+                                    "建议先调整 US 市场档案：no_trade_band_pct: 0.03 -> 0.025；"
+                                    "turnover_penalty_scale: 0.15 -> 0.12；"
+                                    "regime_risk_on_threshold: 0.5 -> 0.48；"
+                                    "regime_hard_risk_off_threshold: 0.25 -> 0.23；"
+                                    "再观察 2 周。"
+                                ),
+                                "weekly_feedback_market_profile_readiness_summary": (
+                                    "当前仅连续 1 周维持同方向，先继续观察到至少 2 周再决定是否人工应用。"
+                                ),
+                            }
+                        },
+                    },
+                    ensure_ascii=False,
                 ),
                 encoding="utf-8",
             )
@@ -4113,9 +4587,28 @@ class SupervisorCliTests(unittest.TestCase):
             self.assertIn('data-simple-section="weekly-strategy-context"', html_text)
             self.assertIn("本周策略解释", html_text)
             self.assertIn("周度解释", html_text)
+            self.assertIn("市场档案", html_text)
+            self.assertIn("调优方向", html_text)
+            self.assertIn("复核草案", html_text)
+            self.assertIn("建议改动", html_text)
+            self.assertIn("优先改动", html_text)
+            self.assertIn("人工首改", html_text)
+            self.assertIn("审批状态", html_text)
+            self.assertIn("审批历史", html_text)
+            self.assertIn("建议状态", html_text)
             self.assertIn("策略控仓", html_text)
             self.assertIn("执行阻断", html_text)
             self.assertIn("settlement=T+1 / no same-day round trip", html_text)
+            self.assertIn("当前使用 US trend-first 市场档案", html_text)
+            self.assertIn("优先复核 risk_on / hard_risk_off", html_text)
+            self.assertIn("regime_risk_on_threshold", html_text)
+            self.assertIn("建议先调整 US 市场档案", html_text)
+            self.assertIn("优先改 no_trade_band_pct", html_text)
+            self.assertIn("当前未到人工应用阶段", html_text)
+            self.assertIn("待审批", html_text)
+            self.assertIn("已清除", html_text)
+            self.assertIn("0.48", html_text)
+            self.assertIn("先继续观察到至少 2 周", html_text)
             self.assertIn("策略主动转入防守", html_text)
             self.assertIn("2 笔计划单因执行 gate 暂未下发", html_text)
             self.assertIn("本周有 2 个新开仓机会因防守环境被降级为观察", html_text)

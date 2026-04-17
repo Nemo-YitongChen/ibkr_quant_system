@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from src.common.storage import Storage
 from src.tools import generate_dashboard
 from src.tools import reconcile_investment_broker
 from src.tools import review_investment_weekly
@@ -82,6 +83,25 @@ def _write_minimal_report_fixture(report_dir: Path) -> None:
                     "defensive_regime_detected": True,
                     "active_regime_states": ["RISK_OFF"],
                     "top_defensive_symbols": ["AAPL"],
+                },
+                "active_market_plan": {
+                    "profile_key": "US",
+                    "profile_label": "US trend-first",
+                    "summary_text": "staged=3x | no_trade_band=3.0%",
+                },
+                "active_market_regime": {
+                    "profile_key": "US",
+                    "profile_label": "US trend-first",
+                    "summary_text": "vol=1.00%/1.80% | risk_on=0.50",
+                },
+                "active_market_execution": {
+                    "profile_key": "US",
+                    "profile_label": "US trend-first",
+                    "summary_text": "min_edge=16.0bps | edge_buffer=5.0bps",
+                    "overrides": {
+                        "min_expected_edge_bps": 16.0,
+                        "edge_cost_buffer_bps": 5.0,
+                    },
                 },
             },
             ensure_ascii=False,
@@ -248,6 +268,99 @@ def test_investment_workflow_cli_smoke_generates_contract_artifacts(tmp_path, mo
     execution_stdout = capsys.readouterr().out
     assert "ibkr-quant-execution: investment execution run complete" in execution_stdout
 
+    storage = Storage(str(db_path))
+    storage.insert_investment_candidate_snapshot(
+        {
+            "snapshot_id": "SMOKE|final|AAPL",
+            "ts": "2026-02-01T00:00:00+00:00",
+            "market": "US",
+            "portfolio_id": portfolio_id,
+            "report_dir": str(report_dir),
+            "analysis_run_id": "SMOKE",
+            "stage": "final",
+            "symbol": "AAPL",
+            "action": "ACCUMULATE",
+            "direction": "LONG",
+            "score": 0.82,
+            "execution_score": 0.35,
+            "expected_cost_bps": 11.0,
+            "score_before_cost": 0.87,
+            "expected_edge_threshold": 0.20,
+            "expected_edge_score": 0.24,
+            "expected_edge_bps": 34.0,
+            "details": {
+                "stage_rank": 1,
+            },
+        }
+    )
+    storage.insert_investment_candidate_snapshot(
+        {
+            "snapshot_id": "SMOKE|deep|MSFT",
+            "ts": "2026-02-01T00:00:00+00:00",
+            "market": "US",
+            "portfolio_id": portfolio_id,
+            "report_dir": str(report_dir),
+            "analysis_run_id": "SMOKE",
+            "stage": "deep",
+            "symbol": "MSFT",
+            "action": "WATCH",
+            "direction": "LONG",
+            "score": 0.46,
+            "execution_score": 0.22,
+            "expected_cost_bps": 9.0,
+            "score_before_cost": 0.41,
+            "expected_edge_threshold": 0.18,
+            "expected_edge_score": 0.08,
+            "expected_edge_bps": 12.0,
+            "details": {
+                "stage_rank": 1,
+            },
+        }
+    )
+    for horizon_days, aapl_ret, msft_ret in (
+        (5, 0.03, 0.01),
+        (20, 0.07, 0.02),
+        (60, 0.12, 0.04),
+    ):
+        storage.upsert_investment_candidate_outcome(
+            {
+                "snapshot_id": "SMOKE|final|AAPL",
+                "market": "US",
+                "portfolio_id": portfolio_id,
+                "symbol": "AAPL",
+                "horizon_days": horizon_days,
+                "snapshot_ts": "2026-02-01T00:00:00+00:00",
+                "outcome_ts": "2026-03-01T00:00:00+00:00",
+                "direction": "LONG",
+                "start_close": 100.0,
+                "end_close": 107.0,
+                "future_return": aapl_ret,
+                "max_drawdown": -0.02,
+                "max_runup": aapl_ret,
+                "outcome_label": "POSITIVE",
+                "details": {"stage": "final", "action": "ACCUMULATE"},
+            }
+        )
+        storage.upsert_investment_candidate_outcome(
+            {
+                "snapshot_id": "SMOKE|deep|MSFT",
+                "market": "US",
+                "portfolio_id": portfolio_id,
+                "symbol": "MSFT",
+                "horizon_days": horizon_days,
+                "snapshot_ts": "2026-02-01T00:00:00+00:00",
+                "outcome_ts": "2026-03-01T00:00:00+00:00",
+                "direction": "LONG",
+                "start_close": 100.0,
+                "end_close": 102.0,
+                "future_return": msft_ret,
+                "max_drawdown": -0.01,
+                "max_runup": msft_ret,
+                "outcome_label": "POSITIVE",
+                "details": {"stage": "deep", "action": "WATCH"},
+            }
+        )
+
     review_investment_weekly.main(
         [
             "--market",
@@ -309,6 +422,13 @@ def test_investment_workflow_cli_smoke_generates_contract_artifacts(tmp_path, mo
         report_dir / "investment_execution_report.md",
         weekly_summary_path,
         weekly_dir / "weekly_execution_summary.csv",
+        weekly_dir / "weekly_outcome_spread_summary.csv",
+        weekly_dir / "weekly_edge_realization_summary.csv",
+        weekly_dir / "weekly_blocked_edge_attribution.csv",
+        weekly_dir / "weekly_tuning_dataset.csv",
+        weekly_dir / "weekly_tuning_dataset.json",
+        weekly_dir / "weekly_tuning_history_overview.csv",
+        weekly_dir / "weekly_control_timeseries.csv",
         weekly_dir / "weekly_review.md",
         reconcile_summary_path,
         reconcile_dir / "broker_reconciliation.csv",
@@ -332,6 +452,7 @@ def test_investment_workflow_cli_smoke_generates_contract_artifacts(tmp_path, mo
     assert paper_summary["adaptive_strategy_defensive_caps"] == 1
     assert paper_summary["adaptive_strategy_defensive_regime"] is True
     assert paper_summary["strategy_effective_controls_applied"] is True
+    assert "当前使用 US trend-first 市场档案" in paper_summary["adaptive_strategy_active_market_note"]
     assert paper_summary["target_invested_weight"] == pytest.approx(0.30)
     assert paper_summary["strategy_effective_controls"]["base_target_invested_weight"] == pytest.approx(0.60)
     assert paper_summary["strategy_effective_controls"]["effective_target_invested_weight"] == pytest.approx(0.30)
@@ -346,6 +467,7 @@ def test_investment_workflow_cli_smoke_generates_contract_artifacts(tmp_path, mo
     assert execution_summary["adaptive_strategy_name"] == "ACM-RS"
     assert execution_summary["adaptive_strategy_runtime_note"].startswith("enabled=true defensive_caps=1")
     assert execution_summary["strategy_effective_controls_applied"] is True
+    assert "当前使用 US trend-first 市场档案" in execution_summary["adaptive_strategy_active_market_note"]
     assert execution_summary["strategy_effective_controls"]["base_effective_target_invested_weight"] == pytest.approx(0.36)
     assert execution_summary["strategy_effective_controls"]["effective_target_invested_weight"] == pytest.approx(0.30)
     assert execution_summary["strategy_effective_controls"]["effective_account_allocation_pct"] == pytest.approx(0.50)
@@ -357,12 +479,22 @@ def test_investment_workflow_cli_smoke_generates_contract_artifacts(tmp_path, mo
     assert weekly_summary["portfolio_filter"] == portfolio_id
     assert weekly_summary["portfolio_count"] == 1
     assert weekly_summary["execution_run_count"] == 1
+    assert weekly_summary["weekly_tuning_dataset_summary"]["portfolio_count"] == 1
+    assert weekly_summary["weekly_tuning_dataset"][0]["portfolio_id"] == portfolio_id
+    assert weekly_summary["weekly_tuning_history_overview"][0]["portfolio_id"] == portfolio_id
+    assert weekly_summary["weekly_control_timeseries"][0]["portfolio_id"] == portfolio_id
+    assert weekly_summary["outcome_spread_summary"][0]["portfolio_id"] == portfolio_id
+    assert weekly_summary["edge_realization_summary"][0]["portfolio_id"] == portfolio_id
+    assert weekly_summary["blocked_edge_attribution_summary"][0]["portfolio_id"] == portfolio_id
+    assert "当前使用 US trend-first 市场档案" in weekly_summary["portfolio_strategy_context"][0]["adaptive_strategy_market_profile_note"]
+    assert str(weekly_summary["portfolio_strategy_context"][0]["market_profile_tuning_note"])
     assert weekly_summary["portfolio_strategy_context"][0]["strategy_effective_controls_applied"] is True
     assert "策略主动转入防守" in weekly_summary["portfolio_strategy_context"][0]["strategy_effective_controls_note"]
     assert weekly_summary["attribution_summary"][0]["strategy_control_weight_delta"] == pytest.approx(0.06)
     assert execution_summary["blocked_edge_order_count"] == 1
     assert weekly_summary["attribution_summary"][0]["execution_gate_blocked_order_count"] == 1
     assert "策略" in weekly_summary["attribution_summary"][0]["control_split_text"]
+    assert weekly_summary["weekly_tuning_dataset"][0]["blocked_edge_parent_count"] == 1
 
     assert reconcile_summary["market"] == "US"
     assert reconcile_summary["portfolio_id"] == portfolio_id
@@ -370,6 +502,7 @@ def test_investment_workflow_cli_smoke_generates_contract_artifacts(tmp_path, mo
     assert "qty_mismatch_rows" in reconcile_summary
     assert reconcile_summary["adaptive_strategy_name"] == "ACM-RS"
     assert reconcile_summary["adaptive_strategy_top_defensive_symbols"] == ["AAPL"]
+    assert "当前使用 US trend-first 市场档案" in reconcile_summary["adaptive_strategy_active_market_note"]
     assert reconcile_summary["strategy_effective_controls_applied"] is True
     assert "策略主动转入防守" in reconcile_summary["strategy_effective_controls_note"]
     assert reconcile_summary["execution_blocked_order_count"] == 1
@@ -383,6 +516,8 @@ def test_investment_workflow_cli_smoke_generates_contract_artifacts(tmp_path, mo
     assert dashboard_payload["cards"][0]["execution_summary"]["adaptive_strategy_defensive_caps"] == 1
     assert dashboard_payload["cards"][0]["execution_summary"]["strategy_effective_controls_applied"] is True
     assert dashboard_payload["cards"][0]["execution_summary"]["blocked_edge_order_count"] == 1
+    assert "当前使用 US trend-first 市场档案" in dashboard_payload["cards"][0]["weekly_strategy_context"]["adaptive_strategy_market_profile_note"]
+    assert str(dashboard_payload["cards"][0]["weekly_strategy_context"]["market_profile_tuning_note"])
     assert dashboard_payload["cards"][0]["execution_weekly_row"]["portfolio_id"] == portfolio_id
     assert dashboard_payload["execution_weekly"]["portfolio_id"] == portfolio_id
     assert "control_split_text" in dashboard_payload["cards"][0]["weekly_attribution"]

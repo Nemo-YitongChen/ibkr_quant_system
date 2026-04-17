@@ -152,6 +152,7 @@ def test_load_report_adaptive_strategy_payload_flattens_runtime_fields() -> None
         assert payload["active_market_execution"]["overrides"]["min_expected_edge_bps"] == 16.0
         assert fields["adaptive_strategy_active_market_profile"] == "US"
         assert fields["adaptive_strategy_active_market_execution_summary"] == "min_edge=16.0bps | edge_buffer=5.0bps"
+        assert "当前使用 US 市场档案" in fields["adaptive_strategy_active_market_note"]
 
 
 def test_adaptive_strategy_effective_controls_scale_paper_target_weight() -> None:

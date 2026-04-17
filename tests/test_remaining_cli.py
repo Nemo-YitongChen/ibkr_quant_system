@@ -148,6 +148,7 @@ def test_remaining_cli_summary_payloads() -> None:
     )
     assert weekly_summary["portfolio_count"] == 2
     assert weekly_artifacts["report_md"] == Path("reports/weekly/weekly_review.md")
+    assert weekly_artifacts["weekly_csv"] == Path("reports/weekly/weekly_tuning_dataset.csv")
 
     reconcile_summary, reconcile_artifacts = reconcile_investment_broker._cli_summary_payload(
         {

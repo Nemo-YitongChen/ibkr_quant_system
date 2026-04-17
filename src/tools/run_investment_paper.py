@@ -115,6 +115,7 @@ def _write_md(path: Path, summary: Dict[str, Any], trades: List[Dict[str, Any]],
     strategy_name = str(summary.get("adaptive_strategy_display_name") or summary.get("adaptive_strategy_name") or "").strip()
     strategy_summary = str(summary.get("adaptive_strategy_summary") or "").strip()
     strategy_runtime_note = str(summary.get("adaptive_strategy_runtime_note") or "").strip()
+    strategy_market_note = str(summary.get("adaptive_strategy_active_market_note") or "").strip()
     strategy_control_note = str(summary.get("strategy_effective_controls_note", "") or "").strip()
     lines = [
         "# Investment Paper Report",
@@ -142,6 +143,8 @@ def _write_md(path: Path, summary: Dict[str, Any], trades: List[Dict[str, Any]],
         )
         if strategy_summary:
             lines.append(f"- Summary: {strategy_summary}")
+        if strategy_market_note:
+            lines.append(f"- Market profile: {strategy_market_note}")
         if strategy_runtime_note:
             lines.append(f"- Runtime: {strategy_runtime_note}")
         if strategy_control_note:

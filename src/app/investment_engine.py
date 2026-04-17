@@ -548,6 +548,10 @@ class InvestmentExecutionEngine:
             "score": float(row.get("score", 0.0) or 0.0),
             "score_before_cost": float(row.get("score_before_cost", row.get("score", 0.0)) or 0.0),
             "execution_score": float(row.get("execution_score", 0.0) or 0.0),
+            "expected_edge_threshold": float(row.get("expected_edge_threshold", 0.0) or 0.0),
+            "expected_edge_score": float(row.get("expected_edge_score", 0.0) or 0.0),
+            "expected_edge_bps": float(row.get("expected_edge_bps", 0.0) or 0.0),
+            "edge_gate_threshold_bps": float(row.get("edge_gate_threshold_bps", 0.0) or 0.0),
             "expected_cost_bps": float(row.get("expected_cost_bps", 0.0) or 0.0),
             "spread_proxy_bps": float(row.get("spread_proxy_bps", 0.0) or 0.0),
             "slippage_proxy_bps": float(row.get("slippage_proxy_bps", 0.0) or 0.0),
@@ -582,6 +586,45 @@ class InvestmentExecutionEngine:
             "parent_order_value": float(row.get("parent_order_value", row.get("order_value", 0.0)) or 0.0),
             "execution_order_type": str(row.get("execution_order_type", "") or ""),
             "limit_price_buffer_bps_effective": float(row.get("limit_price_buffer_bps_effective", 0.0) or 0.0),
+        }
+
+    def _build_execution_order_storage_row(
+        self,
+        *,
+        run_id: str,
+        row: Dict[str, Any],
+        broker_order_id: int,
+        status: str,
+        details_payload: Dict[str, Any],
+        execution_intent_json: str,
+    ) -> Dict[str, Any]:
+        return {
+            "run_id": run_id,
+            "market": self.market,
+            "portfolio_id": self.portfolio_id,
+            "symbol": row["symbol"],
+            "action": row["action"],
+            "current_qty": float(row.get("current_qty") or 0.0),
+            "target_qty": float(row.get("target_qty") or 0.0),
+            "delta_qty": float(row.get("delta_qty") or 0.0),
+            "ref_price": float(row.get("ref_price") or 0.0),
+            "target_weight": float(row.get("target_weight") or 0.0),
+            "order_value": float(row.get("order_value") or 0.0),
+            "order_type": str(row.get("execution_order_type") or self.execution_cfg.order_type),
+            "broker_order_id": int(broker_order_id),
+            "status": str(status or row.get("status") or "PLANNED"),
+            "reason": str(row.get("reason") or ""),
+            "score_before_cost": float(row.get("score_before_cost", row.get("score", 0.0)) or 0.0),
+            "expected_cost_bps": float(row.get("expected_cost_bps", 0.0) or 0.0),
+            "expected_edge_threshold": float(row.get("expected_edge_threshold", 0.0) or 0.0),
+            "expected_edge_score": float(row.get("expected_edge_score", 0.0) or 0.0),
+            "expected_edge_bps": float(row.get("expected_edge_bps", 0.0) or 0.0),
+            "edge_gate_threshold_bps": float(row.get("edge_gate_threshold_bps", 0.0) or 0.0),
+            "session_bucket": str(row.get("session_bucket") or ""),
+            "session_label": str(row.get("session_label") or ""),
+            "execution_style": str(row.get("execution_style") or ""),
+            "execution_intent_json": execution_intent_json,
+            "details": json.dumps(details_payload, ensure_ascii=False),
         }
 
     def _apply_execution_hotspot_gates(
@@ -1513,6 +1556,7 @@ class InvestmentExecutionEngine:
         strategy_name = str(summary.get("adaptive_strategy_display_name") or summary.get("adaptive_strategy_name") or "").strip()
         strategy_summary = str(summary.get("adaptive_strategy_summary") or "").strip()
         strategy_runtime_note = str(summary.get("adaptive_strategy_runtime_note") or "").strip()
+        strategy_market_note = str(summary.get("adaptive_strategy_active_market_note") or "").strip()
         strategy_control_note = str(summary.get("strategy_effective_controls_note") or "").strip()
         lines = [
             "# Investment Execution Report",
@@ -1576,10 +1620,12 @@ class InvestmentExecutionEngine:
                     f"- Framework: {strategy_name or '-'}",
                 ]
             )
-            if strategy_summary:
-                lines.append(f"- Summary: {strategy_summary}")
-            if strategy_runtime_note:
-                lines.append(f"- Runtime: {strategy_runtime_note}")
+        if strategy_summary:
+            lines.append(f"- Summary: {strategy_summary}")
+        if strategy_market_note:
+            lines.append(f"- Market profile: {strategy_market_note}")
+        if strategy_runtime_note:
+            lines.append(f"- Runtime: {strategy_runtime_note}")
             if strategy_control_note:
                 lines.append(f"- Effective controls: {strategy_control_note}")
             lines.append("")
@@ -1831,28 +1877,18 @@ class InvestmentExecutionEngine:
 
             for row in blocked_rows:
                 intent = self._intent_from_row(row)
-                row["execution_intent_json"] = json.dumps(intent.to_dict(), ensure_ascii=False)
+                intent_json = json.dumps(intent.to_dict(), ensure_ascii=False)
+                row["execution_intent_json"] = intent_json
                 details_payload = self._build_order_details_payload(row, submitted=False)
                 self.storage.insert_investment_execution_order(
-                    {
-                        "run_id": run_id,
-                        "market": self.market,
-                        "portfolio_id": self.portfolio_id,
-                        "symbol": row["symbol"],
-                        "action": row["action"],
-                        "current_qty": float(row.get("current_qty") or 0.0),
-                        "target_qty": float(row.get("target_qty") or 0.0),
-                        "delta_qty": float(row.get("delta_qty") or 0.0),
-                        "ref_price": float(row.get("ref_price") or 0.0),
-                        "target_weight": float(row.get("target_weight") or 0.0),
-                        "order_value": float(row.get("order_value") or 0.0),
-                        "order_type": str(row.get("execution_order_type") or self.execution_cfg.order_type),
-                        "broker_order_id": 0,
-                        "status": str(row.get("status") or "BLOCKED"),
-                        "reason": str(row.get("reason") or ""),
-                        "execution_intent_json": json.dumps(intent.to_dict(), ensure_ascii=False),
-                        "details": json.dumps(details_payload, ensure_ascii=False),
-                    }
+                    self._build_execution_order_storage_row(
+                        run_id=run_id,
+                        row=row,
+                        broker_order_id=0,
+                        status=str(row.get("status") or "BLOCKED"),
+                        details_payload=details_payload,
+                        execution_intent_json=intent_json,
+                    )
                 )
 
             for row in order_rows:
@@ -1861,25 +1897,14 @@ class InvestmentExecutionEngine:
                 if not submit:
                     details_payload = self._build_order_details_payload(row, submitted=False)
                     self.storage.insert_investment_execution_order(
-                        {
-                            "run_id": run_id,
-                            "market": self.market,
-                            "portfolio_id": self.portfolio_id,
-                            "symbol": row["symbol"],
-                            "action": row["action"],
-                            "current_qty": float(row.get("current_qty") or 0.0),
-                            "target_qty": float(row.get("target_qty") or 0.0),
-                            "delta_qty": float(row.get("delta_qty") or 0.0),
-                            "ref_price": float(row.get("ref_price") or 0.0),
-                            "target_weight": float(row.get("target_weight") or 0.0),
-                            "order_value": float(row.get("order_value") or 0.0),
-                            "order_type": str(row.get("execution_order_type") or self.execution_cfg.order_type),
-                            "broker_order_id": 0,
-                            "status": "PLANNED",
-                            "reason": str(row.get("reason") or ""),
-                            "execution_intent_json": json.dumps(intent.to_dict(), ensure_ascii=False),
-                            "details": json.dumps(details_payload, ensure_ascii=False),
-                        }
+                        self._build_execution_order_storage_row(
+                            run_id=run_id,
+                            row=row,
+                            broker_order_id=0,
+                            status="PLANNED",
+                            details_payload=details_payload,
+                            execution_intent_json=json.dumps(intent.to_dict(), ensure_ascii=False),
+                        )
                     )
                     row["status"] = "PLANNED"
                     row["execution_intent_json"] = json.dumps(intent.to_dict(), ensure_ascii=False)

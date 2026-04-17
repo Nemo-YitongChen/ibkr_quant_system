@@ -352,6 +352,55 @@ def _avg_defined(values: List[Any]) -> float | None:
     return float(sum(nums) / len(nums))
 
 
+def _median(values: List[Any]) -> float | None:
+    nums = sorted(float(v) for v in values if v is not None)
+    if not nums:
+        return None
+    mid = len(nums) // 2
+    if len(nums) % 2 == 1:
+        return float(nums[mid])
+    return float((nums[mid - 1] + nums[mid]) / 2.0)
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        if value in (None, ""):
+            return float(default)
+        return float(value)
+    except Exception:
+        return float(default)
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        if value in (None, ""):
+            return int(default)
+        return int(float(value))
+    except Exception:
+        return int(default)
+
+
+def _parse_ts(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except Exception:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _seconds_between(start_ts: Any, end_ts: Any) -> float | None:
+    start_dt = _parse_ts(start_ts)
+    end_dt = _parse_ts(end_ts)
+    if start_dt is None or end_dt is None:
+        return None
+    return max(0.0, float((end_dt - start_dt).total_seconds()))
+
+
 def _clamp(value: float, lo: float, hi: float) -> float:
     return max(float(lo), min(float(hi), float(value)))
 
@@ -845,6 +894,365 @@ def _persist_feedback_threshold_history(
                 "details": row,
             }
         )
+
+
+def _persist_market_profile_patch_history(
+    db_path: Path,
+    rows: List[Dict[str, Any]],
+    *,
+    week_label: str,
+    week_start: str,
+    window_start: str,
+    window_end: str,
+) -> None:
+    if not rows:
+        return
+    storage = Storage(str(db_path))
+    review_ts = datetime.now(timezone.utc).isoformat()
+    for raw in list(rows or []):
+        row = dict(raw)
+        portfolio_id = str(row.get("portfolio_id") or "").strip()
+        market = resolve_market_code(str(row.get("market") or ""))
+        if not portfolio_id or not market:
+            continue
+        tuning_action = str(row.get("market_profile_tuning_action") or "").strip().upper()
+        storage.upsert_investment_market_profile_patch_history(
+            {
+                "week_label": str(week_label or "").strip(),
+                "week_start": str(week_start or "").strip(),
+                "window_start": str(window_start or "").strip(),
+                "window_end": str(window_end or "").strip(),
+                "ts": review_ts,
+                "market": market,
+                "portfolio_id": portfolio_id,
+                "profile": str(row.get("adaptive_strategy_active_market_profile") or ""),
+                "tuning_target": str(row.get("market_profile_tuning_target") or ""),
+                "tuning_action": tuning_action,
+                "tuning_bias": str(row.get("market_profile_tuning_bias") or ""),
+                "review_required": int(tuning_action in {"REVIEW_EXECUTION_GATE", "REVIEW_REGIME_PLAN"}),
+                "details": row,
+            }
+        )
+
+
+def _persist_weekly_tuning_history(
+    db_path: Path,
+    rows: List[Dict[str, Any]],
+    *,
+    week_label: str,
+    week_start: str,
+    window_start: str,
+    window_end: str,
+) -> None:
+    if not rows:
+        return
+    storage = Storage(str(db_path))
+    review_ts = datetime.now(timezone.utc).isoformat()
+    for raw in list(rows or []):
+        row = dict(raw)
+        portfolio_id = str(row.get("portfolio_id") or "").strip()
+        market = resolve_market_code(str(row.get("market") or ""))
+        if not portfolio_id or not market:
+            continue
+        storage.upsert_investment_weekly_tuning_history(
+            {
+                "week_label": str(week_label or "").strip(),
+                "week_start": str(week_start or "").strip(),
+                "window_start": str(window_start or "").strip(),
+                "window_end": str(window_end or "").strip(),
+                "ts": review_ts,
+                "market": market,
+                "portfolio_id": portfolio_id,
+                "active_market_profile": str(row.get("adaptive_strategy_active_market_profile") or ""),
+                "dominant_driver": str(row.get("dominant_driver") or ""),
+                "market_profile_tuning_action": str(row.get("market_profile_tuning_action") or ""),
+                "weekly_return": float(row.get("weekly_return", 0.0) or 0.0),
+                "max_drawdown": float(row.get("max_drawdown", 0.0) or 0.0),
+                "turnover": float(row.get("turnover", 0.0) or 0.0),
+                "outcome_sample_count": int(row.get("outcome_sample_count", 0) or 0),
+                "signal_quality_score": float(row.get("signal_quality_score", 0.0) or 0.0),
+                "execution_cost_gap": float(row.get("execution_cost_gap", 0.0) or 0.0),
+                "execution_gate_blocked_weight": float(row.get("execution_gate_blocked_weight", 0.0) or 0.0),
+                "strategy_control_weight_delta": float(row.get("strategy_control_weight_delta", 0.0) or 0.0),
+                "risk_overlay_weight_delta": float(row.get("risk_overlay_weight_delta", 0.0) or 0.0),
+                "risk_feedback_action": str(row.get("risk_feedback_action") or ""),
+                "execution_feedback_action": str(row.get("execution_feedback_action") or ""),
+                "shadow_apply_mode": str(row.get("shadow_apply_mode") or ""),
+                "risk_apply_mode": str(row.get("risk_apply_mode") or ""),
+                "execution_apply_mode": str(row.get("execution_apply_mode") or ""),
+                "market_profile_ready_for_manual_apply": int(row.get("market_profile_ready_for_manual_apply", 0) or 0),
+                "details": row,
+            }
+        )
+
+
+def _weekly_tuning_history_trend_label(
+    delta: float,
+    *,
+    threshold: float,
+    improving_if_negative: bool = False,
+) -> str:
+    value = float(delta or 0.0)
+    if improving_if_negative:
+        if value <= -abs(float(threshold or 0.0)):
+            return "IMPROVING"
+        if value >= abs(float(threshold or 0.0)):
+            return "WORSENING"
+        return "STABLE"
+    if value >= abs(float(threshold or 0.0)):
+        return "IMPROVING"
+    if value <= -abs(float(threshold or 0.0)):
+        return "WORSENING"
+    return "STABLE"
+
+
+def _build_weekly_tuning_history_overview(
+    db_path: Path,
+    rows: List[Dict[str, Any]],
+    *,
+    limit: int = 6,
+) -> List[Dict[str, Any]]:
+    if not rows:
+        return []
+    storage = Storage(str(db_path))
+    out: List[Dict[str, Any]] = []
+    for raw in list(rows or []):
+        row = dict(raw)
+        portfolio_id = str(row.get("portfolio_id") or "").strip()
+        market = resolve_market_code(str(row.get("market") or ""))
+        if not portfolio_id or not market:
+            continue
+        history_rows = storage.get_recent_investment_weekly_tuning_history(
+            market,
+            portfolio_id=portfolio_id,
+            limit=max(2, int(limit)),
+        )
+        if not history_rows:
+            continue
+        latest = dict(history_rows[0] or {})
+        baseline = dict(history_rows[-1] or latest)
+        driver_chain = " -> ".join(
+            f"{str(item.get('week_label') or '')}:{str(item.get('dominant_driver') or '-')}"
+            for item in reversed(history_rows)
+        )
+        tuning_action_chain = " -> ".join(
+            f"{str(item.get('week_label') or '')}:{str(item.get('market_profile_tuning_action') or '-')}"
+            for item in reversed(history_rows)
+        )
+        signal_quality_delta = float(latest.get("signal_quality_score", 0.0) or 0.0) - float(
+            baseline.get("signal_quality_score", 0.0) or 0.0
+        )
+        execution_cost_gap_delta = float(latest.get("execution_cost_gap", 0.0) or 0.0) - float(
+            baseline.get("execution_cost_gap", 0.0) or 0.0
+        )
+        blocked_weight_delta = float(latest.get("execution_gate_blocked_weight", 0.0) or 0.0) - float(
+            baseline.get("execution_gate_blocked_weight", 0.0) or 0.0
+        )
+        out.append(
+            {
+                "portfolio_id": portfolio_id,
+                "market": market,
+                "weeks_tracked": int(len(history_rows)),
+                "latest_week_label": str(latest.get("week_label") or ""),
+                "baseline_week_label": str(baseline.get("week_label") or ""),
+                "latest_dominant_driver": str(latest.get("dominant_driver") or ""),
+                "latest_market_profile_tuning_action": str(latest.get("market_profile_tuning_action") or ""),
+                "latest_market_profile_ready_for_manual_apply": int(
+                    latest.get("market_profile_ready_for_manual_apply", 0) or 0
+                ),
+                "driver_chain": driver_chain,
+                "tuning_action_chain": tuning_action_chain,
+                "latest_signal_quality_score": float(latest.get("signal_quality_score", 0.0) or 0.0),
+                "baseline_signal_quality_score": float(baseline.get("signal_quality_score", 0.0) or 0.0),
+                "signal_quality_delta": float(signal_quality_delta),
+                "signal_quality_trend": _weekly_tuning_history_trend_label(signal_quality_delta, threshold=0.05),
+                "latest_execution_cost_gap": float(latest.get("execution_cost_gap", 0.0) or 0.0),
+                "baseline_execution_cost_gap": float(baseline.get("execution_cost_gap", 0.0) or 0.0),
+                "execution_cost_gap_delta": float(execution_cost_gap_delta),
+                "execution_cost_gap_trend": _weekly_tuning_history_trend_label(
+                    execution_cost_gap_delta,
+                    threshold=5.0,
+                    improving_if_negative=True,
+                ),
+                "latest_execution_gate_blocked_weight": float(
+                    latest.get("execution_gate_blocked_weight", 0.0) or 0.0
+                ),
+                "baseline_execution_gate_blocked_weight": float(
+                    baseline.get("execution_gate_blocked_weight", 0.0) or 0.0
+                ),
+                "execution_gate_blocked_weight_delta": float(blocked_weight_delta),
+                "execution_gate_pressure_trend": _weekly_tuning_history_trend_label(
+                    blocked_weight_delta,
+                    threshold=0.01,
+                    improving_if_negative=True,
+                ),
+            }
+        )
+    out.sort(
+        key=lambda row: (
+            str(row.get("market") or ""),
+            str(row.get("portfolio_id") or ""),
+        )
+    )
+    return out
+
+
+def _build_weekly_control_timeseries_rows(
+    db_path: Path,
+    rows: List[Dict[str, Any]],
+    *,
+    limit: int = 12,
+) -> List[Dict[str, Any]]:
+    if not rows:
+        return []
+    storage = Storage(str(db_path))
+    out: List[Dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for raw in list(rows or []):
+        portfolio_id = str(raw.get("portfolio_id") or "").strip()
+        market = resolve_market_code(str(raw.get("market") or ""))
+        key = (market, portfolio_id)
+        if not market or not portfolio_id or key in seen:
+            continue
+        seen.add(key)
+        history_rows = storage.get_recent_investment_weekly_tuning_history(
+            market,
+            portfolio_id=portfolio_id,
+            limit=max(2, int(limit)),
+        )
+        for item in reversed(list(history_rows or [])):
+            strategy_delta = _safe_float(item.get("strategy_control_weight_delta"), 0.0)
+            risk_delta = _safe_float(item.get("risk_overlay_weight_delta"), 0.0)
+            execution_delta = _safe_float(item.get("execution_gate_blocked_weight"), 0.0)
+            total_delta = float(strategy_delta + risk_delta + execution_delta)
+            out.append(
+                {
+                    "portfolio_id": portfolio_id,
+                    "market": market,
+                    "week_label": str(item.get("week_label") or ""),
+                    "week_start": str(item.get("week_start") or ""),
+                    "weekly_return": _safe_float(item.get("weekly_return"), 0.0),
+                    "signal_quality_score": _safe_float(item.get("signal_quality_score"), 0.0),
+                    "execution_cost_gap": _safe_float(item.get("execution_cost_gap"), 0.0),
+                    "strategy_control_weight_delta": float(strategy_delta),
+                    "risk_overlay_weight_delta": float(risk_delta),
+                    "execution_gate_blocked_weight": float(execution_delta),
+                    "control_total_weight": float(total_delta),
+                    "strategy_control_share": float(strategy_delta / total_delta) if total_delta > 0.0 else 0.0,
+                    "risk_overlay_share": float(risk_delta / total_delta) if total_delta > 0.0 else 0.0,
+                    "execution_gate_share": float(execution_delta / total_delta) if total_delta > 0.0 else 0.0,
+                    "dominant_driver": str(item.get("dominant_driver") or ""),
+                }
+            )
+    out.sort(
+        key=lambda row: (
+            str(row.get("market") or ""),
+            str(row.get("portfolio_id") or ""),
+            str(row.get("week_start") or row.get("week_label") or ""),
+        )
+    )
+    return out
+
+
+def _market_profile_patch_conflict(raw: Dict[str, Any]) -> tuple[bool, str]:
+    row = dict(raw or {})
+    action = str(row.get("market_profile_tuning_action") or "").strip().upper()
+    risk_action = str(row.get("risk_feedback_action") or "").strip().upper()
+    execution_action = str(row.get("execution_feedback_action") or "").strip().upper()
+    strategy_delta = float(row.get("strategy_control_weight_delta", 0.0) or 0.0)
+    risk_delta = float(row.get("risk_overlay_weight_delta", 0.0) or 0.0)
+    if action == "REVIEW_EXECUTION_GATE" and execution_action == "TIGHTEN":
+        return True, "执行反馈仍建议收紧，不宜现在下调 edge gate。"
+    if action == "REVIEW_REGIME_PLAN" and risk_action == "TIGHTEN" and risk_delta >= max(0.04, strategy_delta - 0.01):
+        return True, "风险 overlay 仍在主导压仓，先不要放松 regime/plan 参数。"
+    return False, ""
+
+
+def _build_market_profile_patch_readiness(
+    db_path: Path,
+    rows: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    if not rows:
+        return []
+    storage = Storage(str(db_path))
+    out: List[Dict[str, Any]] = []
+    for raw in list(rows or []):
+        row = dict(raw)
+        portfolio_id = str(row.get("portfolio_id") or "").strip()
+        market = resolve_market_code(str(row.get("market") or ""))
+        tuning_action = str(row.get("market_profile_tuning_action") or "").strip().upper()
+        review_required = tuning_action in {"REVIEW_EXECUTION_GATE", "REVIEW_REGIME_PLAN"}
+        if not portfolio_id or not market:
+            continue
+        history_rows = storage.get_recent_investment_market_profile_patch_history(
+            market,
+            portfolio_id=portfolio_id,
+            limit=12,
+        )
+        history_rows = sorted(
+            list(history_rows or []),
+            key=lambda item: (str(item.get("week_start", "") or ""), str(item.get("ts", "") or "")),
+            reverse=True,
+        )
+        same_action_weeks = 0
+        for item in history_rows:
+            if str(item.get("tuning_action") or "").strip().upper() != tuning_action:
+                break
+            same_action_weeks += 1
+        action_chain = " -> ".join(
+            f"{str(item.get('week_label', '') or '-')}:"
+            f"{str(item.get('tuning_action', '') or '-')}"
+            for item in reversed(history_rows[:max(1, same_action_weeks)])
+        ) or "-"
+        baseline_week = str(history_rows[same_action_weeks - 1].get("week_label") or "-") if same_action_weeks > 0 else "-"
+        conflict_flag, conflict_reason = _market_profile_patch_conflict(row)
+        ready_for_manual_apply = bool(review_required and same_action_weeks >= 2 and not conflict_flag)
+        if not review_required:
+            readiness_label = "NO_PATCH"
+            readiness_summary = "当前还没有需要进入人工复核的 market profile patch。"
+        elif conflict_flag:
+            readiness_label = "BLOCKED_BY_CONFLICT"
+            readiness_summary = (
+                f"虽已连续 {max(1, same_action_weeks)} 周维持同方向，但当前与执行/风险反馈冲突；"
+                f"{conflict_reason}"
+            )
+        elif ready_for_manual_apply:
+            readiness_label = "READY_FOR_MANUAL_APPLY"
+            readiness_summary = (
+                f"已连续 {same_action_weeks} 周维持同方向，且当前无明显执行/风险冲突，"
+                "可升级为人工应用候选。"
+            )
+        else:
+            readiness_label = "OBSERVE_COHORT"
+            readiness_summary = (
+                f"当前仅连续 {max(1, same_action_weeks)} 周维持同方向，先继续观察到至少 2 周再决定是否人工应用。"
+            )
+        out.append(
+            {
+                "portfolio_id": portfolio_id,
+                "market": market,
+                "adaptive_strategy_active_market_profile": str(row.get("adaptive_strategy_active_market_profile") or ""),
+                "market_profile_tuning_action": tuning_action,
+                "market_profile_tuning_target": str(row.get("market_profile_tuning_target") or ""),
+                "market_profile_cohort_weeks": int(same_action_weeks),
+                "market_profile_baseline_week": baseline_week,
+                "market_profile_action_chain": action_chain,
+                "market_profile_conflict_flag": int(conflict_flag),
+                "market_profile_conflict_reason": conflict_reason,
+                "market_profile_ready_for_manual_apply": int(ready_for_manual_apply),
+                "market_profile_readiness_label": readiness_label,
+                "market_profile_readiness_summary": readiness_summary,
+            }
+        )
+    out.sort(
+        key=lambda row: (
+            0 if int(row.get("market_profile_ready_for_manual_apply", 0) or 0) == 1 else 1 if str(row.get("market_profile_readiness_label") or "") == "BLOCKED_BY_CONFLICT" else 2,
+            -int(row.get("market_profile_cohort_weeks", 0) or 0),
+            str(row.get("market") or ""),
+            str(row.get("portfolio_id") or ""),
+        )
+    )
+    return out
 
 
 def _feedback_threshold_trend_bucket(action: str, *, same_action_weeks: int, distinct_actions: int) -> str:
@@ -2052,6 +2460,14 @@ def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
     return bool(row)
 
 
+def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    try:
+        rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    except Exception:
+        return False
+    return any(str(row[1] or "") == str(column) for row in rows)
+
+
 def _build_position_snapshots(
     position_rows: List[Dict[str, Any]],
     *,
@@ -2501,6 +2917,24 @@ def _strategy_effective_controls_note(*summaries: Dict[str, Any]) -> str:
     return ""
 
 
+def _active_market_profile_note(*summaries: Dict[str, Any]) -> str:
+    for summary in summaries:
+        payload = dict(summary or {})
+        note = str(payload.get("adaptive_strategy_active_market_note") or "").strip()
+        if note:
+            return note
+    return ""
+
+
+def _active_market_strategy_field(field_name: str, *summaries: Dict[str, Any]) -> str:
+    for summary in summaries:
+        payload = dict(summary or {})
+        value = str(payload.get(field_name) or "").strip()
+        if value:
+            return value
+    return ""
+
+
 def _execution_gate_summary(execution_summary: Dict[str, Any]) -> str:
     execution_summary = dict(execution_summary or {})
     blocked_total = int(execution_summary.get("blocked_order_count", 0) or 0)
@@ -2640,6 +3074,27 @@ def _augment_summary_rows_with_strategy_context(
         row["account_profile_summary"] = str(account_profile.get("summary", "") or "")
         row["adaptive_strategy_name"] = str(adaptive_strategy.get("name", "") or "")
         row["adaptive_strategy_summary"] = str(adaptive_strategy.get("summary_text", "") or "")
+        row["adaptive_strategy_active_market_profile"] = _active_market_strategy_field(
+            "adaptive_strategy_active_market_profile",
+            execution_summary,
+            paper_summary,
+        )
+        row["adaptive_strategy_active_market_plan_summary"] = _active_market_strategy_field(
+            "adaptive_strategy_active_market_plan_summary",
+            execution_summary,
+            paper_summary,
+        )
+        row["adaptive_strategy_active_market_regime_summary"] = _active_market_strategy_field(
+            "adaptive_strategy_active_market_regime_summary",
+            execution_summary,
+            paper_summary,
+        )
+        row["adaptive_strategy_active_market_execution_summary"] = _active_market_strategy_field(
+            "adaptive_strategy_active_market_execution_summary",
+            execution_summary,
+            paper_summary,
+        )
+        row["adaptive_strategy_market_profile_note"] = _active_market_profile_note(execution_summary, paper_summary)
         row["strategy_effective_controls_applied"] = bool(
             execution_summary.get("strategy_effective_controls_applied")
             or paper_summary.get("strategy_effective_controls_applied")
@@ -2658,6 +3113,11 @@ def _augment_summary_rows_with_strategy_context(
                 "account_profile_summary": row["account_profile_summary"],
                 "adaptive_strategy_name": row["adaptive_strategy_name"],
                 "adaptive_strategy_summary": row["adaptive_strategy_summary"],
+                "adaptive_strategy_active_market_profile": row["adaptive_strategy_active_market_profile"],
+                "adaptive_strategy_active_market_plan_summary": row["adaptive_strategy_active_market_plan_summary"],
+                "adaptive_strategy_active_market_regime_summary": row["adaptive_strategy_active_market_regime_summary"],
+                "adaptive_strategy_active_market_execution_summary": row["adaptive_strategy_active_market_execution_summary"],
+                "adaptive_strategy_market_profile_note": row["adaptive_strategy_market_profile_note"],
                 "strategy_effective_controls_applied": row["strategy_effective_controls_applied"],
                 "strategy_effective_controls_note": row["strategy_effective_controls_note"],
                 "execution_gate_summary": row["execution_gate_summary"],
@@ -3306,6 +3766,689 @@ def _build_execution_gate_rows(execution_orders: List[Dict[str, Any]]) -> List[D
             }
         )
     out.sort(key=lambda row: str(row.get("portfolio_id") or ""))
+    return out
+
+
+def _candidate_snapshot_stage_priority(stage: str) -> int:
+    normalized = str(stage or "").strip().lower()
+    if normalized in {"final", "short"}:
+        return 3
+    if normalized == "deep":
+        return 2
+    if normalized == "broad":
+        return 1
+    return 0
+
+
+def _is_selected_snapshot_stage(stage: str) -> bool:
+    return str(stage or "").strip().lower() in {"final", "short"}
+
+
+def _preferred_snapshot_stages_for_order(row: Dict[str, Any]) -> List[str]:
+    target_weight = _safe_float(row.get("target_weight"), 0.0)
+    target_qty = _safe_float(row.get("target_qty"), 0.0)
+    if target_weight < 0.0 or target_qty < 0.0:
+        return ["short", "final", "deep", "broad"]
+    return ["final", "deep", "broad", "short"]
+
+
+def _execution_order_status_bucket(row: Dict[str, Any]) -> str:
+    status = str(row.get("status") or "").strip().upper()
+    broker_order_id = _safe_int(row.get("broker_order_id"), 0)
+    if status == "BLOCKED_EDGE":
+        return "BLOCKED_EDGE"
+    if _is_execution_gate_status(status):
+        return "BLOCKED_GATE"
+    if broker_order_id > 0 or status in {
+        "CREATED",
+        "SUBMITTED",
+        "PRESUBMITTED",
+        "FILLED",
+        "PARTIAL",
+        "PARTIALLY_FILLED",
+    } or status.startswith("ERROR_"):
+        return "SUBMITTED"
+    return "PLANNED"
+
+
+def _order_edge_metrics(row: Dict[str, Any]) -> Dict[str, Any]:
+    details = _parse_json_dict(row.get("details"))
+    plan_row = dict(details.get("plan_row") or {}) if isinstance(details.get("plan_row"), dict) else {}
+
+    def _pick(key: str, default: Any = 0.0) -> Any:
+        direct = row.get(key)
+        if direct not in (None, ""):
+            return direct
+        nested = details.get(key)
+        if nested not in (None, ""):
+            return nested
+        plan_val = plan_row.get(key)
+        if plan_val not in (None, ""):
+            return plan_val
+        return default
+
+    return {
+        "parent_order_key": str(_pick("parent_order_key", "") or ""),
+        "score_before_cost": _safe_float(_pick("score_before_cost", _pick("score", 0.0)), 0.0),
+        "expected_cost_bps": _safe_float(_pick("expected_cost_bps", 0.0), 0.0),
+        "expected_edge_threshold": _safe_float(_pick("expected_edge_threshold", 0.0), 0.0),
+        "expected_edge_score": _safe_float(_pick("expected_edge_score", 0.0), 0.0),
+        "expected_edge_bps": _safe_float(_pick("expected_edge_bps", 0.0), 0.0),
+        "edge_gate_threshold_bps": _safe_float(_pick("edge_gate_threshold_bps", 0.0), 0.0),
+        "session_bucket": str(_pick("session_bucket", "") or ""),
+        "session_label": str(_pick("session_label", "") or ""),
+        "execution_style": str(_pick("execution_style", "") or ""),
+    }
+
+
+def _enrich_snapshot_rows(snapshot_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    enriched: List[Dict[str, Any]] = []
+    for raw in list(snapshot_rows or []):
+        row = dict(raw)
+        details = _parse_json_dict(row.get("details"))
+        stage = str(row.get("stage") or details.get("stage") or "").strip().lower()
+        row["details_json"] = details
+        row["stage"] = stage
+        row["analysis_run_id"] = str(row.get("analysis_run_id") or "").strip()
+        row["report_dir"] = str(row.get("report_dir") or "").strip()
+        row["stage_rank"] = _safe_int(details.get("stage_rank"), 0)
+        row["stage1_rank"] = _safe_int(details.get("stage1_rank"), 0)
+        row["expected_edge_threshold"] = _safe_float(
+            row.get("expected_edge_threshold", details.get("expected_edge_threshold", 0.0)),
+            0.0,
+        )
+        row["expected_edge_score"] = _safe_float(
+            row.get("expected_edge_score", details.get("expected_edge_score", 0.0)),
+            0.0,
+        )
+        row["expected_edge_bps"] = _safe_float(
+            row.get("expected_edge_bps", details.get("expected_edge_bps", 0.0)),
+            0.0,
+        )
+        enriched.append(row)
+    return enriched
+
+
+def _link_execution_orders_to_candidate_snapshots(
+    execution_orders: List[Dict[str, Any]],
+    execution_runs: List[Dict[str, Any]],
+    snapshot_rows: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    run_meta = {
+        str(row.get("run_id") or ""): {
+            "report_dir": str(row.get("report_dir") or "").strip(),
+            "portfolio_id": str(row.get("portfolio_id") or "").strip(),
+            "market": str(row.get("market") or "").strip(),
+        }
+        for row in list(execution_runs or [])
+        if str(row.get("run_id") or "").strip()
+    }
+    enriched_snapshots = _enrich_snapshot_rows(snapshot_rows)
+    snapshots_by_key: Dict[tuple[str, str, str, str], List[Dict[str, Any]]] = {}
+    snapshots_by_symbol: Dict[tuple[str, str, str], List[Dict[str, Any]]] = {}
+    for row in enriched_snapshots:
+        report_dir = str(row.get("report_dir") or "").strip()
+        portfolio_id = str(row.get("portfolio_id") or "").strip()
+        symbol = str(row.get("symbol") or "").upper().strip()
+        stage = str(row.get("stage") or "").strip().lower()
+        if not report_dir or not portfolio_id or not symbol:
+            continue
+        snapshots_by_key.setdefault((report_dir, portfolio_id, symbol, stage), []).append(row)
+        snapshots_by_symbol.setdefault((report_dir, portfolio_id, symbol), []).append(row)
+    for rows in snapshots_by_key.values():
+        rows.sort(
+            key=lambda item: (
+                -_candidate_snapshot_stage_priority(str(item.get("stage") or "")),
+                _safe_int(item.get("stage_rank"), 10**6),
+                str(item.get("ts") or ""),
+            )
+        )
+    for rows in snapshots_by_symbol.values():
+        rows.sort(
+            key=lambda item: (
+                -_candidate_snapshot_stage_priority(str(item.get("stage") or "")),
+                _safe_int(item.get("stage_rank"), 10**6),
+                str(item.get("ts") or ""),
+            )
+        )
+
+    linked: List[Dict[str, Any]] = []
+    for raw in list(execution_orders or []):
+        row = dict(raw)
+        metrics = _order_edge_metrics(row)
+        row.update(metrics)
+        run_id = str(row.get("run_id") or "").strip()
+        meta = dict(run_meta.get(run_id) or {})
+        report_dir = str(meta.get("report_dir") or "").strip()
+        portfolio_id = str(row.get("portfolio_id") or meta.get("portfolio_id") or "").strip()
+        symbol = str(row.get("symbol") or "").upper().strip()
+        linked_snapshot: Dict[str, Any] = {}
+        if report_dir and portfolio_id and symbol:
+            for stage in _preferred_snapshot_stages_for_order(row):
+                candidates = snapshots_by_key.get((report_dir, portfolio_id, symbol, stage), [])
+                if candidates:
+                    linked_snapshot = dict(candidates[0])
+                    break
+            if not linked_snapshot:
+                fallback_rows = snapshots_by_symbol.get((report_dir, portfolio_id, symbol), [])
+                if fallback_rows:
+                    linked_snapshot = dict(fallback_rows[0])
+        row["linked_report_dir"] = report_dir
+        row["linked_snapshot_id"] = str(linked_snapshot.get("snapshot_id") or "")
+        row["linked_snapshot_stage"] = str(linked_snapshot.get("stage") or "")
+        row["linked_snapshot_stage_rank"] = _safe_int(linked_snapshot.get("stage_rank"), 0)
+        row["linked_snapshot_ts"] = str(linked_snapshot.get("ts") or linked_snapshot.get("snapshot_ts") or "")
+        row["linked_analysis_run_id"] = str(linked_snapshot.get("analysis_run_id") or "")
+        linked.append(row)
+    return linked
+
+
+def _build_execution_parent_rows(
+    execution_orders: List[Dict[str, Any]],
+    fill_rows: List[Dict[str, Any]],
+    commission_rows: List[Dict[str, Any]],
+    outcome_rows: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    commission_by_exec: Dict[str, float] = {}
+    for row in list(commission_rows or []):
+        exec_id = str(row.get("exec_id") or "").strip()
+        if exec_id:
+            commission_by_exec[exec_id] = float(commission_by_exec.get(exec_id, 0.0) or 0.0) + _safe_float(row.get("value"), 0.0)
+
+    fills_by_order: Dict[int, List[Dict[str, Any]]] = {}
+    for raw in list(fill_rows or []):
+        order_id = _safe_int(raw.get("order_id"), 0)
+        if order_id <= 0:
+            continue
+        fills_by_order.setdefault(order_id, []).append(dict(raw))
+    for rows in fills_by_order.values():
+        rows.sort(key=lambda item: str(item.get("ts") or ""))
+
+    outcomes_by_snapshot: Dict[str, Dict[int, Dict[str, Any]]] = {}
+    for raw in list(outcome_rows or []):
+        snapshot_id = str(raw.get("snapshot_id") or "").strip()
+        horizon_days = _safe_int(raw.get("horizon_days"), 0)
+        if not snapshot_id or horizon_days <= 0:
+            continue
+        outcomes_by_snapshot.setdefault(snapshot_id, {})[horizon_days] = dict(raw)
+
+    grouped: Dict[tuple[str, str], Dict[str, Any]] = {}
+    for idx, raw in enumerate(list(execution_orders or []), start=1):
+        row = dict(raw)
+        portfolio_id = str(row.get("portfolio_id") or "").strip()
+        if not portfolio_id:
+            continue
+        parent_order_key = str(row.get("parent_order_key") or "").strip()
+        if not parent_order_key:
+            parent_order_key = f"{str(row.get('run_id') or '')}:{str(row.get('linked_snapshot_id') or '')}:{str(row.get('symbol') or '')}:{idx}"
+        key = (portfolio_id, parent_order_key)
+        bucket = grouped.setdefault(
+            key,
+            {
+                "portfolio_id": portfolio_id,
+                "market": str(row.get("market") or _market_from_portfolio_or_symbol(portfolio_id, str(row.get("symbol") or ""))),
+                "run_id": str(row.get("run_id") or ""),
+                "parent_order_key": parent_order_key,
+                "symbol": str(row.get("symbol") or "").upper(),
+                "action": str(row.get("action") or ""),
+                "linked_snapshot_id": str(row.get("linked_snapshot_id") or ""),
+                "linked_snapshot_stage": str(row.get("linked_snapshot_stage") or ""),
+                "linked_analysis_run_id": str(row.get("linked_analysis_run_id") or ""),
+                "linked_report_dir": str(row.get("linked_report_dir") or ""),
+                "order_row_count": 0,
+                "order_value": 0.0,
+                "expected_edge_bps_numerator": 0.0,
+                "expected_cost_bps_numerator": 0.0,
+                "edge_gate_threshold_bps_numerator": 0.0,
+                "score_before_cost_numerator": 0.0,
+                "expected_edge_score_numerator": 0.0,
+                "submitted_ts": "",
+                "statuses": set(),
+                "broker_order_ids": set(),
+            },
+        )
+        order_value = abs(_safe_float(row.get("order_value"), 0.0))
+        status_bucket = _execution_order_status_bucket(row)
+        bucket["order_row_count"] = int(bucket["order_row_count"]) + 1
+        bucket["order_value"] = float(bucket["order_value"]) + order_value
+        bucket["expected_edge_bps_numerator"] = float(bucket["expected_edge_bps_numerator"]) + order_value * _safe_float(row.get("expected_edge_bps"), 0.0)
+        bucket["expected_cost_bps_numerator"] = float(bucket["expected_cost_bps_numerator"]) + order_value * _safe_float(row.get("expected_cost_bps"), 0.0)
+        bucket["edge_gate_threshold_bps_numerator"] = float(bucket["edge_gate_threshold_bps_numerator"]) + order_value * _safe_float(row.get("edge_gate_threshold_bps"), 0.0)
+        bucket["score_before_cost_numerator"] = float(bucket["score_before_cost_numerator"]) + order_value * _safe_float(row.get("score_before_cost"), 0.0)
+        bucket["expected_edge_score_numerator"] = float(bucket["expected_edge_score_numerator"]) + order_value * _safe_float(row.get("expected_edge_score"), 0.0)
+        bucket["statuses"].add(status_bucket)
+        broker_order_id = _safe_int(row.get("broker_order_id"), 0)
+        if broker_order_id > 0:
+            cast_ids = set(bucket.get("broker_order_ids") or set())
+            cast_ids.add(broker_order_id)
+            bucket["broker_order_ids"] = cast_ids
+        if status_bucket == "SUBMITTED":
+            row_ts = str(row.get("ts") or "")
+            current_ts = str(bucket.get("submitted_ts") or "")
+            if row_ts and (not current_ts or row_ts < current_ts):
+                bucket["submitted_ts"] = row_ts
+        if not bucket.get("linked_snapshot_id") and str(row.get("linked_snapshot_id") or "").strip():
+            bucket["linked_snapshot_id"] = str(row.get("linked_snapshot_id") or "")
+            bucket["linked_snapshot_stage"] = str(row.get("linked_snapshot_stage") or "")
+            bucket["linked_analysis_run_id"] = str(row.get("linked_analysis_run_id") or "")
+            bucket["linked_report_dir"] = str(row.get("linked_report_dir") or "")
+
+    parent_rows: List[Dict[str, Any]] = []
+    for bucket in grouped.values():
+        broker_order_ids = sorted(int(v) for v in list(bucket.get("broker_order_ids") or set()))
+        order_fills: List[Dict[str, Any]] = []
+        for broker_order_id in broker_order_ids:
+            order_fills.extend(list(fills_by_order.get(broker_order_id, []) or []))
+        order_fills.sort(key=lambda item: str(item.get("ts") or ""))
+        fill_notional = 0.0
+        slippage_cost_total = 0.0
+        commission_total = 0.0
+        slippage_samples: List[float] = []
+        fill_delay_samples: List[float] = []
+        for fill in order_fills:
+            notional = abs(_safe_float(fill.get("qty"), 0.0)) * abs(_safe_float(fill.get("price"), 0.0))
+            fill_notional += notional
+            actual_slippage_bps = fill.get("actual_slippage_bps")
+            if actual_slippage_bps not in (None, ""):
+                slip = _safe_float(actual_slippage_bps, 0.0)
+                slippage_samples.append(slip)
+                slippage_cost_total += notional * slip / 10000.0
+            commission_total += _safe_float(commission_by_exec.get(str(fill.get("exec_id") or "").strip()), 0.0)
+            fill_delay = fill.get("fill_delay_seconds")
+            if fill_delay not in (None, ""):
+                fill_delay_samples.append(_safe_float(fill_delay, 0.0))
+        execution_cost_total = float(slippage_cost_total + commission_total)
+        realized_total_cost_bps = float(execution_cost_total / fill_notional * 10000.0) if fill_notional > 0.0 else None
+        avg_actual_slippage_bps = float(slippage_cost_total / fill_notional * 10000.0) if fill_notional > 0.0 else None
+        first_fill_ts = str(order_fills[0].get("ts") or "") if order_fills else ""
+        last_fill_ts = str(order_fills[-1].get("ts") or "") if order_fills else ""
+        first_fill_delay_seconds = (
+            min(fill_delay_samples)
+            if fill_delay_samples
+            else _seconds_between(bucket.get("submitted_ts"), first_fill_ts)
+        )
+        statuses = set(bucket.get("statuses") or set())
+        status_bucket = "PLANNED"
+        if order_fills:
+            status_bucket = "FILLED"
+        elif "SUBMITTED" in statuses:
+            status_bucket = "SUBMITTED"
+        elif "BLOCKED_EDGE" in statuses:
+            status_bucket = "BLOCKED_EDGE"
+        elif "BLOCKED_GATE" in statuses:
+            status_bucket = "BLOCKED_GATE"
+        expected_edge_bps = (
+            float(bucket.get("expected_edge_bps_numerator", 0.0) or 0.0) / float(bucket.get("order_value", 0.0) or 1.0)
+            if float(bucket.get("order_value", 0.0) or 0.0) > 0.0 else 0.0
+        )
+        expected_cost_bps = (
+            float(bucket.get("expected_cost_bps_numerator", 0.0) or 0.0) / float(bucket.get("order_value", 0.0) or 1.0)
+            if float(bucket.get("order_value", 0.0) or 0.0) > 0.0 else 0.0
+        )
+        edge_gate_threshold_bps = (
+            float(bucket.get("edge_gate_threshold_bps_numerator", 0.0) or 0.0) / float(bucket.get("order_value", 0.0) or 1.0)
+            if float(bucket.get("order_value", 0.0) or 0.0) > 0.0 else 0.0
+        )
+        score_before_cost = (
+            float(bucket.get("score_before_cost_numerator", 0.0) or 0.0) / float(bucket.get("order_value", 0.0) or 1.0)
+            if float(bucket.get("order_value", 0.0) or 0.0) > 0.0 else 0.0
+        )
+        expected_edge_score = (
+            float(bucket.get("expected_edge_score_numerator", 0.0) or 0.0) / float(bucket.get("order_value", 0.0) or 1.0)
+            if float(bucket.get("order_value", 0.0) or 0.0) > 0.0 else 0.0
+        )
+        row = {
+            "portfolio_id": str(bucket.get("portfolio_id") or ""),
+            "market": str(bucket.get("market") or ""),
+            "run_id": str(bucket.get("run_id") or ""),
+            "parent_order_key": str(bucket.get("parent_order_key") or ""),
+            "symbol": str(bucket.get("symbol") or ""),
+            "action": str(bucket.get("action") or ""),
+            "linked_snapshot_id": str(bucket.get("linked_snapshot_id") or ""),
+            "linked_snapshot_stage": str(bucket.get("linked_snapshot_stage") or ""),
+            "linked_analysis_run_id": str(bucket.get("linked_analysis_run_id") or ""),
+            "linked_report_dir": str(bucket.get("linked_report_dir") or ""),
+            "status_bucket": status_bucket,
+            "order_row_count": int(bucket.get("order_row_count", 0) or 0),
+            "order_value": float(bucket.get("order_value", 0.0) or 0.0),
+            "score_before_cost": float(score_before_cost),
+            "expected_edge_score": float(expected_edge_score),
+            "expected_edge_bps": float(expected_edge_bps),
+            "expected_cost_bps": float(expected_cost_bps),
+            "edge_gate_threshold_bps": float(edge_gate_threshold_bps),
+            "required_edge_gap_bps": max(0.0, float(edge_gate_threshold_bps) - float(expected_edge_bps)),
+            "expected_edge_value": float(float(bucket.get("order_value", 0.0) or 0.0) * float(expected_edge_bps) / 10000.0),
+            "submitted_ts": str(bucket.get("submitted_ts") or ""),
+            "fill_count": int(len(order_fills)),
+            "fill_notional": float(fill_notional),
+            "commission_total": float(commission_total),
+            "slippage_cost_total": float(slippage_cost_total),
+            "execution_cost_total": float(execution_cost_total),
+            "avg_actual_slippage_bps": avg_actual_slippage_bps,
+            "avg_realized_total_cost_bps": realized_total_cost_bps,
+            "execution_capture_bps": (
+                float(expected_edge_bps) - float(realized_total_cost_bps)
+                if realized_total_cost_bps is not None
+                else None
+            ),
+            "first_fill_ts": first_fill_ts,
+            "last_fill_ts": last_fill_ts,
+            "first_fill_delay_seconds": first_fill_delay_seconds,
+            "median_fill_delay_seconds": _median(fill_delay_samples),
+        }
+        for horizon_days in (5, 20, 60):
+            outcome = dict(outcomes_by_snapshot.get(str(bucket.get("linked_snapshot_id") or ""), {}).get(horizon_days) or {})
+            future_return_bps = (
+                float(_safe_float(outcome.get("future_return"), 0.0) * 10000.0)
+                if outcome else None
+            )
+            row[f"outcome_{horizon_days}d_future_return_bps"] = future_return_bps
+            row[f"outcome_{horizon_days}d_counterfactual_edge_bps"] = (
+                future_return_bps - float(expected_cost_bps)
+                if future_return_bps is not None
+                else None
+            )
+            row[f"outcome_{horizon_days}d_realized_edge_bps"] = (
+                future_return_bps - float(realized_total_cost_bps)
+                if future_return_bps is not None and realized_total_cost_bps is not None
+                else None
+            )
+        parent_rows.append(row)
+    parent_rows.sort(
+        key=lambda row: (
+            str(row.get("market") or ""),
+            str(row.get("portfolio_id") or ""),
+            str(row.get("parent_order_key") or ""),
+        )
+    )
+    return parent_rows
+
+
+def _avg_bps(rows: List[Dict[str, Any]], key: str) -> float | None:
+    values = [row.get(key) for row in list(rows or []) if row.get(key) not in (None, "")]
+    return _avg_defined(values)
+
+
+def _build_weekly_outcome_spread_rows(
+    snapshot_rows: List[Dict[str, Any]],
+    outcome_rows: List[Dict[str, Any]],
+    execution_parent_rows: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    snapshots = {str(row.get("snapshot_id") or ""): row for row in _enrich_snapshot_rows(snapshot_rows) if str(row.get("snapshot_id") or "").strip()}
+    status_by_snapshot: Dict[str, str] = {}
+    precedence = {"FILLED": 4, "SUBMITTED": 3, "BLOCKED_EDGE": 2, "BLOCKED_GATE": 1, "PLANNED": 0}
+    for row in list(execution_parent_rows or []):
+        snapshot_id = str(row.get("linked_snapshot_id") or "").strip()
+        status = str(row.get("status_bucket") or "").strip().upper() or "PLANNED"
+        if not snapshot_id:
+            continue
+        current = str(status_by_snapshot.get(snapshot_id) or "").strip().upper()
+        if precedence.get(status, -1) >= precedence.get(current, -1):
+            status_by_snapshot[snapshot_id] = status
+
+    deduped: Dict[tuple[str, str, str, str, int], Dict[str, Any]] = {}
+    for raw in list(outcome_rows or []):
+        snapshot_id = str(raw.get("snapshot_id") or "").strip()
+        snapshot = dict(snapshots.get(snapshot_id) or {})
+        if not snapshot:
+            continue
+        analysis_run_id = str(snapshot.get("analysis_run_id") or "").strip()
+        symbol = str(raw.get("symbol") or snapshot.get("symbol") or "").upper().strip()
+        direction = str(raw.get("direction") or snapshot.get("direction") or "LONG").upper().strip()
+        horizon_days = _safe_int(raw.get("horizon_days"), 0)
+        if not analysis_run_id or not symbol or horizon_days <= 0:
+            continue
+        enriched = dict(raw)
+        enriched["analysis_run_id"] = analysis_run_id
+        enriched["report_dir"] = str(snapshot.get("report_dir") or "")
+        enriched["stage"] = str(snapshot.get("stage") or "")
+        enriched["stage_rank"] = _safe_int(snapshot.get("stage_rank"), 0)
+        enriched["stage1_rank"] = _safe_int(snapshot.get("stage1_rank"), 0)
+        enriched["score"] = _safe_float(snapshot.get("score"), 0.0)
+        enriched["score_before_cost"] = _safe_float(snapshot.get("score_before_cost"), _safe_float(snapshot.get("score"), 0.0))
+        enriched["expected_cost_bps"] = _safe_float(snapshot.get("expected_cost_bps"), 0.0)
+        enriched["expected_edge_bps"] = _safe_float(snapshot.get("expected_edge_bps"), 0.0)
+        enriched["selected"] = int(_is_selected_snapshot_stage(str(snapshot.get("stage") or "")))
+        enriched["execution_status"] = str(status_by_snapshot.get(snapshot_id) or "PLANNED")
+        key = (
+            str(raw.get("portfolio_id") or ""),
+            analysis_run_id,
+            symbol,
+            direction,
+            horizon_days,
+        )
+        current = dict(deduped.get(key) or {})
+        if not current:
+            deduped[key] = enriched
+            continue
+        current_priority = _candidate_snapshot_stage_priority(str(current.get("stage") or ""))
+        next_priority = _candidate_snapshot_stage_priority(str(enriched.get("stage") or ""))
+        if next_priority > current_priority:
+            deduped[key] = enriched
+            continue
+        if next_priority == current_priority and _safe_int(enriched.get("stage_rank"), 10**6) < _safe_int(current.get("stage_rank"), 10**6):
+            deduped[key] = enriched
+
+    top_rank_cutoff: Dict[tuple[str, str], int] = {}
+    grouped_selected: Dict[tuple[str, str], List[Dict[str, Any]]] = {}
+    for row in deduped.values():
+        if int(row.get("selected", 0) or 0) != 1:
+            continue
+        key = (str(row.get("portfolio_id") or ""), str(row.get("analysis_run_id") or ""))
+        grouped_selected.setdefault(key, []).append(row)
+    for key, rows in grouped_selected.items():
+        count = max(1, len(rows))
+        top_rank_cutoff[key] = max(1, min(5, (count + 3) // 4))
+
+    grouped: Dict[tuple[str, str, int], List[Dict[str, Any]]] = {}
+    for row in deduped.values():
+        key = (
+            str(row.get("portfolio_id") or ""),
+            str(row.get("market") or ""),
+            _safe_int(row.get("horizon_days"), 0),
+        )
+        grouped.setdefault(key, []).append(row)
+
+    def _avg_future(rows: List[Dict[str, Any]]) -> float | None:
+        return _avg_defined([_safe_float(item.get("future_return"), 0.0) * 10000.0 for item in list(rows or [])])
+
+    def _positive_rate(rows: List[Dict[str, Any]]) -> float | None:
+        if not rows:
+            return None
+        positives = sum(1 for item in rows if _safe_float(item.get("future_return"), 0.0) > 0.0)
+        return float(positives / len(rows))
+
+    out: List[Dict[str, Any]] = []
+    for (portfolio_id, market, horizon_days), rows in grouped.items():
+        selected_rows = [row for row in rows if int(row.get("selected", 0) or 0) == 1]
+        unselected_rows = [row for row in rows if int(row.get("selected", 0) or 0) != 1]
+        top_ranked_rows = [
+            row
+            for row in selected_rows
+            if _safe_int(row.get("stage_rank"), 0) > 0
+            and _safe_int(row.get("stage_rank"), 0)
+            <= int(top_rank_cutoff.get((portfolio_id, str(row.get("analysis_run_id") or "")), 1))
+        ]
+        executed_rows = [row for row in selected_rows if str(row.get("execution_status") or "") == "FILLED"]
+        blocked_edge_rows = [row for row in selected_rows if str(row.get("execution_status") or "") == "BLOCKED_EDGE"]
+        selected_avg = _avg_future(selected_rows)
+        unselected_avg = _avg_future(unselected_rows)
+        top_rank_avg = _avg_future(top_ranked_rows)
+        executed_avg = _avg_future(executed_rows)
+        blocked_edge_avg = _avg_future(blocked_edge_rows)
+        out.append(
+            {
+                "portfolio_id": portfolio_id,
+                "market": market,
+                "horizon_days": horizon_days,
+                "universe_sample_count": int(len(rows)),
+                "selected_sample_count": int(len(selected_rows)),
+                "unselected_sample_count": int(len(unselected_rows)),
+                "top_ranked_sample_count": int(len(top_ranked_rows)),
+                "executed_sample_count": int(len(executed_rows)),
+                "blocked_edge_sample_count": int(len(blocked_edge_rows)),
+                "universe_avg_future_return_bps": _avg_future(rows),
+                "selected_avg_future_return_bps": selected_avg,
+                "unselected_avg_future_return_bps": unselected_avg,
+                "selected_spread_vs_unselected_bps": (
+                    float(selected_avg - unselected_avg)
+                    if selected_avg is not None and unselected_avg is not None
+                    else None
+                ),
+                "top_ranked_avg_future_return_bps": top_rank_avg,
+                "top_ranked_spread_vs_unselected_bps": (
+                    float(top_rank_avg - unselected_avg)
+                    if top_rank_avg is not None and unselected_avg is not None
+                    else None
+                ),
+                "executed_avg_future_return_bps": executed_avg,
+                "blocked_edge_avg_future_return_bps": blocked_edge_avg,
+                "executed_spread_vs_blocked_edge_bps": (
+                    float(executed_avg - blocked_edge_avg)
+                    if executed_avg is not None and blocked_edge_avg is not None
+                    else None
+                ),
+                "selected_positive_rate": _positive_rate(selected_rows),
+                "unselected_positive_rate": _positive_rate(unselected_rows),
+                "executed_positive_rate": _positive_rate(executed_rows),
+                "blocked_edge_positive_rate": _positive_rate(blocked_edge_rows),
+            }
+        )
+    out.sort(
+        key=lambda row: (
+            str(row.get("market") or ""),
+            str(row.get("portfolio_id") or ""),
+            _safe_int(row.get("horizon_days"), 0),
+        )
+    )
+    return out
+
+
+def _build_weekly_edge_realization_rows(execution_parent_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    for row in list(execution_parent_rows or []):
+        portfolio_id = str(row.get("portfolio_id") or "").strip()
+        if portfolio_id:
+            grouped.setdefault(portfolio_id, []).append(dict(row))
+    out: List[Dict[str, Any]] = []
+    for portfolio_id, rows in grouped.items():
+        relevant = [
+            row
+            for row in rows
+            if str(row.get("linked_snapshot_id") or "").strip()
+            or _safe_float(row.get("expected_edge_bps"), 0.0) > 0.0
+            or _safe_float(row.get("score_before_cost"), 0.0) != 0.0
+        ]
+        if not relevant:
+            continue
+        weighted_order_value = sum(abs(_safe_float(row.get("order_value"), 0.0)) for row in relevant)
+        filled = [row for row in relevant if str(row.get("status_bucket") or "") == "FILLED"]
+        fill_notional = sum(abs(_safe_float(row.get("fill_notional"), 0.0)) for row in filled)
+        edge_blocked = [row for row in relevant if str(row.get("status_bucket") or "") == "BLOCKED_EDGE"]
+        output = {
+            "portfolio_id": portfolio_id,
+            "market": str(relevant[0].get("market") or ""),
+            "candidate_parent_count": int(len(relevant)),
+            "filled_parent_count": int(len(filled)),
+            "blocked_edge_parent_count": int(len(edge_blocked)),
+            "linked_snapshot_count": int(sum(1 for row in relevant if str(row.get("linked_snapshot_id") or "").strip())),
+            "avg_score_before_cost": (
+                float(sum(abs(_safe_float(row.get("order_value"), 0.0)) * _safe_float(row.get("score_before_cost"), 0.0) for row in relevant) / weighted_order_value)
+                if weighted_order_value > 0.0 else None
+            ),
+            "avg_expected_edge_score": (
+                float(sum(abs(_safe_float(row.get("order_value"), 0.0)) * _safe_float(row.get("expected_edge_score"), 0.0) for row in relevant) / weighted_order_value)
+                if weighted_order_value > 0.0 else None
+            ),
+            "avg_expected_edge_bps": (
+                float(sum(abs(_safe_float(row.get("order_value"), 0.0)) * _safe_float(row.get("expected_edge_bps"), 0.0) for row in relevant) / weighted_order_value)
+                if weighted_order_value > 0.0 else None
+            ),
+            "avg_edge_gate_threshold_bps": (
+                float(sum(abs(_safe_float(row.get("order_value"), 0.0)) * _safe_float(row.get("edge_gate_threshold_bps"), 0.0) for row in relevant) / weighted_order_value)
+                if weighted_order_value > 0.0 else None
+            ),
+            "avg_expected_cost_bps": (
+                float(sum(abs(_safe_float(row.get("order_value"), 0.0)) * _safe_float(row.get("expected_cost_bps"), 0.0) for row in relevant) / weighted_order_value)
+                if weighted_order_value > 0.0 else None
+            ),
+            "avg_actual_slippage_bps": (
+                float(sum(abs(_safe_float(row.get("fill_notional"), 0.0)) * _safe_float(row.get("avg_actual_slippage_bps"), 0.0) for row in filled) / fill_notional)
+                if fill_notional > 0.0 else None
+            ),
+            "avg_realized_total_cost_bps": (
+                float(sum(abs(_safe_float(row.get("fill_notional"), 0.0)) * _safe_float(row.get("avg_realized_total_cost_bps"), 0.0) for row in filled) / fill_notional)
+                if fill_notional > 0.0 else None
+            ),
+            "avg_execution_capture_bps": (
+                float(sum(abs(_safe_float(row.get("fill_notional"), 0.0)) * _safe_float(row.get("execution_capture_bps"), 0.0) for row in filled if row.get("execution_capture_bps") not in (None, "")) / fill_notional)
+                if fill_notional > 0.0 else None
+            ),
+            "avg_fill_delay_seconds": _avg_defined([row.get("first_fill_delay_seconds") for row in filled if row.get("first_fill_delay_seconds") not in (None, "")]),
+            "median_fill_delay_seconds": _median([row.get("first_fill_delay_seconds") for row in filled if row.get("first_fill_delay_seconds") not in (None, "")]),
+        }
+        for horizon_days in (5, 20, 60):
+            future_key = f"outcome_{horizon_days}d_future_return_bps"
+            edge_key = f"outcome_{horizon_days}d_realized_edge_bps"
+            samples = [row for row in filled if row.get(future_key) not in (None, "")]
+            output[f"matured_{horizon_days}d_sample_count"] = int(len(samples))
+            output[f"matured_{horizon_days}d_avg_future_return_bps"] = _avg_bps(samples, future_key)
+            output[f"matured_{horizon_days}d_avg_realized_edge_bps"] = _avg_bps(samples, edge_key)
+        out.append(output)
+    out.sort(key=lambda row: (str(row.get("market") or ""), str(row.get("portfolio_id") or "")))
+    return out
+
+
+def _build_weekly_blocked_edge_attribution_rows(execution_parent_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    total_value_by_portfolio: Dict[str, float] = {}
+    for row in list(execution_parent_rows or []):
+        portfolio_id = str(row.get("portfolio_id") or "").strip()
+        if not portfolio_id:
+            continue
+        total_value_by_portfolio[portfolio_id] = float(total_value_by_portfolio.get(portfolio_id, 0.0) or 0.0) + abs(_safe_float(row.get("order_value"), 0.0))
+
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    for row in list(execution_parent_rows or []):
+        if str(row.get("status_bucket") or "") != "BLOCKED_EDGE":
+            continue
+        portfolio_id = str(row.get("portfolio_id") or "").strip()
+        if portfolio_id:
+            grouped.setdefault(portfolio_id, []).append(dict(row))
+
+    out: List[Dict[str, Any]] = []
+    for portfolio_id, rows in grouped.items():
+        blocked_value = sum(abs(_safe_float(row.get("order_value"), 0.0)) for row in rows)
+        total_value = float(total_value_by_portfolio.get(portfolio_id, 0.0) or 0.0)
+        output = {
+            "portfolio_id": portfolio_id,
+            "market": str(rows[0].get("market") or ""),
+            "blocked_edge_parent_count": int(len(rows)),
+            "blocked_edge_order_value": float(blocked_value),
+            "blocked_edge_weight": float(blocked_value / total_value) if total_value > 0.0 else 0.0,
+            "avg_expected_edge_bps": (
+                float(sum(abs(_safe_float(row.get("order_value"), 0.0)) * _safe_float(row.get("expected_edge_bps"), 0.0) for row in rows) / blocked_value)
+                if blocked_value > 0.0 else None
+            ),
+            "avg_edge_gate_threshold_bps": (
+                float(sum(abs(_safe_float(row.get("order_value"), 0.0)) * _safe_float(row.get("edge_gate_threshold_bps"), 0.0) for row in rows) / blocked_value)
+                if blocked_value > 0.0 else None
+            ),
+            "avg_required_gap_bps": (
+                float(sum(abs(_safe_float(row.get("order_value"), 0.0)) * _safe_float(row.get("required_edge_gap_bps"), 0.0) for row in rows) / blocked_value)
+                if blocked_value > 0.0 else None
+            ),
+            "blocked_expected_edge_value": float(sum(_safe_float(row.get("expected_edge_value"), 0.0) for row in rows)),
+            "blocked_required_gap_value": float(sum(abs(_safe_float(row.get("order_value"), 0.0)) * _safe_float(row.get("required_edge_gap_bps"), 0.0) / 10000.0 for row in rows)),
+        }
+        for horizon_days in (5, 20, 60):
+            future_key = f"outcome_{horizon_days}d_future_return_bps"
+            edge_key = f"outcome_{horizon_days}d_counterfactual_edge_bps"
+            samples = [row for row in rows if row.get(future_key) not in (None, "")]
+            output[f"matured_{horizon_days}d_sample_count"] = int(len(samples))
+            output[f"matured_{horizon_days}d_avg_future_return_bps"] = _avg_bps(samples, future_key)
+            output[f"matured_{horizon_days}d_avg_counterfactual_edge_bps"] = _avg_bps(samples, edge_key)
+        out.append(output)
+    out.sort(key=lambda row: (str(row.get("market") or ""), str(row.get("portfolio_id") or "")))
     return out
 
 
@@ -4247,6 +5390,421 @@ def _build_execution_feedback_rows(
     return out
 
 
+def _build_market_profile_tuning_summary(
+    strategy_context_rows: List[Dict[str, Any]],
+    attribution_rows: List[Dict[str, Any]],
+    risk_feedback_rows: List[Dict[str, Any]],
+    execution_feedback_rows: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    attribution_map = {
+        str(row.get("portfolio_id") or ""): dict(row)
+        for row in list(attribution_rows or [])
+        if str(row.get("portfolio_id") or "").strip()
+    }
+    risk_feedback_map = {
+        str(row.get("portfolio_id") or ""): dict(row)
+        for row in list(risk_feedback_rows or [])
+        if str(row.get("portfolio_id") or "").strip()
+    }
+    execution_feedback_map = {
+        str(row.get("portfolio_id") or ""): dict(row)
+        for row in list(execution_feedback_rows or [])
+        if str(row.get("portfolio_id") or "").strip()
+    }
+    out: List[Dict[str, Any]] = []
+    for raw in list(strategy_context_rows or []):
+        row = dict(raw)
+        portfolio_id = str(row.get("portfolio_id") or "").strip()
+        if not portfolio_id:
+            continue
+        attribution = dict(attribution_map.get(portfolio_id) or {})
+        risk_feedback = dict(risk_feedback_map.get(portfolio_id) or {})
+        execution_feedback = dict(execution_feedback_map.get(portfolio_id) or {})
+        strategy_delta = float(attribution.get("strategy_control_weight_delta", 0.0) or 0.0)
+        risk_delta = float(attribution.get("risk_overlay_weight_delta", 0.0) or 0.0)
+        gate_weight = float(attribution.get("execution_gate_blocked_weight", 0.0) or 0.0)
+        gate_ratio = float(attribution.get("execution_gate_blocked_order_ratio", 0.0) or 0.0)
+        blocked_edge_count = int(attribution.get("execution_gate_blocked_order_count", 0) or 0)
+        split_text = str(attribution.get("control_split_text", "") or "").strip()
+        risk_action = str(risk_feedback.get("risk_feedback_action", "") or "HOLD").upper()
+        execution_action = str(execution_feedback.get("execution_feedback_action", "") or "HOLD").upper()
+
+        tuning_target = "WATCH"
+        tuning_target_label = "继续观察"
+        tuning_bias = "NEUTRAL"
+        tuning_bias_label = "暂无明显失配"
+        tuning_action = "KEEP_BASELINE"
+        note = "当前市场档案没有出现单一主导的失配信号，先继续观察。"
+
+        if gate_weight >= max(0.02, strategy_delta + 0.01, risk_delta + 0.01) and blocked_edge_count > 0:
+            tuning_target = "EXECUTION_GATE"
+            tuning_target_label = "执行门槛"
+            tuning_bias = "TOO_TIGHT"
+            tuning_bias_label = "执行 gate 偏紧"
+            tuning_action = "REVIEW_EXECUTION_GATE"
+            note = (
+                "本周更明显的阻断来自 execution edge gate，优先复核 "
+                "min_expected_edge_bps / edge_cost_buffer_bps，而不是继续收紧执行节奏。"
+            )
+        elif strategy_delta >= max(0.05, risk_delta + 0.02, gate_weight + 0.02):
+            tuning_target = "REGIME_PLAN"
+            tuning_target_label = "Regime / 计划参数"
+            tuning_bias = "TOO_TIGHT"
+            tuning_bias_label = "策略参数偏紧"
+            tuning_action = "REVIEW_REGIME_PLAN"
+            note = (
+                "本周压仓主要来自策略主动控仓，优先复核 risk_on / hard_risk_off、"
+                "no_trade_band 和 turnover_penalty，而不是先改风险 overlay。"
+            )
+        elif risk_delta >= max(0.04, strategy_delta + 0.02, gate_weight + 0.02):
+            tuning_target = "RISK_OVERLAY"
+            tuning_target_label = "风险 Overlay"
+            tuning_bias = "RISK_DRIVEN"
+            tuning_bias_label = "风险层主导"
+            tuning_action = "KEEP_RISK_OVERLAY"
+            note = "本周压仓主要来自风险 overlay，先不要把问题误判成市场档案参数本身。"
+        elif execution_action == "RELAX":
+            tuning_target = "EXECUTION_TACTICS"
+            tuning_target_label = "执行节奏"
+            tuning_bias = "CAN_RELAX"
+            tuning_bias_label = "执行节奏可放宽"
+            tuning_action = "KEEP_EXECUTION_RELAX"
+            note = "实际执行成本持续低于计划，可继续沿执行参与率/拆单参数做温和放宽。"
+        elif risk_action == "RELAX":
+            tuning_target = "RISK_BUDGET"
+            tuning_target_label = "风险预算"
+            tuning_bias = "CAN_RELAX"
+            tuning_bias_label = "风险预算可放宽"
+            tuning_action = "KEEP_RISK_RELAX"
+            note = "组合风险预算相对保守，若后续样本持续稳定，可继续沿风险预算方向温和放宽。"
+
+        if split_text:
+            note = f"{note}（{split_text}）"
+
+        summary_text = (
+            f"{tuning_target_label} / {tuning_bias_label}: {note}"
+        )
+        out.append(
+            {
+                "portfolio_id": portfolio_id,
+                "market": str(row.get("market") or ""),
+                "adaptive_strategy_active_market_profile": str(row.get("adaptive_strategy_active_market_profile") or ""),
+                "adaptive_strategy_active_market_plan_summary": str(row.get("adaptive_strategy_active_market_plan_summary") or ""),
+                "adaptive_strategy_active_market_regime_summary": str(row.get("adaptive_strategy_active_market_regime_summary") or ""),
+                "adaptive_strategy_active_market_execution_summary": str(row.get("adaptive_strategy_active_market_execution_summary") or ""),
+                "adaptive_strategy_market_profile_note": str(row.get("adaptive_strategy_market_profile_note") or ""),
+                "market_profile_tuning_target": tuning_target,
+                "market_profile_tuning_target_label": tuning_target_label,
+                "market_profile_tuning_bias": tuning_bias,
+                "market_profile_tuning_bias_label": tuning_bias_label,
+                "market_profile_tuning_action": tuning_action,
+                "market_profile_tuning_note": note,
+                "market_profile_tuning_summary": summary_text,
+                "strategy_control_weight_delta": float(strategy_delta),
+                "risk_overlay_weight_delta": float(risk_delta),
+                "execution_gate_blocked_weight": float(gate_weight),
+                "execution_gate_blocked_order_ratio": float(gate_ratio),
+                "execution_gate_blocked_order_count": int(blocked_edge_count),
+                "risk_feedback_action": risk_action,
+                "execution_feedback_action": execution_action,
+            }
+        )
+    out.sort(
+        key=lambda row: (
+            0 if str(row.get("market_profile_tuning_bias") or "") == "TOO_TIGHT" else 1 if str(row.get("market_profile_tuning_bias") or "") == "CAN_RELAX" else 2,
+            str(row.get("market") or ""),
+            str(row.get("portfolio_id") or ""),
+        )
+    )
+    return out
+
+
+def _build_weekly_tuning_dataset_rows(
+    summary_rows: List[Dict[str, Any]],
+    *,
+    strategy_context_rows: List[Dict[str, Any]] | None = None,
+    attribution_rows: List[Dict[str, Any]] | None = None,
+    outcome_spread_rows: List[Dict[str, Any]] | None = None,
+    edge_realization_rows: List[Dict[str, Any]] | None = None,
+    blocked_edge_rows: List[Dict[str, Any]] | None = None,
+    risk_review_rows: List[Dict[str, Any]] | None = None,
+    risk_feedback_rows: List[Dict[str, Any]] | None = None,
+    execution_feedback_rows: List[Dict[str, Any]] | None = None,
+    market_profile_tuning_rows: List[Dict[str, Any]] | None = None,
+    feedback_calibration_rows: List[Dict[str, Any]] | None = None,
+    feedback_automation_rows: List[Dict[str, Any]] | None = None,
+    week_label: str = "",
+    window_start: str = "",
+    window_end: str = "",
+) -> List[Dict[str, Any]]:
+    strategy_context_map = {
+        str(row.get("portfolio_id") or ""): dict(row)
+        for row in list(strategy_context_rows or [])
+        if str(row.get("portfolio_id") or "").strip()
+    }
+    attribution_map = {
+        str(row.get("portfolio_id") or ""): dict(row)
+        for row in list(attribution_rows or [])
+        if str(row.get("portfolio_id") or "").strip()
+    }
+    outcome_spread_map: Dict[str, Dict[int, Dict[str, Any]]] = {}
+    for raw in list(outcome_spread_rows or []):
+        portfolio_id = str(raw.get("portfolio_id") or "").strip()
+        horizon_days = _safe_int(raw.get("horizon_days"), 0)
+        if not portfolio_id or horizon_days <= 0:
+            continue
+        outcome_spread_map.setdefault(portfolio_id, {})[horizon_days] = dict(raw)
+    edge_realization_map = {
+        str(row.get("portfolio_id") or ""): dict(row)
+        for row in list(edge_realization_rows or [])
+        if str(row.get("portfolio_id") or "").strip()
+    }
+    blocked_edge_map = {
+        str(row.get("portfolio_id") or ""): dict(row)
+        for row in list(blocked_edge_rows or [])
+        if str(row.get("portfolio_id") or "").strip()
+    }
+    risk_review_map = {
+        str(row.get("portfolio_id") or ""): dict(row)
+        for row in list(risk_review_rows or [])
+        if str(row.get("portfolio_id") or "").strip()
+    }
+    risk_feedback_map = {
+        str(row.get("portfolio_id") or ""): dict(row)
+        for row in list(risk_feedback_rows or [])
+        if str(row.get("portfolio_id") or "").strip()
+    }
+    execution_feedback_map = {
+        str(row.get("portfolio_id") or ""): dict(row)
+        for row in list(execution_feedback_rows or [])
+        if str(row.get("portfolio_id") or "").strip()
+    }
+    tuning_map = {
+        str(row.get("portfolio_id") or ""): dict(row)
+        for row in list(market_profile_tuning_rows or [])
+        if str(row.get("portfolio_id") or "").strip()
+    }
+    calibration_map = {
+        str(row.get("portfolio_id") or ""): dict(row)
+        for row in list(feedback_calibration_rows or [])
+        if str(row.get("portfolio_id") or "").strip()
+    }
+    automation_map = {
+        (str(row.get("portfolio_id") or "").strip(), str(row.get("feedback_kind") or "").strip().lower()): dict(row)
+        for row in list(feedback_automation_rows or [])
+        if str(row.get("portfolio_id") or "").strip() and str(row.get("feedback_kind") or "").strip()
+    }
+
+    rows: List[Dict[str, Any]] = []
+    for raw in list(summary_rows or []):
+        summary = dict(raw or {})
+        portfolio_id = str(summary.get("portfolio_id") or "").strip()
+        if not portfolio_id:
+            continue
+        strategy_context = dict(strategy_context_map.get(portfolio_id) or {})
+        attribution = dict(attribution_map.get(portfolio_id) or {})
+        outcome_spreads = dict(outcome_spread_map.get(portfolio_id) or {})
+        edge_realization = dict(edge_realization_map.get(portfolio_id) or {})
+        blocked_edge = dict(blocked_edge_map.get(portfolio_id) or {})
+        risk_review = dict(risk_review_map.get(portfolio_id) or {})
+        risk_feedback = dict(risk_feedback_map.get(portfolio_id) or {})
+        execution_feedback = dict(execution_feedback_map.get(portfolio_id) or {})
+        tuning = dict(tuning_map.get(portfolio_id) or {})
+        calibration = dict(calibration_map.get(portfolio_id) or {})
+        shadow_automation = dict(automation_map.get((portfolio_id, "shadow")) or {})
+        risk_automation = dict(automation_map.get((portfolio_id, "risk")) or {})
+        execution_automation = dict(automation_map.get((portfolio_id, "execution")) or {})
+
+        rows.append(
+            {
+                "week_label": str(week_label or ""),
+                "window_start": str(window_start or ""),
+                "window_end": str(window_end or ""),
+                "portfolio_id": portfolio_id,
+                "market": str(summary.get("market") or ""),
+                "weekly_return": float(summary.get("weekly_return", 0.0) or 0.0),
+                "max_drawdown": float(summary.get("max_drawdown", 0.0) or 0.0),
+                "turnover": float(summary.get("turnover", 0.0) or 0.0),
+                "latest_equity": float(summary.get("latest_equity", 0.0) or 0.0),
+                "adaptive_strategy_active_market_profile": str(
+                    strategy_context.get("adaptive_strategy_active_market_profile")
+                    or tuning.get("adaptive_strategy_active_market_profile")
+                    or ""
+                ),
+                "adaptive_strategy_market_profile_note": str(
+                    strategy_context.get("adaptive_strategy_market_profile_note")
+                    or tuning.get("adaptive_strategy_market_profile_note")
+                    or ""
+                ),
+                "strategy_effective_controls_applied": int(
+                    bool(summary.get("strategy_effective_controls_applied", False))
+                ),
+                "strategy_effective_controls_note": str(
+                    strategy_context.get("strategy_effective_controls_note")
+                    or summary.get("strategy_effective_controls_note")
+                    or ""
+                ),
+                "execution_gate_summary": str(
+                    strategy_context.get("execution_gate_summary")
+                    or summary.get("execution_gate_summary")
+                    or ""
+                ),
+                "outcome_sample_count": int(calibration.get("outcome_sample_count", 0) or 0),
+                "outcome_positive_rate": float(calibration.get("outcome_positive_rate", 0.0) or 0.0),
+                "outcome_broken_rate": float(calibration.get("outcome_broken_rate", 0.0) or 0.0),
+                "signal_quality_score": float(calibration.get("signal_quality_score", 0.0) or 0.0),
+                "calibration_confidence": float(calibration.get("calibration_confidence", 0.0) or 0.0),
+                "calibration_confidence_label": str(calibration.get("calibration_confidence_label") or ""),
+                "latest_outcome_ts": str(calibration.get("latest_outcome_ts") or ""),
+                "selection_scope_label": str(calibration.get("selection_scope_label") or ""),
+                "selected_horizon_days": str(calibration.get("selected_horizon_days") or ""),
+                "shadow_apply_mode": str(shadow_automation.get("calibration_apply_mode") or ""),
+                "shadow_apply_mode_label": str(shadow_automation.get("calibration_apply_mode_label") or ""),
+                "shadow_outcome_maturity_label": str(shadow_automation.get("outcome_maturity_label") or ""),
+                "risk_feedback_action": str(risk_feedback.get("risk_feedback_action") or ""),
+                "risk_feedback_confidence": float(risk_feedback.get("feedback_confidence", 0.0) or 0.0),
+                "risk_feedback_confidence_label": str(risk_feedback.get("feedback_confidence_label") or ""),
+                "risk_feedback_reason": str(risk_feedback.get("feedback_reason") or ""),
+                "risk_apply_mode": str(risk_automation.get("calibration_apply_mode") or ""),
+                "risk_apply_mode_label": str(risk_automation.get("calibration_apply_mode_label") or ""),
+                "risk_outcome_maturity_label": str(risk_automation.get("outcome_maturity_label") or ""),
+                "execution_feedback_action": str(execution_feedback.get("execution_feedback_action") or ""),
+                "execution_feedback_confidence": float(execution_feedback.get("feedback_confidence", 0.0) or 0.0),
+                "execution_feedback_confidence_label": str(execution_feedback.get("feedback_confidence_label") or ""),
+                "execution_feedback_reason": str(execution_feedback.get("feedback_reason") or ""),
+                "execution_apply_mode": str(execution_automation.get("calibration_apply_mode") or ""),
+                "execution_apply_mode_label": str(execution_automation.get("calibration_apply_mode_label") or ""),
+                "execution_outcome_maturity_label": str(execution_automation.get("outcome_maturity_label") or ""),
+                "market_data_gate_status": str(execution_automation.get("market_data_gate_status") or ""),
+                "market_data_gate_label": str(execution_automation.get("market_data_gate_label") or ""),
+                "planned_execution_cost_total": float(attribution.get("planned_execution_cost_total", 0.0) or 0.0),
+                "execution_cost_total": float(attribution.get("execution_cost_total", 0.0) or 0.0),
+                "execution_cost_gap": float(attribution.get("execution_cost_gap", 0.0) or 0.0),
+                "avg_expected_cost_bps": float(attribution.get("avg_expected_cost_bps", 0.0) or 0.0),
+                "avg_actual_slippage_bps": float(attribution.get("avg_actual_slippage_bps", 0.0) or 0.0),
+                "avg_expected_edge_bps": float(edge_realization.get("avg_expected_edge_bps", 0.0) or 0.0),
+                "avg_edge_gate_threshold_bps": float(edge_realization.get("avg_edge_gate_threshold_bps", 0.0) or 0.0),
+                "avg_execution_capture_bps": float(edge_realization.get("avg_execution_capture_bps", 0.0) or 0.0),
+                "avg_fill_delay_seconds": float(edge_realization.get("avg_fill_delay_seconds", 0.0) or 0.0),
+                "median_fill_delay_seconds": float(edge_realization.get("median_fill_delay_seconds", 0.0) or 0.0),
+                "matured_20d_avg_realized_edge_bps": float(
+                    edge_realization.get("matured_20d_avg_realized_edge_bps", 0.0) or 0.0
+                ),
+                "outcome_selected_spread_5d_bps": float(
+                    dict(outcome_spreads.get(5) or {}).get("selected_spread_vs_unselected_bps", 0.0) or 0.0
+                ),
+                "outcome_selected_spread_20d_bps": float(
+                    dict(outcome_spreads.get(20) or {}).get("selected_spread_vs_unselected_bps", 0.0) or 0.0
+                ),
+                "outcome_selected_spread_60d_bps": float(
+                    dict(outcome_spreads.get(60) or {}).get("selected_spread_vs_unselected_bps", 0.0) or 0.0
+                ),
+                "outcome_executed_vs_blocked_edge_spread_20d_bps": float(
+                    dict(outcome_spreads.get(20) or {}).get("executed_spread_vs_blocked_edge_bps", 0.0) or 0.0
+                ),
+                "dominant_execution_session_label": str(
+                    execution_feedback.get("dominant_execution_session_label") or ""
+                ),
+                "dominant_execution_hotspot_symbol": str(
+                    execution_feedback.get("dominant_execution_hotspot_symbol") or ""
+                ),
+                "execution_penalty_symbol_count": int(
+                    execution_feedback.get("execution_penalty_symbol_count", 0) or 0
+                ),
+                "strategy_control_weight_delta": float(attribution.get("strategy_control_weight_delta", 0.0) or 0.0),
+                "risk_overlay_weight_delta": float(attribution.get("risk_overlay_weight_delta", 0.0) or 0.0),
+                "execution_gate_blocked_order_count": int(
+                    attribution.get("execution_gate_blocked_order_count", 0) or 0
+                ),
+                "execution_gate_blocked_order_value": float(
+                    attribution.get("execution_gate_blocked_order_value", 0.0) or 0.0
+                ),
+                "execution_gate_blocked_order_ratio": float(
+                    attribution.get("execution_gate_blocked_order_ratio", 0.0) or 0.0
+                ),
+                "execution_gate_blocked_weight": float(
+                    attribution.get("execution_gate_blocked_weight", 0.0) or 0.0
+                ),
+                "blocked_edge_parent_count": int(blocked_edge.get("blocked_edge_parent_count", 0) or 0),
+                "blocked_edge_order_value": float(blocked_edge.get("blocked_edge_order_value", 0.0) or 0.0),
+                "blocked_expected_edge_value": float(blocked_edge.get("blocked_expected_edge_value", 0.0) or 0.0),
+                "blocked_required_gap_value": float(blocked_edge.get("blocked_required_gap_value", 0.0) or 0.0),
+                "blocked_20d_avg_counterfactual_edge_bps": float(
+                    blocked_edge.get("matured_20d_avg_counterfactual_edge_bps", 0.0) or 0.0
+                ),
+                "feedback_control_driver": str(execution_feedback.get("feedback_control_driver") or ""),
+                "feedback_control_driver_label": str(
+                    execution_feedback.get("feedback_control_driver_label")
+                    or risk_feedback.get("feedback_control_driver_label")
+                    or ""
+                ),
+                "control_split_text": str(attribution.get("control_split_text") or ""),
+                "dominant_driver": str(attribution.get("dominant_driver") or ""),
+                "dominant_risk_driver": str(risk_review.get("dominant_risk_driver") or ""),
+                "risk_diagnosis": str(risk_review.get("risk_diagnosis") or ""),
+                "market_profile_tuning_target": str(tuning.get("market_profile_tuning_target") or ""),
+                "market_profile_tuning_bias": str(tuning.get("market_profile_tuning_bias") or ""),
+                "market_profile_tuning_action": str(tuning.get("market_profile_tuning_action") or ""),
+                "market_profile_tuning_note": str(tuning.get("market_profile_tuning_note") or ""),
+                "market_profile_ready_for_manual_apply": int(
+                    summary.get("market_profile_ready_for_manual_apply", 0) or 0
+                ),
+                "market_profile_readiness_label": str(summary.get("market_profile_readiness_label") or ""),
+                "market_profile_readiness_summary": str(summary.get("market_profile_readiness_summary") or ""),
+                "market_profile_cohort_weeks": int(summary.get("market_profile_cohort_weeks", 0) or 0),
+            }
+        )
+    rows.sort(
+        key=lambda row: (
+            str(row.get("market") or ""),
+            str(row.get("portfolio_id") or ""),
+        )
+    )
+    return rows
+
+
+def _build_weekly_tuning_dataset_summary(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    portfolio_count = int(len(rows))
+    dominant_driver_counts = {"STRATEGY": 0, "RISK": 0, "EXECUTION": 0, "OTHER": 0}
+    for row in list(rows or []):
+        driver = str(row.get("dominant_driver") or "").strip().upper()
+        if driver not in dominant_driver_counts:
+            driver = "OTHER"
+        dominant_driver_counts[driver] = int(dominant_driver_counts.get(driver, 0) or 0) + 1
+    return {
+        "portfolio_count": portfolio_count,
+        "strategy_driver_count": int(dominant_driver_counts.get("STRATEGY", 0) or 0),
+        "risk_driver_count": int(dominant_driver_counts.get("RISK", 0) or 0),
+        "execution_driver_count": int(dominant_driver_counts.get("EXECUTION", 0) or 0),
+        "market_profile_review_count": int(
+            sum(
+                1
+                for row in list(rows or [])
+                if str(row.get("market_profile_tuning_action") or "").startswith("REVIEW_")
+            )
+        ),
+        "ready_for_manual_apply_count": int(
+            sum(1 for row in list(rows or []) if int(row.get("market_profile_ready_for_manual_apply", 0) or 0) == 1)
+        ),
+        "execution_tighten_count": int(
+            sum(1 for row in list(rows or []) if str(row.get("execution_feedback_action") or "") == "TIGHTEN")
+        ),
+        "risk_tighten_count": int(
+            sum(1 for row in list(rows or []) if str(row.get("risk_feedback_action") or "") == "TIGHTEN")
+        ),
+        "avg_execution_cost_gap": float(_mean([float(row.get("execution_cost_gap", 0.0) or 0.0) for row in list(rows or [])])),
+        "avg_execution_gate_blocked_weight": float(
+            _mean([float(row.get("execution_gate_blocked_weight", 0.0) or 0.0) for row in list(rows or [])])
+        ),
+        "avg_outcome_sample_count": float(
+            _mean([float(row.get("outcome_sample_count", 0.0) or 0.0) for row in list(rows or [])])
+        ),
+        "avg_signal_quality_score": float(
+            _mean([float(row.get("signal_quality_score", 0.0) or 0.0) for row in list(rows or [])])
+        ),
+    }
+
+
 def _build_broker_summary_rows(
     execution_runs: List[Dict[str, Any]],
     execution_orders: List[Dict[str, Any]],
@@ -4320,6 +5878,7 @@ def _cli_summary_payload(summary: Dict[str, Any], out_dir: Path) -> tuple[Dict[s
         summary_json=out_dir / "weekly_review_summary.json",
         summary_csv=out_dir / "weekly_portfolio_summary.csv",
         trade_log_csv=out_dir / "weekly_trade_log.csv",
+        weekly_csv=out_dir / "weekly_tuning_dataset.csv",
         report_md=out_dir / "weekly_review.md",
     )
     return summary_contract.to_dict(), artifacts.to_dict()
@@ -4394,13 +5953,26 @@ def main(argv: List[str] | None = None) -> None:
             ).fetchall()]
         fill_rows = []
         if _table_exists(conn, "fills"):
+            fill_columns = [
+                "ts",
+                "order_id",
+                "exec_id",
+                "symbol",
+                "qty",
+                "price",
+                "pnl",
+                "actual_slippage_bps",
+                "slippage_bps_deviation",
+                "portfolio_id",
+                "system_kind",
+                "execution_run_id",
+            ]
+            if _column_exists(conn, "fills", "order_submit_ts"):
+                fill_columns.append("order_submit_ts")
+            if _column_exists(conn, "fills", "fill_delay_seconds"):
+                fill_columns.append("fill_delay_seconds")
             fill_rows = [dict(row) for row in conn.execute(
-                """
-                SELECT ts, order_id, exec_id, symbol, qty, price, pnl, actual_slippage_bps, slippage_bps_deviation,
-                       portfolio_id, system_kind, execution_run_id
-                FROM fills
-                ORDER BY ts DESC, id DESC
-                """
+                f"SELECT {', '.join(fill_columns)} FROM fills ORDER BY ts DESC, id DESC"
             ).fetchall()]
         commission_rows = []
         if _table_exists(conn, "risk_events"):
@@ -4428,6 +6000,28 @@ def main(argv: List[str] | None = None) -> None:
             f"SELECT * FROM investment_positions {pos_sql} ORDER BY ts ASC, id ASC",
             pos_params,
         ).fetchall()]
+        snapshot_rows = []
+        if _table_exists(conn, "investment_candidate_snapshots"):
+            snapshot_where = ["ts >= ?"]
+            snapshot_params: List[Any] = [feedback_calibration_since_ts]
+            if market_filter:
+                snapshot_where.append("market = ?")
+                snapshot_params.append(market_filter)
+            if portfolio_filter:
+                snapshot_where.append("portfolio_id = ?")
+                snapshot_params.append(portfolio_filter)
+            elif not include_legacy:
+                snapshot_where.append("portfolio_id IS NOT NULL AND portfolio_id != ''")
+            snapshot_sql = " AND ".join(snapshot_where)
+            snapshot_rows = [dict(row) for row in conn.execute(
+                f"""
+                SELECT *
+                FROM investment_candidate_snapshots
+                WHERE {snapshot_sql}
+                ORDER BY ts DESC, id DESC
+                """,
+                snapshot_params,
+            ).fetchall()]
         outcome_rows = []
         if _table_exists(conn, "investment_candidate_outcomes"):
             outcome_where = ["outcome_ts >= ?"]
@@ -4443,7 +6037,8 @@ def main(argv: List[str] | None = None) -> None:
             outcome_sql = " AND ".join(outcome_where)
             outcome_rows = [dict(row) for row in conn.execute(
                 f"""
-                SELECT market, portfolio_id, symbol, horizon_days, snapshot_ts, outcome_ts, future_return, max_drawdown, max_runup, outcome_label, details
+                SELECT snapshot_id, market, portfolio_id, symbol, horizon_days, snapshot_ts, outcome_ts,
+                       direction, future_return, max_drawdown, max_runup, outcome_label, details
                 FROM investment_candidate_outcomes
                 WHERE {outcome_sql}
                 ORDER BY outcome_ts DESC, id DESC
@@ -4518,19 +6113,42 @@ def main(argv: List[str] | None = None) -> None:
     execution_effect_rows = _build_execution_effect_rows(filtered_fill_rows, filtered_commission_rows)
     planned_execution_cost_rows = _build_planned_execution_cost_rows(execution_order_rows)
     execution_gate_rows = _build_execution_gate_rows(execution_order_rows)
+    linked_execution_order_rows = _link_execution_orders_to_candidate_snapshots(
+        execution_order_rows,
+        execution_run_rows,
+        snapshot_rows,
+    )
+    execution_parent_rows = _build_execution_parent_rows(
+        linked_execution_order_rows,
+        filtered_fill_rows,
+        filtered_commission_rows,
+        outcome_rows,
+    )
+    outcome_spread_rows = _build_weekly_outcome_spread_rows(
+        snapshot_rows,
+        outcome_rows,
+        execution_parent_rows,
+    )
+    edge_realization_rows = _build_weekly_edge_realization_rows(execution_parent_rows)
+    blocked_edge_attribution_rows = _build_weekly_blocked_edge_attribution_rows(execution_parent_rows)
     execution_session_rows = _build_execution_session_rows(execution_order_rows, filtered_fill_rows, filtered_commission_rows)
     execution_hotspot_rows = _build_execution_hotspot_rows(execution_order_rows, filtered_fill_rows, filtered_commission_rows)
     execution_effect_map = {str(row.get("portfolio_id") or ""): dict(row) for row in execution_effect_rows}
     planned_execution_map = {str(row.get("portfolio_id") or ""): dict(row) for row in planned_execution_cost_rows}
+    edge_realization_map = {str(row.get("portfolio_id") or ""): dict(row) for row in edge_realization_rows}
     for row in broker_summary_rows:
         effect = dict(execution_effect_map.get(str(row.get("portfolio_id") or ""), {}) or {})
         planned = dict(planned_execution_map.get(str(row.get("portfolio_id") or ""), {}) or {})
+        realized = dict(edge_realization_map.get(str(row.get("portfolio_id") or ""), {}) or {})
         row["fill_count"] = int(effect.get("fill_count", 0) or 0)
         row["fill_notional"] = float(effect.get("fill_notional", 0.0) or 0.0)
         row["commission_total"] = float(effect.get("commission_total", 0.0) or 0.0)
         row["slippage_cost_total"] = float(effect.get("slippage_cost_total", 0.0) or 0.0)
         row["execution_cost_total"] = float(effect.get("execution_cost_total", 0.0) or 0.0)
         row["avg_actual_slippage_bps"] = effect.get("avg_actual_slippage_bps")
+        row["avg_fill_delay_seconds"] = realized.get("avg_fill_delay_seconds")
+        row["avg_realized_total_cost_bps"] = realized.get("avg_realized_total_cost_bps")
+        row["avg_execution_capture_bps"] = realized.get("avg_execution_capture_bps")
         row["planned_cost_basis"] = str(planned.get("planned_cost_basis", "") or "")
         row["planned_order_rows"] = int(planned.get("planned_order_rows", 0) or 0)
         row["planned_order_value"] = float(planned.get("planned_order_value", 0.0) or 0.0)
@@ -4625,6 +6243,70 @@ def main(argv: List[str] | None = None) -> None:
         execution_hotspot_rows=execution_hotspot_rows,
         feedback_calibration_map=feedback_calibration_map,
     )
+    market_profile_tuning_rows = _build_market_profile_tuning_summary(
+        strategy_context_rows,
+        attribution_rows,
+        risk_feedback_rows,
+        execution_feedback_rows,
+    )
+    _persist_market_profile_patch_history(
+        db_path,
+        market_profile_tuning_rows,
+        week_label=review_week_label,
+        week_start=review_week_start,
+        window_start=since_ts,
+        window_end=datetime.now(timezone.utc).isoformat(),
+    )
+    market_profile_patch_readiness_rows = _build_market_profile_patch_readiness(
+        db_path,
+        market_profile_tuning_rows,
+    )
+    tuning_map = {
+        str(row.get("portfolio_id") or ""): dict(row)
+        for row in list(market_profile_tuning_rows or [])
+        if str(row.get("portfolio_id") or "").strip()
+    }
+    readiness_map = {
+        str(row.get("portfolio_id") or ""): dict(row)
+        for row in list(market_profile_patch_readiness_rows or [])
+        if str(row.get("portfolio_id") or "").strip()
+    }
+    for row in summary_rows:
+        tuning = dict(tuning_map.get(str(row.get("portfolio_id") or ""), {}) or {})
+        readiness = dict(readiness_map.get(str(row.get("portfolio_id") or ""), {}) or {})
+        row["market_profile_tuning_target"] = str(tuning.get("market_profile_tuning_target", "") or "")
+        row["market_profile_tuning_target_label"] = str(tuning.get("market_profile_tuning_target_label", "") or "")
+        row["market_profile_tuning_bias"] = str(tuning.get("market_profile_tuning_bias", "") or "")
+        row["market_profile_tuning_bias_label"] = str(tuning.get("market_profile_tuning_bias_label", "") or "")
+        row["market_profile_tuning_action"] = str(tuning.get("market_profile_tuning_action", "") or "")
+        row["market_profile_tuning_note"] = str(tuning.get("market_profile_tuning_note", "") or "")
+        row["market_profile_tuning_summary"] = str(tuning.get("market_profile_tuning_summary", "") or "")
+        row["market_profile_cohort_weeks"] = int(readiness.get("market_profile_cohort_weeks", 0) or 0)
+        row["market_profile_baseline_week"] = str(readiness.get("market_profile_baseline_week", "") or "")
+        row["market_profile_action_chain"] = str(readiness.get("market_profile_action_chain", "") or "")
+        row["market_profile_conflict_flag"] = int(readiness.get("market_profile_conflict_flag", 0) or 0)
+        row["market_profile_conflict_reason"] = str(readiness.get("market_profile_conflict_reason", "") or "")
+        row["market_profile_ready_for_manual_apply"] = int(readiness.get("market_profile_ready_for_manual_apply", 0) or 0)
+        row["market_profile_readiness_label"] = str(readiness.get("market_profile_readiness_label", "") or "")
+        row["market_profile_readiness_summary"] = str(readiness.get("market_profile_readiness_summary", "") or "")
+    for row in strategy_context_rows:
+        tuning = dict(tuning_map.get(str(row.get("portfolio_id") or ""), {}) or {})
+        readiness = dict(readiness_map.get(str(row.get("portfolio_id") or ""), {}) or {})
+        row["market_profile_tuning_target"] = str(tuning.get("market_profile_tuning_target", "") or "")
+        row["market_profile_tuning_target_label"] = str(tuning.get("market_profile_tuning_target_label", "") or "")
+        row["market_profile_tuning_bias"] = str(tuning.get("market_profile_tuning_bias", "") or "")
+        row["market_profile_tuning_bias_label"] = str(tuning.get("market_profile_tuning_bias_label", "") or "")
+        row["market_profile_tuning_action"] = str(tuning.get("market_profile_tuning_action", "") or "")
+        row["market_profile_tuning_note"] = str(tuning.get("market_profile_tuning_note", "") or "")
+        row["market_profile_tuning_summary"] = str(tuning.get("market_profile_tuning_summary", "") or "")
+        row["market_profile_cohort_weeks"] = int(readiness.get("market_profile_cohort_weeks", 0) or 0)
+        row["market_profile_baseline_week"] = str(readiness.get("market_profile_baseline_week", "") or "")
+        row["market_profile_action_chain"] = str(readiness.get("market_profile_action_chain", "") or "")
+        row["market_profile_conflict_flag"] = int(readiness.get("market_profile_conflict_flag", 0) or 0)
+        row["market_profile_conflict_reason"] = str(readiness.get("market_profile_conflict_reason", "") or "")
+        row["market_profile_ready_for_manual_apply"] = int(readiness.get("market_profile_ready_for_manual_apply", 0) or 0)
+        row["market_profile_readiness_label"] = str(readiness.get("market_profile_readiness_label", "") or "")
+        row["market_profile_readiness_summary"] = str(readiness.get("market_profile_readiness_summary", "") or "")
     market_data_gate_map = _build_market_data_gate_map(
         runs_by_portfolio,
         preflight_dir=_resolve_project_path(str(args.preflight_dir or "reports_preflight")),
@@ -4691,6 +6373,42 @@ def main(argv: List[str] | None = None) -> None:
     feedback_threshold_tuning_rows = _build_feedback_threshold_tuning_summary(
         feedback_threshold_cohort_overview_rows,
     )
+    weekly_tuning_dataset_rows = _build_weekly_tuning_dataset_rows(
+        summary_rows,
+        strategy_context_rows=strategy_context_rows,
+        attribution_rows=attribution_rows,
+        outcome_spread_rows=outcome_spread_rows,
+        edge_realization_rows=edge_realization_rows,
+        blocked_edge_rows=blocked_edge_attribution_rows,
+        risk_review_rows=risk_review_rows,
+        risk_feedback_rows=risk_feedback_rows,
+        execution_feedback_rows=execution_feedback_rows,
+        market_profile_tuning_rows=market_profile_tuning_rows,
+        feedback_calibration_rows=feedback_calibration_rows,
+        feedback_automation_rows=feedback_automation_rows,
+        week_label=review_week_label,
+        window_start=since_ts,
+        window_end=datetime.now(timezone.utc).isoformat(),
+    )
+    weekly_tuning_dataset_summary = _build_weekly_tuning_dataset_summary(
+        weekly_tuning_dataset_rows,
+    )
+    _persist_weekly_tuning_history(
+        db_path,
+        weekly_tuning_dataset_rows,
+        week_label=review_week_label,
+        week_start=review_week_start,
+        window_start=since_ts,
+        window_end=datetime.now(timezone.utc).isoformat(),
+    )
+    weekly_tuning_history_overview_rows = _build_weekly_tuning_history_overview(
+        db_path,
+        weekly_tuning_dataset_rows,
+    )
+    weekly_control_timeseries_rows = _build_weekly_control_timeseries_rows(
+        db_path,
+        weekly_tuning_dataset_rows,
+    )
 
     avg_weekly_return = _mean([float(row.get("weekly_return") or 0.0) for row in summary_rows])
     avg_max_drawdown = _mean([float(row.get("max_drawdown") or 0.0) for row in summary_rows])
@@ -4721,6 +6439,9 @@ def main(argv: List[str] | None = None) -> None:
     write_csv(str(out_dir / "weekly_feedback_threshold_trial_alerts.csv"), feedback_threshold_trial_alert_rows)
     write_csv(str(out_dir / "weekly_feedback_threshold_tuning_summary.csv"), feedback_threshold_tuning_rows)
     write_csv(str(out_dir / "weekly_outcome_labeling_skip_summary.csv"), labeling_skip_rows)
+    write_csv(str(out_dir / "weekly_outcome_spread_summary.csv"), outcome_spread_rows)
+    write_csv(str(out_dir / "weekly_edge_realization_summary.csv"), edge_realization_rows)
+    write_csv(str(out_dir / "weekly_blocked_edge_attribution.csv"), blocked_edge_attribution_rows)
     write_csv(str(out_dir / "weekly_execution_effects.csv"), execution_effect_rows)
     write_csv(str(out_dir / "weekly_planned_execution_costs.csv"), planned_execution_cost_rows)
     write_csv(str(out_dir / "weekly_execution_session_summary.csv"), execution_session_rows)
@@ -4729,8 +6450,25 @@ def main(argv: List[str] | None = None) -> None:
     write_csv(str(out_dir / "weekly_risk_review_summary.csv"), risk_review_rows)
     write_csv(str(out_dir / "weekly_risk_feedback_summary.csv"), risk_feedback_rows)
     write_csv(str(out_dir / "weekly_execution_feedback_summary.csv"), execution_feedback_rows)
+    write_csv(str(out_dir / "weekly_market_profile_tuning_summary.csv"), market_profile_tuning_rows)
+    write_csv(str(out_dir / "weekly_market_profile_patch_readiness.csv"), market_profile_patch_readiness_rows)
+    write_csv(str(out_dir / "weekly_tuning_dataset.csv"), weekly_tuning_dataset_rows)
+    write_csv(str(out_dir / "weekly_tuning_history_overview.csv"), weekly_tuning_history_overview_rows)
+    write_csv(str(out_dir / "weekly_control_timeseries.csv"), weekly_control_timeseries_rows)
     write_csv(str(out_dir / "weekly_broker_positions.csv"), [row for rows in broker_latest_rows_by_portfolio.values() for row in rows])
     write_csv(str(out_dir / "weekly_broker_comparison.csv"), broker_diff_rows)
+    write_json(
+        str(out_dir / "weekly_tuning_dataset.json"),
+        {
+            "week_label": review_week_label,
+            "window_start": since_ts,
+            "window_end": datetime.now(timezone.utc).isoformat(),
+            "summary": weekly_tuning_dataset_summary,
+            "history_overview": weekly_tuning_history_overview_rows,
+            "control_timeseries": weekly_control_timeseries_rows,
+            "rows": weekly_tuning_dataset_rows,
+        },
+    )
     summary_payload = {
         "window_start": since_ts,
         "window_end": datetime.now(timezone.utc).isoformat(),
@@ -4757,6 +6495,9 @@ def main(argv: List[str] | None = None) -> None:
         "feedback_thresholds_config_path": str(thresholds_config_path),
         "labeling_summary": labeling_summary,
         "labeling_skip_summary": labeling_skip_rows,
+        "outcome_spread_summary": outcome_spread_rows,
+        "edge_realization_summary": edge_realization_rows,
+        "blocked_edge_attribution_summary": blocked_edge_attribution_rows,
         "execution_effect_summary": execution_effect_rows,
         "planned_execution_cost_summary": planned_execution_cost_rows,
         "execution_session_summary": execution_session_rows,
@@ -4765,6 +6506,12 @@ def main(argv: List[str] | None = None) -> None:
         "risk_review_summary": risk_review_rows,
         "risk_feedback_summary": risk_feedback_rows,
         "execution_feedback_summary": execution_feedback_rows,
+        "market_profile_tuning_summary": market_profile_tuning_rows,
+        "market_profile_patch_readiness_summary": market_profile_patch_readiness_rows,
+        "weekly_tuning_dataset_summary": weekly_tuning_dataset_summary,
+        "weekly_tuning_history_overview": weekly_tuning_history_overview_rows,
+        "weekly_control_timeseries": weekly_control_timeseries_rows,
+        "weekly_tuning_dataset": weekly_tuning_dataset_rows,
         "broker_snapshot_portfolio_count": len(broker_latest_rows_by_portfolio),
         "avg_weekly_return": float(avg_weekly_return),
         "avg_max_drawdown": float(avg_max_drawdown),
@@ -4798,12 +6545,16 @@ def main(argv: List[str] | None = None) -> None:
         feedback_threshold_tuning_rows,
         labeling_summary,
         labeling_skip_rows,
+        outcome_spread_rows,
+        edge_realization_rows,
+        blocked_edge_attribution_rows,
         attribution_rows,
         risk_review_rows,
         risk_feedback_rows,
         execution_session_rows,
         execution_hotspot_rows,
         execution_feedback_rows,
+        weekly_control_timeseries_rows,
         window_label,
     )
     summary_fields, artifact_fields = _cli_summary_payload(summary_payload, out_dir)

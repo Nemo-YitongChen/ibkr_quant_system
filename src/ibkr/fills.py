@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Protocol
 from ib_insync import IB, Trade, Fill, CommissionReport
 
@@ -91,8 +92,12 @@ class FillProcessor:
         portfolio_id = str(order_meta.get("portfolio_id", "") or details_json.get("portfolio_id", "") or "")
         system_kind = str(order_meta.get("system_kind", "") or details_json.get("system_kind", "") or "")
         execution_run_id = str(order_meta.get("execution_run_id", "") or details_json.get("execution_run_id", "") or "")
+        order_submit_ts = str(order_meta.get("ts", "") or "").strip()
+        fill_ts = datetime.now(timezone.utc).isoformat()
+        fill_delay_seconds = self._fill_delay_seconds(order_submit_ts, fill_ts)
 
         self.storage.insert_fill({
+            "ts": fill_ts,
             "order_id": int(e.orderId),
             "exec_id": str(e.execId),
             "symbol": symbol,
@@ -111,6 +116,8 @@ class FillProcessor:
             "portfolio_id": portfolio_id,
             "system_kind": system_kind,
             "execution_run_id": execution_run_id,
+            "order_submit_ts": order_submit_ts,
+            "fill_delay_seconds": fill_delay_seconds,
         })
 
         self.storage.insert_risk_event(
@@ -173,3 +180,20 @@ class FillProcessor:
             )
 
         log.info(f"Commission: execId={exec_id} commission={commission:.4f} realized_net={realized_net:.4f}")
+
+    @staticmethod
+    def _fill_delay_seconds(order_submit_ts: str, fill_ts: str) -> float | None:
+        submit_raw = str(order_submit_ts or "").strip()
+        fill_raw = str(fill_ts or "").strip()
+        if not submit_raw or not fill_raw:
+            return None
+        try:
+            submit_dt = datetime.fromisoformat(submit_raw.replace("Z", "+00:00"))
+            fill_dt = datetime.fromisoformat(fill_raw.replace("Z", "+00:00"))
+        except Exception:
+            return None
+        if submit_dt.tzinfo is None:
+            submit_dt = submit_dt.replace(tzinfo=timezone.utc)
+        if fill_dt.tzinfo is None:
+            fill_dt = fill_dt.replace(tzinfo=timezone.utc)
+        return max(0.0, float((fill_dt - submit_dt).total_seconds()))
