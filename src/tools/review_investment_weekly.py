@@ -4623,6 +4623,48 @@ def _build_attribution_rows(
             ),
         )
         risk_overlay_weight_delta = max(risk_net_tightening, risk_gross_tightening)
+        risk_market_profile_budget_weight_delta = max(
+            0.0,
+            float(
+                risk_source.get(
+                    "risk_market_profile_budget_tightening",
+                    max(
+                        float(risk_source.get("risk_market_profile_budget_net_tightening", 0.0) or 0.0),
+                        float(risk_source.get("risk_market_profile_budget_gross_tightening", 0.0) or 0.0),
+                    ),
+                )
+                or 0.0
+            ),
+        )
+        risk_throttle_weight_delta = max(
+            0.0,
+            float(
+                risk_source.get(
+                    "risk_throttle_weight_delta",
+                    max(
+                        float(risk_source.get("risk_throttle_net_tightening", 0.0) or 0.0),
+                        float(risk_source.get("risk_throttle_gross_tightening", 0.0) or 0.0),
+                    ),
+                )
+                or 0.0
+            ),
+        )
+        risk_recovery_weight_credit = max(
+            0.0,
+            float(
+                risk_source.get(
+                    "risk_recovery_weight_credit",
+                    max(
+                        float(risk_source.get("risk_recovery_net_credit", 0.0) or 0.0),
+                        float(risk_source.get("risk_recovery_gross_credit", 0.0) or 0.0),
+                    ),
+                )
+                or 0.0
+            ),
+        )
+        risk_layered_split_text = str(risk_source.get("risk_layered_throttle_text", "") or "")
+        risk_dominant_throttle_layer = str(risk_source.get("risk_dominant_throttle_layer", "") or "")
+        risk_dominant_throttle_layer_label = str(risk_source.get("risk_dominant_throttle_layer_label", "") or "")
 
         execution_gate_blocked_order_count = int(gate_effect.get("blocked_order_count", 0) or 0)
         execution_gate_blocked_order_value = float(gate_effect.get("blocked_order_value", 0.0) or 0.0)
@@ -4702,6 +4744,12 @@ def _build_attribution_rows(
                 "avg_actual_slippage_bps": execution_effect.get("avg_actual_slippage_bps"),
                 "strategy_control_weight_delta": float(strategy_control_weight_delta),
                 "risk_overlay_weight_delta": float(risk_overlay_weight_delta),
+                "risk_market_profile_budget_weight_delta": float(risk_market_profile_budget_weight_delta),
+                "risk_throttle_weight_delta": float(risk_throttle_weight_delta),
+                "risk_recovery_weight_credit": float(risk_recovery_weight_credit),
+                "risk_layered_split_text": str(risk_layered_split_text),
+                "risk_dominant_throttle_layer": str(risk_dominant_throttle_layer),
+                "risk_dominant_throttle_layer_label": str(risk_dominant_throttle_layer_label),
                 "execution_gate_blocked_order_count": int(execution_gate_blocked_order_count),
                 "execution_gate_blocked_order_value": float(execution_gate_blocked_order_value),
                 "execution_gate_blocked_order_ratio": float(execution_gate_blocked_order_ratio),
@@ -4719,7 +4767,9 @@ def _risk_overlay_from_history_row(row: Dict[str, Any]) -> Dict[str, Any]:
     # 新表优先读规范化字段；旧数据仍兼容从 details JSON 回退。
     if str(row.get("source_kind") or "").strip():
         stress_scenarios = _parse_json_dict(row.get("stress_scenarios_json"))
-        return {
+        details = _parse_json_dict(row.get("details"))
+        risk_details = dict(details.get("risk_overlay") or {})
+        normalized = {
             "dynamic_scale": row.get("dynamic_scale"),
             "dynamic_net_exposure": row.get("dynamic_net_exposure"),
             "dynamic_gross_exposure": row.get("dynamic_gross_exposure"),
@@ -4742,6 +4792,10 @@ def _risk_overlay_from_history_row(row: Dict[str, Any]) -> Dict[str, Any]:
             "stress_scenarios": stress_scenarios,
             "final_stress_scenarios": stress_scenarios,
         }
+        for key, value in risk_details.items():
+            if key not in normalized or normalized.get(key) in (None, "", [], {}):
+                normalized[key] = value
+        return normalized
     details = _parse_json_dict(row.get("details"))
     risk = dict(details.get("risk_overlay") or {})
     if not risk:
@@ -4782,6 +4836,18 @@ def _risk_driver_and_diagnosis(row: Dict[str, Any]) -> tuple[str, str]:
     dynamic_net = float(row.get("latest_dynamic_net_exposure", 0.0) or 0.0)
     dynamic_gross = float(row.get("latest_dynamic_gross_exposure", 0.0) or 0.0)
     top_sector_share = float(row.get("latest_top_sector_share", 0.0) or 0.0)
+    market_budget_tightening = float(row.get("latest_market_profile_budget_tightening", 0.0) or 0.0)
+    throttle_tightening = float(row.get("latest_throttle_tightening", 0.0) or 0.0)
+    recovery_credit = float(row.get("latest_recovery_credit", 0.0) or 0.0)
+    throttle_layer = str(row.get("latest_dominant_throttle_layer", "") or "").strip().upper()
+    throttle_layer_label = str(row.get("latest_dominant_throttle_layer_label", "") or "").strip()
+    if market_budget_tightening >= max(throttle_tightening, 0.03):
+        return "MARKET_PROFILE_BUDGET", "当前市场档案先收紧了基础风险预算，优先复核 market-profile exposure budget 是否仍匹配这类市场。"
+    if throttle_layer:
+        diagnosis = f"当前主导风险 throttle 为 {throttle_layer_label or throttle_layer}，优先复核这一层的风险阈值与持仓结构。"
+        if recovery_credit > 1e-9:
+            diagnosis += " 组合已经出现部分 recovery，但还未完全释放预算。"
+        return throttle_layer, diagnosis
     if avg_corr >= 0.62 or top_sector_share >= 0.45:
         return "CORRELATION", "组合拥挤度偏高，优先增加跨行业/跨市场分散度，再考虑放宽仓位。"
     if worst_loss >= 0.085:
@@ -4833,6 +4899,30 @@ def _build_risk_review_rows(
             "latest_dynamic_net_exposure": float(latest.get("dynamic_net_exposure", 0.0) or 0.0),
             "latest_dynamic_gross_exposure": float(latest.get("dynamic_gross_exposure", 0.0) or 0.0),
             "latest_dynamic_short_exposure": float(latest.get("dynamic_short_exposure", 0.0) or 0.0),
+            "latest_market_profile_net_exposure_budget": float(latest.get("market_profile_net_exposure_budget", 0.0) or 0.0),
+            "latest_market_profile_gross_exposure_budget": float(latest.get("market_profile_gross_exposure_budget", 0.0) or 0.0),
+            "latest_market_profile_budget_tightening": float(
+                max(
+                    float(latest.get("market_profile_budget_tightening_net", 0.0) or 0.0),
+                    float(latest.get("market_profile_budget_tightening_gross", 0.0) or 0.0),
+                )
+            ),
+            "latest_throttle_tightening": float(
+                max(
+                    float(latest.get("throttle_net_tightening", 0.0) or 0.0),
+                    float(latest.get("throttle_gross_tightening", 0.0) or 0.0),
+                )
+            ),
+            "latest_recovery_credit": float(
+                max(
+                    float(latest.get("recovery_net_credit", 0.0) or 0.0),
+                    float(latest.get("recovery_gross_credit", 0.0) or 0.0),
+                )
+            ),
+            "latest_dominant_throttle_layer": str(latest.get("dominant_throttle_layer", "") or ""),
+            "latest_dominant_throttle_layer_label": str(latest.get("dominant_throttle_layer_label", "") or ""),
+            "latest_layered_throttle_text": str(latest.get("layered_throttle_text", "") or ""),
+            "latest_recovery_active": int(bool(latest.get("recovery_active", False))),
             "latest_avg_pair_correlation": float(
                 latest.get("final_avg_pair_correlation", latest.get("avg_pair_correlation", 0.0)) or 0.0
             ),
@@ -5713,6 +5803,18 @@ def _build_weekly_tuning_dataset_rows(
                 ),
                 "strategy_control_weight_delta": float(attribution.get("strategy_control_weight_delta", 0.0) or 0.0),
                 "risk_overlay_weight_delta": float(attribution.get("risk_overlay_weight_delta", 0.0) or 0.0),
+                "risk_market_profile_budget_weight_delta": float(
+                    attribution.get("risk_market_profile_budget_weight_delta", 0.0) or 0.0
+                ),
+                "risk_throttle_weight_delta": float(
+                    attribution.get("risk_throttle_weight_delta", 0.0) or 0.0
+                ),
+                "risk_recovery_weight_credit": float(
+                    attribution.get("risk_recovery_weight_credit", 0.0) or 0.0
+                ),
+                "risk_layered_split_text": str(attribution.get("risk_layered_split_text") or ""),
+                "risk_dominant_throttle_layer": str(attribution.get("risk_dominant_throttle_layer") or ""),
+                "risk_dominant_throttle_layer_label": str(attribution.get("risk_dominant_throttle_layer_label") or ""),
                 "execution_gate_blocked_order_count": int(
                     attribution.get("execution_gate_blocked_order_count", 0) or 0
                 ),
@@ -5741,6 +5843,21 @@ def _build_weekly_tuning_dataset_rows(
                 "control_split_text": str(attribution.get("control_split_text") or ""),
                 "dominant_driver": str(attribution.get("dominant_driver") or ""),
                 "dominant_risk_driver": str(risk_review.get("dominant_risk_driver") or ""),
+                "risk_latest_market_profile_budget_tightening": float(
+                    risk_review.get("latest_market_profile_budget_tightening", 0.0) or 0.0
+                ),
+                "risk_latest_throttle_tightening": float(
+                    risk_review.get("latest_throttle_tightening", 0.0) or 0.0
+                ),
+                "risk_latest_recovery_credit": float(
+                    risk_review.get("latest_recovery_credit", 0.0) or 0.0
+                ),
+                "risk_latest_dominant_throttle_layer": str(
+                    risk_review.get("latest_dominant_throttle_layer") or ""
+                ),
+                "risk_latest_dominant_throttle_layer_label": str(
+                    risk_review.get("latest_dominant_throttle_layer_label") or ""
+                ),
                 "risk_diagnosis": str(risk_review.get("risk_diagnosis") or ""),
                 "market_profile_tuning_target": str(tuning.get("market_profile_tuning_target") or ""),
                 "market_profile_tuning_bias": str(tuning.get("market_profile_tuning_bias") or ""),

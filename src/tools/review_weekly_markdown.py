@@ -248,6 +248,8 @@ def write_weekly_review_markdown(
             )
             if row.get("control_split_text"):
                 lines.append(f"  控制拆解: {row.get('control_split_text', '')}")
+            if row.get("risk_layered_split_text"):
+                lines.append(f"  风险分层: {row.get('risk_layered_split_text', '')}")
             lines.append(f"  建议: {row.get('diagnosis', '')}")
 
     lines.append("")
@@ -309,6 +311,18 @@ def write_weekly_review_markdown(
                 f"corr={float(row.get('latest_avg_pair_correlation', 0.0) or 0.0):.2f} "
                 f"stress={row.get('latest_stress_worst_scenario_label', '-') or '-'}:{float(row.get('latest_stress_worst_loss', 0.0) or 0.0):.3f}"
             )
+            if row.get("latest_layered_throttle_text"):
+                lines.append(f"  分层 throttle: {row.get('latest_layered_throttle_text', '')}")
+            if (
+                float(row.get("latest_market_profile_budget_tightening", 0.0) or 0.0) > 0.0
+                or float(row.get("latest_throttle_tightening", 0.0) or 0.0) > 0.0
+                or float(row.get("latest_recovery_credit", 0.0) or 0.0) > 0.0
+            ):
+                lines.append(
+                    f"  预算/收缩/恢复: budget={float(row.get('latest_market_profile_budget_tightening', 0.0) or 0.0):.2%} "
+                    f"throttle={float(row.get('latest_throttle_tightening', 0.0) or 0.0):.2%} "
+                    f"recovery={float(row.get('latest_recovery_credit', 0.0) or 0.0):.2%}"
+                )
             if row.get("correlation_reduced_symbols"):
                 lines.append(f"  相关性收缩标的: {row['correlation_reduced_symbols']}")
             if row.get("risk_notes"):

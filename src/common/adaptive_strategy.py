@@ -116,6 +116,10 @@ class MarketProfileConfig:
     regime_hard_risk_off_threshold: float | None = None
     min_expected_edge_bps: float | None = None
     edge_cost_buffer_bps: float | None = None
+    risk_budget_net_exposure: float | None = None
+    risk_budget_gross_exposure: float | None = None
+    risk_budget_short_exposure: float | None = None
+    risk_recovery_max_bonus: float | None = None
 
     @classmethod
     def from_dict(cls, raw: Dict[str, Any] | None) -> "MarketProfileConfig":
@@ -237,6 +241,10 @@ def adaptive_strategy_context(cfg: AdaptiveStrategyConfig) -> Dict[str, Any]:
             "regime_hard_risk_off_threshold": profile.regime_hard_risk_off_threshold,
             "min_expected_edge_bps": profile.min_expected_edge_bps,
             "edge_cost_buffer_bps": profile.edge_cost_buffer_bps,
+            "risk_budget_net_exposure": profile.risk_budget_net_exposure,
+            "risk_budget_gross_exposure": profile.risk_budget_gross_exposure,
+            "risk_budget_short_exposure": profile.risk_budget_short_exposure,
+            "risk_recovery_max_bonus": profile.risk_recovery_max_bonus,
         }
         for code, profile in dict(cfg.market_profiles or {}).items()
     }
@@ -318,6 +326,7 @@ def load_report_adaptive_strategy_payload(
         "active_market_plan": dict(payload.get("active_market_plan") or {}),
         "active_market_regime": dict(payload.get("active_market_regime") or {}),
         "active_market_execution": dict(payload.get("active_market_execution") or {}),
+        "active_market_risk": dict(payload.get("active_market_risk") or {}),
     }
 
 
@@ -345,13 +354,16 @@ def adaptive_strategy_active_market_human_note(payload: Dict[str, Any] | None) -
     active_market_plan = dict(payload.get("active_market_plan") or {})
     active_market_regime = dict(payload.get("active_market_regime") or {})
     active_market_execution = dict(payload.get("active_market_execution") or {})
+    active_market_risk = dict(payload.get("active_market_risk") or {})
     profile_label = str(
         active_market_plan.get("profile_label")
         or active_market_regime.get("profile_label")
         or active_market_execution.get("profile_label")
+        or active_market_risk.get("profile_label")
         or active_market_plan.get("profile_key")
         or active_market_regime.get("profile_key")
         or active_market_execution.get("profile_key")
+        or active_market_risk.get("profile_key")
         or ""
     ).strip()
     if not profile_label:
@@ -360,12 +372,15 @@ def adaptive_strategy_active_market_human_note(payload: Dict[str, Any] | None) -
     plan_summary = str(active_market_plan.get("summary_text") or "").strip()
     regime_summary = str(active_market_regime.get("summary_text") or "").strip()
     execution_summary = str(active_market_execution.get("summary_text") or "").strip()
+    risk_summary = str(active_market_risk.get("summary_text") or "").strip()
     if plan_summary:
         parts.append(f"计划={plan_summary}")
     if regime_summary:
         parts.append(f"regime={regime_summary}")
     if execution_summary:
         parts.append(f"执行={execution_summary}")
+    if risk_summary:
+        parts.append(f"风险={risk_summary}")
     return "；".join(parts) + "。"
 
 
@@ -493,6 +508,40 @@ def adaptive_strategy_market_execution_overrides(
     }
 
 
+def adaptive_strategy_market_risk_overrides(
+    cfg: AdaptiveStrategyConfig | None,
+    market: str,
+) -> Dict[str, Any]:
+    profile_key, profile = adaptive_strategy_market_profile(cfg, market)
+    overrides: Dict[str, Any] = {}
+    field_map = {
+        "risk_budget_net_exposure": "market_profile_net_exposure_budget",
+        "risk_budget_gross_exposure": "market_profile_gross_exposure_budget",
+        "risk_budget_short_exposure": "market_profile_short_exposure_budget",
+        "risk_recovery_max_bonus": "dynamic_recovery_max_bonus",
+    }
+    for profile_field, target_field in field_map.items():
+        value = getattr(profile, profile_field, None)
+        if value is not None:
+            overrides[target_field] = value
+    summary_bits = []
+    if "market_profile_net_exposure_budget" in overrides:
+        summary_bits.append(f"net_budget={float(overrides['market_profile_net_exposure_budget']):.2f}")
+    if "market_profile_gross_exposure_budget" in overrides:
+        summary_bits.append(f"gross_budget={float(overrides['market_profile_gross_exposure_budget']):.2f}")
+    if "market_profile_short_exposure_budget" in overrides:
+        summary_bits.append(f"short_budget={float(overrides['market_profile_short_exposure_budget']):.2f}")
+    if "dynamic_recovery_max_bonus" in overrides:
+        summary_bits.append(f"recovery_bonus={float(overrides['dynamic_recovery_max_bonus']):.2f}")
+    return {
+        "market": _market_profile_key(market),
+        "profile_key": profile_key,
+        "profile_label": str(profile.label or profile_key or ""),
+        "overrides": overrides,
+        "summary_text": " | ".join(summary_bits),
+    }
+
+
 def _apply_dataclass_overrides(cfg: Any, overrides: Dict[str, Any] | None) -> Any:
     if cfg is None:
         return cfg
@@ -524,12 +573,31 @@ def apply_adaptive_strategy_regime_overrides(
     return _apply_dataclass_overrides(cfg, overrides)
 
 
+def apply_adaptive_strategy_risk_overrides(
+    cfg: Any,
+    adaptive_cfg: AdaptiveStrategyConfig | None,
+    *,
+    market: str,
+) -> Any:
+    overrides = dict(adaptive_strategy_market_risk_overrides(adaptive_cfg, market).get("overrides") or {})
+    return _apply_dataclass_overrides(cfg, overrides)
+
+
 def apply_active_market_execution_overrides(
     cfg: Any,
     payload: Dict[str, Any] | None,
 ) -> Any:
     payload = dict(payload or {})
     overrides = dict(dict(payload.get("active_market_execution") or {}).get("overrides") or {})
+    return _apply_dataclass_overrides(cfg, overrides)
+
+
+def apply_active_market_risk_overrides(
+    cfg: Any,
+    payload: Dict[str, Any] | None,
+) -> Any:
+    payload = dict(payload or {})
+    overrides = dict(dict(payload.get("active_market_risk") or {}).get("overrides") or {})
     return _apply_dataclass_overrides(cfg, overrides)
 
 
@@ -748,6 +816,7 @@ def adaptive_strategy_summary_fields(payload: Dict[str, Any] | None) -> Dict[str
     active_market_plan = dict(payload.get("active_market_plan") or {})
     active_market_regime = dict(payload.get("active_market_regime") or {})
     active_market_execution = dict(payload.get("active_market_execution") or {})
+    active_market_risk = dict(payload.get("active_market_risk") or {})
     active_market_note = adaptive_strategy_active_market_human_note(payload)
     active_regime_states = [
         str(state).strip().upper()
@@ -774,15 +843,18 @@ def adaptive_strategy_summary_fields(payload: Dict[str, Any] | None) -> Dict[str
         "adaptive_strategy_active_market_plan": active_market_plan,
         "adaptive_strategy_active_market_regime": active_market_regime,
         "adaptive_strategy_active_market_execution": active_market_execution,
+        "adaptive_strategy_active_market_risk": active_market_risk,
         "adaptive_strategy_active_market_profile": str(
             active_market_plan.get("profile_key")
             or active_market_regime.get("profile_key")
             or active_market_execution.get("profile_key")
+            or active_market_risk.get("profile_key")
             or ""
         ),
         "adaptive_strategy_active_market_plan_summary": str(active_market_plan.get("summary_text", "") or ""),
         "adaptive_strategy_active_market_regime_summary": str(active_market_regime.get("summary_text", "") or ""),
         "adaptive_strategy_active_market_execution_summary": str(active_market_execution.get("summary_text", "") or ""),
+        "adaptive_strategy_active_market_risk_summary": str(active_market_risk.get("summary_text", "") or ""),
         "adaptive_strategy_active_market_note": active_market_note,
     }
 

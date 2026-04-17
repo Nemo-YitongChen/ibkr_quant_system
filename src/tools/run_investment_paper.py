@@ -19,6 +19,7 @@ from ..common.adaptive_strategy import (
     adaptive_strategy_effective_control_fields,
     adaptive_strategy_effective_controls,
     adaptive_strategy_summary_fields,
+    apply_active_market_risk_overrides,
     apply_adaptive_strategy_weight_cap,
     load_report_adaptive_strategy_payload,
 )
@@ -232,7 +233,11 @@ def main(argv: List[str] | None = None) -> None:
         force=bool(args.force),
     )
     strategy_payload = load_report_adaptive_strategy_payload(report_dir)
-    target_weights, risk_overlay = build_target_allocations(candidates, plans, cfg=paper_cfg, return_details=True)
+    effective_paper_cfg = apply_active_market_risk_overrides(
+        paper_cfg,
+        strategy_payload,
+    )
+    target_weights, risk_overlay = build_target_allocations(candidates, plans, cfg=effective_paper_cfg, return_details=True)
     strategy_controls = adaptive_strategy_effective_controls(
         strategy_payload,
         portfolio_equity=equity_before,
@@ -248,7 +253,7 @@ def main(argv: List[str] | None = None) -> None:
             cash=cash_before,
             price_map=price_map,
             target_weights=target_weights,
-            cfg=paper_cfg,
+            cfg=effective_paper_cfg,
         )
         executed = True
     else:
@@ -340,10 +345,24 @@ def main(argv: List[str] | None = None) -> None:
         "risk_base_net_exposure": float(risk_overlay.get("base_net_exposure", 0.0) or 0.0),
         "risk_base_gross_exposure": float(risk_overlay.get("base_gross_exposure", 0.0) or 0.0),
         "risk_base_short_exposure": float(risk_overlay.get("base_short_exposure", 0.0) or 0.0),
+        "risk_market_profile_budget_net_exposure": float(risk_overlay.get("market_profile_net_exposure_budget", 0.0) or 0.0),
+        "risk_market_profile_budget_gross_exposure": float(risk_overlay.get("market_profile_gross_exposure_budget", 0.0) or 0.0),
+        "risk_market_profile_budget_short_exposure": float(risk_overlay.get("market_profile_short_exposure_budget", 0.0) or 0.0),
         "risk_dynamic_scale": float(risk_overlay.get("dynamic_scale", 1.0) or 1.0),
         "risk_dynamic_net_exposure": float(risk_overlay.get("dynamic_net_exposure", 0.0) or 0.0),
         "risk_dynamic_gross_exposure": float(risk_overlay.get("dynamic_gross_exposure", 0.0) or 0.0),
         "risk_dynamic_short_exposure": float(risk_overlay.get("dynamic_short_exposure", 0.0) or 0.0),
+        "risk_market_profile_budget_net_tightening": float(risk_overlay.get("market_profile_budget_tightening_net", 0.0) or 0.0),
+        "risk_market_profile_budget_gross_tightening": float(risk_overlay.get("market_profile_budget_tightening_gross", 0.0) or 0.0),
+        "risk_throttle_net_tightening": float(risk_overlay.get("throttle_net_tightening", 0.0) or 0.0),
+        "risk_throttle_gross_tightening": float(risk_overlay.get("throttle_gross_tightening", 0.0) or 0.0),
+        "risk_recovery_active": bool(risk_overlay.get("recovery_active", False)),
+        "risk_recovery_bonus_scale": float(risk_overlay.get("recovery_bonus_scale", 0.0) or 0.0),
+        "risk_recovery_net_credit": float(risk_overlay.get("recovery_net_credit", 0.0) or 0.0),
+        "risk_recovery_gross_credit": float(risk_overlay.get("recovery_gross_credit", 0.0) or 0.0),
+        "risk_dominant_throttle_layer": str(risk_overlay.get("dominant_throttle_layer", "") or ""),
+        "risk_dominant_throttle_layer_label": str(risk_overlay.get("dominant_throttle_layer_label", "") or ""),
+        "risk_layered_throttle_text": str(risk_overlay.get("layered_throttle_text", "") or ""),
         "risk_net_exposure_tightening": float(
             max(
                 0.0,

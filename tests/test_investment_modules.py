@@ -1152,8 +1152,94 @@ class InvestmentModuleTests(unittest.TestCase):
             sum(abs(float(weight)) for weight in weights.values()),
             float(risk["dynamic_gross_exposure"]) + 1e-9,
         )
+        self.assertTrue(list(risk.get("layered_throttles", []) or []))
+        self.assertGreater(float(risk.get("throttle_gross_tightening", 0.0) or 0.0), 0.0)
+        self.assertTrue(str(risk.get("layered_throttle_text", "") or ""))
         self.assertTrue(risk["correlation_reduced_symbols"])
         self.assertIn(str(risk["final_stress_worst_scenario"]), {"index_drop", "volatility_spike", "liquidity_shock"})
+
+    def test_target_allocations_apply_market_profile_budget_and_recovery(self):
+        cfg = InvestmentPaperConfig(
+            max_holdings=3,
+            max_single_weight=0.30,
+            max_net_exposure=0.90,
+            max_gross_exposure=0.90,
+            min_position_weight=0.05,
+            correlation_soft_limit=0.34,
+            market_profile_net_exposure_budget=0.78,
+            market_profile_gross_exposure_budget=0.80,
+            market_profile_short_exposure_budget=0.10,
+            dynamic_recovery_max_bonus=0.08,
+        )
+        ranked = [
+            {
+                "symbol": "AAA",
+                "score": 0.82,
+                "sector": "Technology",
+                "industry": "Software",
+                "country": "US",
+                "market": "US",
+                "direction": "LONG",
+                "atr_pct": 0.03,
+                "mdd_1y": -0.08,
+                "liquidity_score": 0.90,
+                "expected_cost_bps": 12.0,
+                "market_sentiment_score": 0.18,
+                "data_quality_score": 0.94,
+            },
+            {
+                "symbol": "BBB",
+                "score": 0.79,
+                "sector": "Healthcare",
+                "industry": "Pharma",
+                "country": "US",
+                "market": "US",
+                "direction": "LONG",
+                "atr_pct": 0.028,
+                "mdd_1y": -0.07,
+                "liquidity_score": 0.88,
+                "expected_cost_bps": 11.0,
+                "market_sentiment_score": 0.16,
+                "data_quality_score": 0.92,
+            },
+            {
+                "symbol": "CCC",
+                "score": 0.76,
+                "sector": "Industrials",
+                "industry": "Rail",
+                "country": "US",
+                "market": "US",
+                "direction": "LONG",
+                "atr_pct": 0.026,
+                "mdd_1y": -0.06,
+                "liquidity_score": 0.86,
+                "expected_cost_bps": 10.0,
+                "market_sentiment_score": 0.15,
+                "data_quality_score": 0.93,
+            },
+        ]
+        plans = [
+            {"symbol": "AAA", "action": "ACCUMULATE", "allocation_mult": 1.0},
+            {"symbol": "BBB", "action": "ACCUMULATE", "allocation_mult": 1.0},
+            {"symbol": "CCC", "action": "ACCUMULATE", "allocation_mult": 1.0},
+        ]
+        weights, risk = build_target_allocations(ranked, plans, cfg=cfg, return_details=True)
+        self.assertTrue(weights)
+        self.assertAlmostEqual(float(risk["market_profile_net_exposure_budget"]), 0.78, places=6)
+        self.assertAlmostEqual(float(risk["market_profile_gross_exposure_budget"]), 0.80, places=6)
+        self.assertGreater(float(risk["market_profile_budget_tightening_net"]), 0.0)
+        self.assertLess(
+            float(risk["throttle_pre_recovery_net_exposure"]),
+            float(risk["market_profile_net_exposure_budget"]),
+        )
+        self.assertTrue(bool(risk["recovery_active"]))
+        self.assertGreater(float(risk["recovery_net_credit"]), 0.0)
+        self.assertGreater(
+            float(risk["dynamic_net_exposure"]),
+            float(risk["throttle_pre_recovery_net_exposure"]),
+        )
+        self.assertTrue(str(risk["dominant_throttle_layer"]))
+        self.assertIn("recovery", str(risk["layered_throttle_text"]))
 
     def test_target_allocations_keep_dynamic_scale_high_for_diversified_portfolio(self):
         cfg = InvestmentPaperConfig(
@@ -2815,13 +2901,15 @@ class InvestmentModuleTests(unittest.TestCase):
             def sleep(self, *_args, **_kwargs):
                 return None
 
+        from src.common.market_structure import load_market_structure
+
         with NamedTemporaryFile(suffix=".db") as tmp, TemporaryDirectory() as td:
             report_dir = Path(td)
             (report_dir / "investment_candidates.csv").write_text(
                 "\n".join(
                     [
                         "symbol,last_close,score,score_before_cost,model_recommendation_score,execution_score,execution_ready,direction,market,avg_daily_dollar_volume,avg_daily_volume,expected_cost_bps,spread_proxy_bps,slippage_proxy_bps,commission_proxy_bps,liquidity_score",
-                        "AAPL,100,0.40,0.41,0.40,0.20,1,LONG,US,100000,1000,18,4,12,2,0.72",
+                        "AAPL,100,0.43,0.45,0.43,0.20,1,LONG,US,25000000,250000,18,4,12,2,0.80",
                     ]
                 ),
                 encoding="utf-8",
@@ -2830,7 +2918,7 @@ class InvestmentModuleTests(unittest.TestCase):
                 "\n".join(
                     [
                         "symbol,action,allocation_mult,direction,execution_ready,score,score_before_cost,model_recommendation_score,execution_score,avg_daily_dollar_volume,avg_daily_volume,expected_cost_bps,spread_proxy_bps,slippage_proxy_bps,commission_proxy_bps,liquidity_score,expected_edge_threshold,expected_edge_score",
-                        "AAPL,ACCUMULATE,1.0,LONG,1,0.40,0.41,0.40,0.20,100000,1000,18,4,12,2,0.72,0.35,0.15",
+                        "AAPL,ACCUMULATE,1.0,LONG,1,0.43,0.45,0.43,0.20,25000000,250000,18,4,12,2,0.80,0.35,0.18",
                     ]
                 ),
                 encoding="utf-8",
@@ -2875,6 +2963,17 @@ class InvestmentModuleTests(unittest.TestCase):
                     shadow_ml_review_enabled=False,
                     risk_alert_guard_enabled=False,
                 ),
+                market_structure=load_market_structure(Path("."), "US"),
+            )
+            engine._current_execution_session_profile = Mock(
+                return_value=ExecutionSessionProfile(
+                    session_bucket="MIDDAY",
+                    session_label="午盘",
+                    execution_style="VWAP_LITE_MIDDAY",
+                    aggressiveness=0.55,
+                    participation_scale=1.0,
+                    limit_buffer_scale=0.85,
+                )
             )
 
             engine.run(report_dir=str(report_dir), submit=False)
@@ -2885,6 +2984,255 @@ class InvestmentModuleTests(unittest.TestCase):
             self.assertGreater(int(summary["order_count"]), 0)
             self.assertEqual(str(summary["adaptive_strategy_active_market_execution"]["profile_key"]), "US")
             self.assertEqual(str(plan_rows[0]["status"]), "PLANNED")
+
+    def test_investment_execution_engine_dynamic_market_rules_raise_edge_threshold(self):
+        class DummyEvent:
+            def __iadd__(self, other):
+                return self
+
+        class FakeIB:
+            orderStatusEvent = DummyEvent()
+            errorEvent = DummyEvent()
+            execDetailsEvent = DummyEvent()
+            commissionReportEvent = DummyEvent()
+
+        from src.common.market_structure import load_market_structure
+
+        with NamedTemporaryFile(suffix=".db") as tmp:
+            engine = InvestmentExecutionEngine(
+                ib=FakeIB(),
+                account_id="DUQ152001",
+                storage=Storage(tmp.name),
+                market="HK",
+                portfolio_id="HK:test",
+                paper_cfg=InvestmentPaperConfig(),
+                execution_cfg=InvestmentExecutionConfig(
+                    edge_gate_enabled=True,
+                    min_expected_edge_bps=18.0,
+                    edge_cost_buffer_bps=2.0,
+                    edge_score_to_bps_scale=140.0,
+                ),
+                market_structure=load_market_structure(Path("."), "HK"),
+            )
+            engine._current_execution_session_profile = Mock(
+                return_value=ExecutionSessionProfile(
+                    session_bucket="MIDDAY",
+                    session_label="午盘",
+                    execution_style="VWAP_LITE_MIDDAY",
+                    aggressiveness=0.55,
+                    participation_scale=1.0,
+                    limit_buffer_scale=0.85,
+                )
+            )
+
+            market_rule_allowed, market_rule_blocked = engine._apply_market_rule_gates(
+                [
+                    {
+                        "symbol": "0700.HK",
+                        "action": "BUY",
+                        "current_qty": 0.0,
+                        "target_qty": 100.0,
+                        "delta_qty": 100.0,
+                        "ref_price": 100.0,
+                        "target_weight": 0.10,
+                        "order_value": 10000.0,
+                        "lot_size": 100.0,
+                        "avg_daily_dollar_volume": 500000.0,
+                        "avg_daily_volume": 5000.0,
+                        "expected_cost_bps": 18.0,
+                        "spread_proxy_bps": 4.0,
+                        "slippage_proxy_bps": 12.0,
+                        "commission_proxy_bps": 2.0,
+                        "liquidity_score": 0.25,
+                        "score_before_cost": 0.50,
+                        "expected_edge_threshold": 0.35,
+                        "expected_edge_score": 0.15,
+                        "reason": "rebalance_up",
+                    }
+                ]
+            )
+            self.assertEqual(market_rule_blocked, [])
+            self.assertEqual(len(market_rule_allowed), 1)
+
+            allowed, blocked = engine._apply_expected_edge_gates(market_rule_allowed)
+            self.assertEqual(allowed, [])
+            self.assertEqual(len(blocked), 1)
+            self.assertEqual(blocked[0]["status"], "BLOCKED_EDGE")
+            self.assertGreater(float(blocked[0]["edge_gate_dynamic_floor_bps"]), 18.0)
+            self.assertGreater(float(blocked[0]["edge_gate_dynamic_buffer_bps"]), 2.0)
+            self.assertGreater(float(blocked[0]["edge_gate_threshold_bps"]), 20.0)
+            self.assertIn("floor=", str(blocked[0]["edge_gate_reason"]))
+
+    def test_investment_execution_engine_dynamic_market_rules_force_limit_slicing(self):
+        class DummyEvent:
+            def __iadd__(self, other):
+                return self
+
+        class FakeIB:
+            orderStatusEvent = DummyEvent()
+            errorEvent = DummyEvent()
+            execDetailsEvent = DummyEvent()
+            commissionReportEvent = DummyEvent()
+
+        from src.common.market_structure import load_market_structure
+
+        with NamedTemporaryFile(suffix=".db") as tmp:
+            engine = InvestmentExecutionEngine(
+                ib=FakeIB(),
+                account_id="DUQ152001",
+                storage=Storage(tmp.name),
+                market="HK",
+                portfolio_id="HK:test",
+                paper_cfg=InvestmentPaperConfig(),
+                execution_cfg=InvestmentExecutionConfig(
+                    order_type="MKT",
+                    adv_max_participation_pct=0.05,
+                    adv_split_trigger_pct=0.02,
+                    max_slices_per_symbol=4,
+                    limit_price_buffer_bps=6.0,
+                    edge_gate_enabled=False,
+                ),
+                market_structure=load_market_structure(Path("."), "HK"),
+            )
+            engine._current_execution_session_profile = Mock(
+                return_value=ExecutionSessionProfile(
+                    session_bucket="MIDDAY",
+                    session_label="午盘",
+                    execution_style="VWAP_LITE_MIDDAY",
+                    aggressiveness=0.55,
+                    participation_scale=1.0,
+                    limit_buffer_scale=0.85,
+                )
+            )
+
+            market_rule_allowed, market_rule_blocked = engine._apply_market_rule_gates(
+                [
+                    {
+                        "symbol": "0700.HK",
+                        "action": "BUY",
+                        "current_qty": 0.0,
+                        "target_qty": 3000.0,
+                        "delta_qty": 3000.0,
+                        "ref_price": 100.0,
+                        "target_weight": 0.30,
+                        "order_value": 300000.0,
+                        "lot_size": 100.0,
+                        "avg_daily_dollar_volume": 5000000.0,
+                        "avg_daily_volume": 50000.0,
+                        "expected_cost_bps": 20.0,
+                        "spread_proxy_bps": 4.0,
+                        "slippage_proxy_bps": 14.0,
+                        "commission_proxy_bps": 2.0,
+                        "liquidity_score": 0.55,
+                        "reason": "rebalance_up",
+                    }
+                ]
+            )
+            self.assertEqual(market_rule_blocked, [])
+            self.assertEqual(len(market_rule_allowed), 1)
+
+            split_rows, liquidity_blocked = engine._split_execution_orders(market_rule_allowed)
+            self.assertEqual(liquidity_blocked, [])
+            self.assertEqual(len(split_rows), 3)
+            self.assertTrue(all(str(row.get("execution_order_type") or "") == "LMT" for row in split_rows))
+            self.assertTrue(all(str(row.get("dynamic_liquidity_bucket") or "") == "CORE" for row in split_rows))
+            self.assertTrue(all(int(float(row.get("slice_count") or 0)) == 3 for row in split_rows))
+            self.assertEqual(sorted(int(float(row.get("slice_index") or 0)) for row in split_rows), [1, 2, 3])
+            self.assertTrue(all(float(row.get("limit_price_buffer_bps_effective") or 0.0) > 5.0 for row in split_rows))
+            self.assertTrue(all(float(row.get("adv_cap_order_value") or 0.0) < 300000.0 for row in split_rows))
+
+    def test_investment_execution_run_reports_market_rule_blocks(self):
+        class DummyEvent:
+            def __iadd__(self, other):
+                return self
+
+        class SummaryRow:
+            def __init__(self, account: str, tag: str, value: str):
+                self.account = account
+                self.tag = tag
+                self.value = value
+
+        class FakeIB:
+            orderStatusEvent = DummyEvent()
+            errorEvent = DummyEvent()
+            execDetailsEvent = DummyEvent()
+            commissionReportEvent = DummyEvent()
+
+            def accountSummary(self, *args, **kwargs):
+                return [
+                    SummaryRow("DUQ152001", "NetLiquidation", "100000"),
+                    SummaryRow("DUQ152001", "TotalCashValue", "100000"),
+                    SummaryRow("DUQ152001", "BuyingPower", "200000"),
+                ]
+
+            def portfolio(self, *args, **kwargs):
+                return []
+
+            def positions(self, *args, **kwargs):
+                return []
+
+            def sleep(self, *_args, **_kwargs):
+                return None
+
+        from src.common.market_structure import load_market_structure
+
+        with NamedTemporaryFile(suffix=".db") as tmp, TemporaryDirectory() as td:
+            report_dir = Path(td)
+            (report_dir / "investment_candidates.csv").write_text(
+                "\n".join(
+                    [
+                        "symbol,last_close,score,model_recommendation_score,execution_score,execution_ready,direction,market",
+                        "510300.SS,4.00,0.62,0.62,0.31,1,LONG,CN",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (report_dir / "investment_plan.csv").write_text(
+                "\n".join(
+                    [
+                        "symbol,action,allocation_mult,direction,execution_ready",
+                        "510300.SS,ACCUMULATE,1.0,LONG,1",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            engine = InvestmentExecutionEngine(
+                ib=FakeIB(),
+                account_id="DUQ152001",
+                storage=Storage(tmp.name),
+                market="CN",
+                portfolio_id="CN:test",
+                paper_cfg=InvestmentPaperConfig(max_holdings=1, max_single_weight=0.30),
+                execution_cfg=InvestmentExecutionConfig(
+                    edge_gate_enabled=False,
+                    manual_review_enabled=False,
+                    shadow_ml_review_enabled=False,
+                    risk_alert_guard_enabled=False,
+                ),
+                market_structure=load_market_structure(Path("."), "CN"),
+            )
+            engine._current_execution_session_profile = Mock(
+                return_value=ExecutionSessionProfile(
+                    session_bucket="MIDDAY",
+                    session_label="午盘",
+                    execution_style="VWAP_LITE_MIDDAY",
+                    aggressiveness=0.55,
+                    participation_scale=1.0,
+                    limit_buffer_scale=0.85,
+                )
+            )
+
+            engine.run(report_dir=str(report_dir), submit=False)
+            summary = json.loads((report_dir / "investment_execution_summary.json").read_text(encoding="utf-8"))
+            plan_rows = list(csv.DictReader((report_dir / "investment_execution_plan.csv").open("r", encoding="utf-8", newline="")))
+
+            self.assertEqual(int(summary["blocked_market_rule_order_count"]), 1)
+            self.assertEqual(int(summary["order_count"]), 0)
+            self.assertEqual(len(plan_rows), 1)
+            self.assertEqual(str(plan_rows[0]["status"]), "BLOCKED_MARKET_RULE")
+            self.assertEqual(str(plan_rows[0]["market_rule_status"]), "BLOCKED_RESEARCH_ONLY")
+            self.assertEqual(str(plan_rows[0]["user_reason_label"]), "当前市场仅研究")
 
     def test_investment_signal_decision_is_structured(self):
         long_row = {

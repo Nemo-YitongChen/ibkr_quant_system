@@ -59,6 +59,10 @@ adaptive_strategy:
       regime_hard_risk_off_threshold: 0.25
       min_expected_edge_bps: 18.0
       edge_cost_buffer_bps: 6.0
+      risk_budget_net_exposure: 0.85
+      risk_budget_gross_exposure: 0.90
+      risk_budget_short_exposure: 0.25
+      risk_recovery_max_bonus: 0.06
     US:
       label: "US trend-first"
       staged_entry_parts: 3
@@ -75,6 +79,10 @@ adaptive_strategy:
       regime_hard_risk_off_threshold: 0.25
       min_expected_edge_bps: 16.0
       edge_cost_buffer_bps: 5.0
+      risk_budget_net_exposure: 0.88
+      risk_budget_gross_exposure: 0.95
+      risk_budget_short_exposure: 0.35
+      risk_recovery_max_bonus: 0.08
     HK:
       label: "HK ETF-first"
       staged_entry_parts: 4
@@ -91,6 +99,10 @@ adaptive_strategy:
       regime_hard_risk_off_threshold: 0.24
       min_expected_edge_bps: 26.0
       edge_cost_buffer_bps: 9.0
+      risk_budget_net_exposure: 0.72
+      risk_budget_gross_exposure: 0.78
+      risk_budget_short_exposure: 0.16
+      risk_recovery_max_bonus: 0.05
     CN:
       label: "CN low-turnover defensive"
       staged_entry_parts: 4
@@ -107,6 +119,10 @@ adaptive_strategy:
       regime_hard_risk_off_threshold: 0.25
       min_expected_edge_bps: 24.0
       edge_cost_buffer_bps: 8.0
+      risk_budget_net_exposure: 0.65
+      risk_budget_gross_exposure: 0.70
+      risk_budget_short_exposure: 0.05
+      risk_recovery_max_bonus: 0.03
   rollout:
     - name: "stage_1"
       scope: "ETF-only baseline across US / HK / CN research"

@@ -49,6 +49,16 @@ def execution_user_explanation(row: Dict[str, Any]) -> Tuple[str, str]:
         return "需要人工确认", reason or "这笔订单当前不适合直接自动提交。"
     if quality_status == "LOW_QUALITY" or status == "BLOCKED_QUALITY":
         return "信号质量不足", "当前信号质量或执行准备度不足，先不自动下单。"
+    if status == "BLOCKED_MARKET_RULE":
+        market_rule_status = _text(row.get("market_rule_status")).upper()
+        market_rule_reason = _text(row.get("market_rule_reason"))
+        if market_rule_status == "BLOCKED_RESEARCH_ONLY":
+            return "当前市场仅研究", market_rule_reason or "当前市场仍处于研究阶段，不直接进入自动执行。"
+        if market_rule_status == "BLOCKED_BOARD_LOT":
+            return "整手规则限制", market_rule_reason or "当前下单数量不符合整手规则，先不自动下单。"
+        if market_rule_status == "BLOCKED_SHORT_ENTRY":
+            return "市场规则限制", market_rule_reason or "当前市场规则不支持这类自动卖空或回转交易。"
+        return "市场规则限制", market_rule_reason or "当前订单触发市场结构或交易规则限制，先不自动下单。"
     if status == "BLOCKED_EDGE":
         return (
             "边际收益不够覆盖成本",

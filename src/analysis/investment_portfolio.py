@@ -52,6 +52,14 @@ class InvestmentPaperConfig:
     correlation_weight_floor: float = 0.35
     dynamic_exposure_floor: float = 0.55
     dynamic_short_exposure_floor: float = 0.60
+    dynamic_recovery_max_bonus: float = 0.08
+    dynamic_recovery_min_liquidity: float = 0.65
+    dynamic_recovery_min_sentiment: float = 0.05
+    dynamic_recovery_max_correlation: float = 0.58
+    dynamic_recovery_max_stress_loss: float = 0.055
+    market_profile_net_exposure_budget: float | None = None
+    market_profile_gross_exposure_budget: float | None = None
+    market_profile_short_exposure_budget: float | None = None
     stress_loss_soft_limit: float = 0.085
     portfolio_atr_soft_limit: float = 0.055
     portfolio_liquidity_soft_floor: float = 0.42
@@ -509,19 +517,198 @@ def _build_risk_overlay(
         (top_sector_share - float(cfg.sector_concentration_soft_limit))
         / max(1.0 - float(cfg.sector_concentration_soft_limit), 1e-6),
     )
-    scale_penalty = (
-        0.26 * corr_penalty
-        + 0.30 * stress_penalty
-        + 0.14 * atr_penalty
-        + 0.12 * liquidity_penalty
-        + 0.08 * sentiment_penalty
-        + 0.10 * concentration_penalty
+    returns_var_penalty = 0.0
+    if bool(returns_metrics.get("enabled", False)):
+        returns_var_penalty = max(
+            0.0,
+            max(
+                (
+                    float(returns_metrics.get("portfolio_var_95_1d", 0.0) or 0.0)
+                    - float(cfg.stress_loss_soft_limit) * 0.35
+                )
+                / max(float(cfg.stress_loss_soft_limit) * 0.35, 1e-6),
+                (
+                    float(returns_metrics.get("portfolio_downside_vol_1d", 0.0) or 0.0)
+                    - float(cfg.portfolio_atr_soft_limit) * 0.40
+                )
+                / max(float(cfg.portfolio_atr_soft_limit) * 0.40, 1e-6),
+            ),
+        )
+
+    base_net_exposure = float(cfg.max_net_exposure)
+    base_gross_exposure = float(cfg.max_gross_exposure)
+    base_short_exposure = float(cfg.max_short_exposure)
+    market_profile_net_exposure = min(
+        base_net_exposure,
+        max(
+            0.0,
+            _to_float(getattr(cfg, "market_profile_net_exposure_budget", base_net_exposure), base_net_exposure),
+        ),
     )
-    dynamic_scale = _clamp(1.0 - scale_penalty, float(cfg.dynamic_exposure_floor), 1.0)
-    dynamic_short_scale = _clamp(
-        1.0 - (0.45 * stress_penalty + 0.25 * liquidity_penalty + 0.10 * corr_penalty),
-        float(cfg.dynamic_short_exposure_floor),
-        1.0,
+    market_profile_gross_exposure = min(
+        base_gross_exposure,
+        max(
+            0.0,
+            _to_float(getattr(cfg, "market_profile_gross_exposure_budget", base_gross_exposure), base_gross_exposure),
+        ),
+    )
+    market_profile_short_exposure = min(
+        market_profile_gross_exposure,
+        base_short_exposure,
+        max(
+            0.0,
+            _to_float(getattr(cfg, "market_profile_short_exposure_budget", base_short_exposure), base_short_exposure),
+        ),
+    )
+
+    net_floor = float(market_profile_net_exposure * float(cfg.dynamic_exposure_floor))
+    gross_floor = float(market_profile_gross_exposure * float(cfg.dynamic_exposure_floor))
+    short_floor = float(min(gross_floor, market_profile_short_exposure * float(cfg.dynamic_short_exposure_floor)))
+    current_net_exposure = float(market_profile_net_exposure)
+    current_gross_exposure = float(market_profile_gross_exposure)
+    current_short_exposure = float(market_profile_short_exposure)
+    layered_throttles: List[Dict[str, Any]] = []
+    dominant_layer = ""
+    dominant_layer_label = ""
+    dominant_layer_delta = 0.0
+
+    layer_specs = [
+        ("CORRELATION", "相关性", corr_penalty, 0.18, 0.10, avg_pair_correlation > float(cfg.correlation_soft_limit)),
+        ("STRESS", "Stress", stress_penalty, 0.22, 0.30, float(stress.get("worst_loss", 0.0) or 0.0) > float(cfg.stress_loss_soft_limit)),
+        ("ATR", "波动率", atr_penalty, 0.10, 0.14, float(signal_metrics.get("avg_atr_pct", 0.0) or 0.0) > float(cfg.portfolio_atr_soft_limit)),
+        ("LIQUIDITY", "流动性", liquidity_penalty, 0.12, 0.18, float(signal_metrics.get("avg_liquidity_score", 0.0) or 0.0) < float(cfg.portfolio_liquidity_soft_floor)),
+        ("SENTIMENT", "情绪", sentiment_penalty, 0.08, 0.05, float(signal_metrics.get("avg_market_sentiment_score", 0.0) or 0.0) < float(cfg.market_sentiment_soft_floor)),
+        ("CONCENTRATION", "集中度", concentration_penalty, 0.08, 0.06, top_sector_share > float(cfg.sector_concentration_soft_limit)),
+        ("RETURNS_VAR", "收益率风险", returns_var_penalty, 0.10, 0.12, bool(returns_metrics.get("enabled", False)) and returns_var_penalty > 0.0),
+    ]
+    for layer_name, layer_label, severity, net_reduction_cap, short_reduction_cap, is_active in layer_specs:
+        severity_value = max(0.0, float(severity or 0.0))
+        net_delta = 0.0
+        gross_delta = 0.0
+        short_delta = 0.0
+        if is_active and severity_value > 0.0:
+            net_reduction = _clamp(net_reduction_cap * severity_value, 0.0, 0.35)
+            short_reduction = _clamp(short_reduction_cap * severity_value, 0.0, 0.45)
+            next_net = max(net_floor, current_net_exposure * (1.0 - net_reduction))
+            next_gross = max(gross_floor, current_gross_exposure * (1.0 - net_reduction))
+            next_short = max(
+                0.0,
+                min(
+                    next_gross,
+                    max(short_floor, current_short_exposure * (1.0 - short_reduction)),
+                ),
+            )
+            net_delta = max(0.0, current_net_exposure - next_net)
+            gross_delta = max(0.0, current_gross_exposure - next_gross)
+            short_delta = max(0.0, current_short_exposure - next_short)
+            current_net_exposure = float(next_net)
+            current_gross_exposure = float(next_gross)
+            current_short_exposure = float(next_short)
+        layer_delta = max(net_delta, gross_delta, short_delta)
+        if layer_delta > dominant_layer_delta:
+            dominant_layer = layer_name
+            dominant_layer_label = layer_label
+            dominant_layer_delta = float(layer_delta)
+        layered_throttles.append(
+            {
+                "layer": layer_name,
+                "label": layer_label,
+                "severity": float(severity_value),
+                "active": bool(is_active and severity_value > 0.0),
+                "net_delta": float(net_delta),
+                "gross_delta": float(gross_delta),
+                "short_delta": float(short_delta),
+                "post_net_exposure": float(current_net_exposure),
+                "post_gross_exposure": float(current_gross_exposure),
+                "post_short_exposure": float(current_short_exposure),
+            }
+        )
+
+    throttle_pre_recovery_net_exposure = float(current_net_exposure)
+    throttle_pre_recovery_gross_exposure = float(current_gross_exposure)
+    throttle_pre_recovery_short_exposure = float(current_short_exposure)
+    throttle_scale_pre_recovery = (
+        float(throttle_pre_recovery_gross_exposure / market_profile_gross_exposure)
+        if market_profile_gross_exposure > 0.0
+        else 0.0
+    )
+    recovery_liquidity_score = max(
+        0.0,
+        (
+            float(signal_metrics.get("avg_liquidity_score", 0.0) or 0.0)
+            - float(cfg.dynamic_recovery_min_liquidity)
+        )
+        / max(1.0 - float(cfg.dynamic_recovery_min_liquidity), 1e-6),
+    )
+    recovery_sentiment_score = max(
+        0.0,
+        (
+            float(signal_metrics.get("avg_market_sentiment_score", 0.0) or 0.0)
+            - float(cfg.dynamic_recovery_min_sentiment)
+        )
+        / max(1.0 - float(cfg.dynamic_recovery_min_sentiment), 1e-6),
+    )
+    recovery_correlation_score = max(
+        0.0,
+        (
+            float(cfg.dynamic_recovery_max_correlation)
+            - float(avg_pair_correlation)
+        )
+        / max(float(cfg.dynamic_recovery_max_correlation), 1e-6),
+    )
+    recovery_stress_score = max(
+        0.0,
+        (
+            float(cfg.dynamic_recovery_max_stress_loss)
+            - float(stress.get("worst_loss", 0.0) or 0.0)
+        )
+        / max(float(cfg.dynamic_recovery_max_stress_loss), 1e-6),
+    )
+    recovery_score = max(
+        0.0,
+        min(
+            1.0,
+            (
+                recovery_liquidity_score
+                + recovery_sentiment_score
+                + recovery_correlation_score
+                + recovery_stress_score
+            )
+            / 4.0,
+        ),
+    )
+    recovery_max_bonus = max(0.0, min(0.15, float(cfg.dynamic_recovery_max_bonus)))
+    recovery_active = bool(
+        throttle_scale_pre_recovery < 0.999
+        and max(corr_penalty, stress_penalty, liquidity_penalty) < 0.85
+        and recovery_score > 0.15
+    )
+    recovery_bonus_scale = 0.0
+    if recovery_active:
+        recovery_bonus_scale = min(
+            recovery_max_bonus,
+            (1.0 - throttle_scale_pre_recovery) * 0.60,
+            recovery_score * recovery_max_bonus,
+        )
+    recovery_net_credit = float(market_profile_net_exposure * recovery_bonus_scale)
+    recovery_gross_credit = float(market_profile_gross_exposure * recovery_bonus_scale)
+    recovery_short_credit = float(market_profile_short_exposure * recovery_bonus_scale * 0.50)
+    dynamic_net_exposure = min(market_profile_net_exposure, throttle_pre_recovery_net_exposure + recovery_net_credit)
+    dynamic_gross_exposure = min(market_profile_gross_exposure, throttle_pre_recovery_gross_exposure + recovery_gross_credit)
+    dynamic_short_exposure = min(
+        dynamic_gross_exposure,
+        market_profile_short_exposure,
+        throttle_pre_recovery_short_exposure + recovery_short_credit,
+    )
+    dynamic_scale = (
+        float(dynamic_gross_exposure / market_profile_gross_exposure)
+        if market_profile_gross_exposure > 0.0
+        else 0.0
+    )
+    dynamic_short_scale = (
+        float(dynamic_short_exposure / market_profile_short_exposure)
+        if market_profile_short_exposure > 0.0
+        else 0.0
     )
     notes: List[str] = []
     if avg_pair_correlation > float(cfg.correlation_soft_limit):
@@ -534,12 +721,41 @@ def _build_risk_overlay(
         notes.append("市场情绪偏弱，降低净多头敞口。")
     if bool(returns_metrics.get("enabled", False)):
         notes.append("returns-based 风险度量已启用，优先用真实收益率修正相关性与 stress。")
+    if market_profile_net_exposure + 1e-9 < base_net_exposure or market_profile_gross_exposure + 1e-9 < base_gross_exposure:
+        notes.append("当前市场档案先收紧基础风险预算，再由风险 throttle 决定本轮可用敞口。")
+    if recovery_active and recovery_bonus_scale > 0.0:
+        notes.append("风险 recovery 已启用：在流动性/情绪改善时，允许从 throttle 后预算中温和回补仓位。")
+    layered_text_parts = []
+    budget_tightening = max(
+        0.0,
+        max(base_net_exposure - market_profile_net_exposure, base_gross_exposure - market_profile_gross_exposure),
+    )
+    if budget_tightening > 1e-9:
+        layered_text_parts.append(f"budget {budget_tightening:.1%}")
+    throttle_tightening = max(
+        0.0,
+        max(
+            market_profile_net_exposure - throttle_pre_recovery_net_exposure,
+            market_profile_gross_exposure - throttle_pre_recovery_gross_exposure,
+        ),
+    )
+    if throttle_tightening > 1e-9:
+        layer_text = f"throttle {throttle_tightening:.1%}"
+        if dominant_layer_label:
+            layer_text += f"({dominant_layer_label})"
+        layered_text_parts.append(layer_text)
+    recovery_credit = max(recovery_net_credit, recovery_gross_credit)
+    if recovery_credit > 1e-9:
+        layered_text_parts.append(f"recovery +{recovery_credit:.1%}")
     return {
         "enabled": True,
         "candidate_count": int(len(chosen)),
-        "base_net_exposure": float(cfg.max_net_exposure),
-        "base_gross_exposure": float(cfg.max_gross_exposure),
-        "base_short_exposure": float(cfg.max_short_exposure),
+        "base_net_exposure": float(base_net_exposure),
+        "base_gross_exposure": float(base_gross_exposure),
+        "base_short_exposure": float(base_short_exposure),
+        "market_profile_net_exposure_budget": float(market_profile_net_exposure),
+        "market_profile_gross_exposure_budget": float(market_profile_gross_exposure),
+        "market_profile_short_exposure_budget": float(market_profile_short_exposure),
         "returns_based_enabled": bool(returns_metrics.get("enabled", False)),
         "returns_based_symbol_count": int(returns_metrics.get("symbol_count", 0) or 0),
         "returns_based_sample_size": int(returns_metrics.get("sample_size", 0) or 0),
@@ -554,13 +770,34 @@ def _build_risk_overlay(
         "avg_liquidity_score": float(signal_metrics.get("avg_liquidity_score", 0.0) or 0.0),
         "avg_market_sentiment_score": float(signal_metrics.get("avg_market_sentiment_score", 0.0) or 0.0),
         "avg_data_quality_score": float(signal_metrics.get("avg_data_quality_score", 0.0) or 0.0),
+        "market_profile_budget_tightening_net": float(max(0.0, base_net_exposure - market_profile_net_exposure)),
+        "market_profile_budget_tightening_gross": float(max(0.0, base_gross_exposure - market_profile_gross_exposure)),
+        "market_profile_budget_tightening_short": float(max(0.0, base_short_exposure - market_profile_short_exposure)),
+        "throttle_pre_recovery_net_exposure": float(throttle_pre_recovery_net_exposure),
+        "throttle_pre_recovery_gross_exposure": float(throttle_pre_recovery_gross_exposure),
+        "throttle_pre_recovery_short_exposure": float(throttle_pre_recovery_short_exposure),
+        "throttle_net_tightening": float(max(0.0, market_profile_net_exposure - throttle_pre_recovery_net_exposure)),
+        "throttle_gross_tightening": float(max(0.0, market_profile_gross_exposure - throttle_pre_recovery_gross_exposure)),
+        "throttle_short_tightening": float(max(0.0, market_profile_short_exposure - throttle_pre_recovery_short_exposure)),
+        "recovery_active": bool(recovery_active),
+        "recovery_score": float(recovery_score),
+        "recovery_bonus_scale": float(recovery_bonus_scale),
+        "recovery_net_credit": float(max(0.0, dynamic_net_exposure - throttle_pre_recovery_net_exposure)),
+        "recovery_gross_credit": float(max(0.0, dynamic_gross_exposure - throttle_pre_recovery_gross_exposure)),
+        "recovery_short_credit": float(max(0.0, dynamic_short_exposure - throttle_pre_recovery_short_exposure)),
+        "recovery_liquidity_score": float(recovery_liquidity_score),
+        "recovery_sentiment_score": float(recovery_sentiment_score),
+        "recovery_correlation_score": float(recovery_correlation_score),
+        "recovery_stress_score": float(recovery_stress_score),
+        "layered_throttles": layered_throttles,
+        "dominant_throttle_layer": str(dominant_layer),
+        "dominant_throttle_layer_label": str(dominant_layer_label),
+        "layered_throttle_text": " | ".join(layered_text_parts),
         "dynamic_scale": float(dynamic_scale),
         "dynamic_short_scale": float(dynamic_short_scale),
-        "dynamic_net_exposure": float(max(0.0, float(cfg.max_net_exposure) * dynamic_scale)),
-        "dynamic_gross_exposure": float(max(0.0, float(cfg.max_gross_exposure) * dynamic_scale)),
-        "dynamic_short_exposure": float(
-            max(0.0, min(float(cfg.max_gross_exposure) * dynamic_scale, float(cfg.max_short_exposure) * dynamic_short_scale))
-        ),
+        "dynamic_net_exposure": float(max(0.0, dynamic_net_exposure)),
+        "dynamic_gross_exposure": float(max(0.0, dynamic_gross_exposure)),
+        "dynamic_short_exposure": float(max(0.0, dynamic_short_exposure)),
         "stress_scenarios": dict(stress.get("scenarios", {}) or {}),
         "stress_worst_loss": float(stress.get("worst_loss", 0.0) or 0.0),
         "stress_worst_scenario": str(stress.get("worst_scenario", "") or ""),

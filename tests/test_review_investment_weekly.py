@@ -445,6 +445,12 @@ class ReviewInvestmentWeeklyTests(unittest.TestCase):
                     "avg_actual_slippage_bps": 25.0,
                     "strategy_control_weight_delta": 0.06,
                     "risk_overlay_weight_delta": 0.01,
+                    "risk_market_profile_budget_weight_delta": 0.03,
+                    "risk_throttle_weight_delta": 0.02,
+                    "risk_recovery_weight_credit": 0.01,
+                    "risk_layered_split_text": "budget 3.0% | throttle 2.0%(相关性) | recovery +1.0%",
+                    "risk_dominant_throttle_layer": "CORRELATION",
+                    "risk_dominant_throttle_layer_label": "相关性",
                     "execution_gate_blocked_order_count": 1,
                     "execution_gate_blocked_order_value": 4200.0,
                     "execution_gate_blocked_order_ratio": 0.25,
@@ -457,6 +463,11 @@ class ReviewInvestmentWeeklyTests(unittest.TestCase):
                 {
                     "portfolio_id": "US:watchlist",
                     "dominant_risk_driver": "CORRELATION",
+                    "latest_market_profile_budget_tightening": 0.03,
+                    "latest_throttle_tightening": 0.02,
+                    "latest_recovery_credit": 0.01,
+                    "latest_dominant_throttle_layer": "CORRELATION",
+                    "latest_dominant_throttle_layer_label": "相关性",
                     "risk_diagnosis": "组合拥挤度偏高。",
                 }
             ],
@@ -547,6 +558,14 @@ class ReviewInvestmentWeeklyTests(unittest.TestCase):
         self.assertEqual(row["market_profile_ready_for_manual_apply"], 1)
         self.assertEqual(row["dominant_driver"], "EXECUTION")
         self.assertEqual(row["execution_gate_blocked_order_count"], 1)
+        self.assertAlmostEqual(float(row["risk_market_profile_budget_weight_delta"]), 0.03, places=6)
+        self.assertAlmostEqual(float(row["risk_throttle_weight_delta"]), 0.02, places=6)
+        self.assertAlmostEqual(float(row["risk_recovery_weight_credit"]), 0.01, places=6)
+        self.assertEqual(row["risk_dominant_throttle_layer"], "CORRELATION")
+        self.assertIn("budget 3.0%", row["risk_layered_split_text"])
+        self.assertAlmostEqual(float(row["risk_latest_market_profile_budget_tightening"]), 0.03, places=6)
+        self.assertAlmostEqual(float(row["risk_latest_throttle_tightening"]), 0.02, places=6)
+        self.assertAlmostEqual(float(row["risk_latest_recovery_credit"]), 0.01, places=6)
         self.assertIn("策略 6.0%", row["control_split_text"])
 
         summary = _build_weekly_tuning_dataset_summary(rows)
@@ -2119,6 +2138,15 @@ class ReviewInvestmentWeeklyTests(unittest.TestCase):
                         },
                         "risk_base_gross_exposure": 0.90,
                         "risk_dynamic_gross_exposure": 0.72,
+                        "risk_market_profile_budget_net_tightening": 0.04,
+                        "risk_market_profile_budget_gross_tightening": 0.06,
+                        "risk_throttle_net_tightening": 0.10,
+                        "risk_throttle_gross_tightening": 0.12,
+                        "risk_recovery_net_credit": 0.02,
+                        "risk_recovery_gross_credit": 0.01,
+                        "risk_layered_throttle_text": "budget 6.0% | throttle 12.0%(Stress) | recovery +2.0%",
+                        "risk_dominant_throttle_layer": "STRESS",
+                        "risk_dominant_throttle_layer_label": "Stress",
                     }
                 ),
                 encoding="utf-8",
@@ -2154,6 +2182,12 @@ class ReviewInvestmentWeeklyTests(unittest.TestCase):
         self.assertEqual(row["attribution_mode"], "proxy_v1")
         self.assertAlmostEqual(float(row["strategy_control_weight_delta"]), 0.15, places=6)
         self.assertAlmostEqual(float(row["risk_overlay_weight_delta"]), 0.18, places=6)
+        self.assertAlmostEqual(float(row["risk_market_profile_budget_weight_delta"]), 0.06, places=6)
+        self.assertAlmostEqual(float(row["risk_throttle_weight_delta"]), 0.12, places=6)
+        self.assertAlmostEqual(float(row["risk_recovery_weight_credit"]), 0.02, places=6)
+        self.assertEqual(str(row["risk_dominant_throttle_layer"]), "STRESS")
+        self.assertEqual(str(row["risk_dominant_throttle_layer_label"]), "Stress")
+        self.assertIn("budget 6.0%", str(row["risk_layered_split_text"]))
         self.assertAlmostEqual(float(row["execution_gate_blocked_order_value"]), 1500.0, places=6)
         self.assertAlmostEqual(float(row["execution_gate_blocked_order_ratio"]), 0.5, places=6)
         self.assertAlmostEqual(float(row["execution_gate_blocked_weight"]), 0.015, places=6)

@@ -32,6 +32,8 @@ def build_investment_risk_history_row(
         details_payload["report_dir"] = str(report_dir)
     if account_id and not str(details_payload.get("account_id") or "").strip():
         details_payload["account_id"] = str(account_id)
+    if risk and "risk_overlay" not in details_payload:
+        details_payload["risk_overlay"] = risk
     return {
         "run_id": str(run_id or "").strip(),
         "ts": str(ts or datetime.utcnow().isoformat()),

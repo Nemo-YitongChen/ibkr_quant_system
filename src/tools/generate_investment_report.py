@@ -30,6 +30,7 @@ from ..common.adaptive_strategy import (
     adaptive_strategy_context,
     adaptive_strategy_market_execution_overrides,
     adaptive_strategy_market_plan_overrides,
+    adaptive_strategy_market_risk_overrides,
     adaptive_strategy_market_regime_overrides,
     apply_adaptive_defensive_rank_cap,
     apply_adaptive_strategy_plan_overrides,
@@ -1629,6 +1630,7 @@ def main(argv: List[str] | None = None) -> None:
     adaptive_market_plan = adaptive_strategy_market_plan_overrides(adaptive_strategy, resolved_market)
     adaptive_market_regime = adaptive_strategy_market_regime_overrides(adaptive_strategy, resolved_market)
     adaptive_market_execution = adaptive_strategy_market_execution_overrides(adaptive_strategy, resolved_market)
+    adaptive_market_risk = adaptive_strategy_market_risk_overrides(adaptive_strategy, resolved_market)
     backtest_cfg = InvestmentBacktestConfig.from_dict(investment_cfg.get("backtest"))
     short_book_cfg = InvestmentShortBookConfig.from_dict(investment_cfg.get("short_book"), market=resolved_market)
     shadow_ml_cfg = InvestmentShadowModelConfig.from_dict(investment_cfg.get("shadow_ml"))
@@ -2127,6 +2129,7 @@ def main(argv: List[str] | None = None) -> None:
                 "active_market_plan": adaptive_market_plan,
                 "active_market_regime": adaptive_market_regime,
                 "active_market_execution": adaptive_market_execution,
+                "active_market_risk": adaptive_market_risk,
             },
         )
 

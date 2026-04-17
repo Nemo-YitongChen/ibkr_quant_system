@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 from tempfile import NamedTemporaryFile, TemporaryDirectory
+from unittest.mock import Mock
 
 from src.analysis.investment_portfolio import InvestmentPaperConfig
-from src.app.investment_engine import InvestmentExecutionEngine
+from src.app.investment_engine import ExecutionSessionProfile, InvestmentExecutionEngine
 from src.app.investment_opportunity import InvestmentOpportunityConfig, InvestmentOpportunityEngine
 from src.common.adaptive_strategy import apply_adaptive_defensive_opportunity_policy, load_adaptive_strategy
-from src.common.market_structure import load_market_structure, market_structure_summary
+from src.common.market_structure import MarketStructureConfig, load_market_structure, market_structure_summary
 from src.common.storage import Storage
 from src.common.user_explanations import annotate_opportunity_user_explanation
 from src.portfolio.investment_allocator import InvestmentExecutionConfig
@@ -166,3 +167,110 @@ def test_investment_opportunity_engine_applies_adaptive_defensive_waits() -> Non
         assert adjusted[0]["adaptive_strategy_status"] == "DEFENSIVE_REGIME_CAP"
         assert adjusted[0]["user_reason_label"] == "防守阶段先观察"
         assert "防守阶段" in adjusted[0]["entry_reason"]
+
+
+def test_investment_execution_market_rule_gate_blocks_research_only_entries() -> None:
+    with NamedTemporaryFile(suffix=".db") as tmp:
+        engine = InvestmentExecutionEngine(
+            ib=_FakeIB(),
+            account_id="DUQ152001",
+            storage=Storage(tmp.name),
+            market="CN",
+            portfolio_id="CN:test",
+            paper_cfg=InvestmentPaperConfig(),
+            execution_cfg=InvestmentExecutionConfig(edge_gate_enabled=False),
+            market_structure=load_market_structure(Path("."), "CN"),
+        )
+        engine._current_execution_session_profile = Mock(
+            return_value=ExecutionSessionProfile(
+                session_bucket="MIDDAY",
+                session_label="午盘",
+                execution_style="VWAP_LITE_MIDDAY",
+                aggressiveness=0.55,
+                participation_scale=1.0,
+                limit_buffer_scale=0.85,
+            )
+        )
+
+        allowed, blocked = engine._apply_market_rule_gates(
+            [
+                {
+                    "symbol": "510300.SS",
+                    "action": "BUY",
+                    "current_qty": 0.0,
+                    "target_qty": 100.0,
+                    "delta_qty": 100.0,
+                    "ref_price": 4.0,
+                    "target_weight": 0.10,
+                    "order_value": 400.0,
+                    "lot_size": 100.0,
+                    "reason": "rebalance_up",
+                }
+            ]
+        )
+
+        assert allowed == []
+        assert len(blocked) == 1
+        assert blocked[0]["status"] == "BLOCKED_MARKET_RULE"
+        assert blocked[0]["market_rule_status"] == "BLOCKED_RESEARCH_ONLY"
+        assert blocked[0]["user_reason_label"] == "当前市场仅研究"
+
+
+def test_investment_execution_market_rule_gate_blocks_board_lot_mismatch() -> None:
+    with NamedTemporaryFile(suffix=".db") as tmp:
+        custom_structure = MarketStructureConfig.from_dict(
+            {
+                "market": "CN",
+                "research_only": False,
+                "order_rules": {
+                    "buy_lot_multiple": 100,
+                    "day_turnaround_allowed": False,
+                    "odd_lot_auto_match": False,
+                    "odd_lot_discount_risk": True,
+                    "price_limit_pct": 10.0,
+                },
+            }
+        )
+        engine = InvestmentExecutionEngine(
+            ib=_FakeIB(),
+            account_id="DUQ152001",
+            storage=Storage(tmp.name),
+            market="CN",
+            portfolio_id="CN:test",
+            paper_cfg=InvestmentPaperConfig(),
+            execution_cfg=InvestmentExecutionConfig(edge_gate_enabled=False),
+            market_structure=custom_structure,
+        )
+        engine._current_execution_session_profile = Mock(
+            return_value=ExecutionSessionProfile(
+                session_bucket="MIDDAY",
+                session_label="午盘",
+                execution_style="VWAP_LITE_MIDDAY",
+                aggressiveness=0.55,
+                participation_scale=1.0,
+                limit_buffer_scale=0.85,
+            )
+        )
+
+        allowed, blocked = engine._apply_market_rule_gates(
+            [
+                {
+                    "symbol": "600519.SS",
+                    "action": "BUY",
+                    "current_qty": 0.0,
+                    "target_qty": 150.0,
+                    "delta_qty": 150.0,
+                    "ref_price": 10.0,
+                    "target_weight": 0.10,
+                    "order_value": 1500.0,
+                    "lot_size": 100.0,
+                    "reason": "rebalance_up",
+                }
+            ]
+        )
+
+        assert allowed == []
+        assert len(blocked) == 1
+        assert blocked[0]["status"] == "BLOCKED_MARKET_RULE"
+        assert blocked[0]["market_rule_status"] == "BLOCKED_BOARD_LOT"
+        assert blocked[0]["user_reason_label"] == "整手规则限制"

@@ -17,6 +17,7 @@ from ..common.adaptive_strategy import (
     adaptive_strategy_effective_controls,
     adaptive_strategy_summary_fields,
     apply_active_market_execution_overrides,
+    apply_active_market_risk_overrides,
     apply_adaptive_strategy_execution_controls,
     load_report_adaptive_strategy_payload,
 )
@@ -513,6 +514,222 @@ class InvestmentExecutionEngine:
             "expected_cost_value": float(order_value * expected_cost_bps / 10000.0),
         }
 
+    def _effective_buy_lot_multiple(self, row: Dict[str, Any]) -> int:
+        rule_lot = max(1, int(self.market_structure.order_rules.buy_lot_multiple or 1))
+        row_lot = max(1, int(_to_float(row.get("lot_size"), self.execution_cfg.lot_size)))
+        if str(row.get("action") or "").upper() == "BUY":
+            return max(rule_lot, row_lot)
+        return row_lot
+
+    @staticmethod
+    def _qty_is_multiple(qty: float, multiple: int) -> bool:
+        lot = max(1, int(multiple or 1))
+        if lot <= 1:
+            return True
+        qty_value = abs(_to_float(qty, 0.0))
+        if qty_value <= 1e-9:
+            return True
+        nearest = round(qty_value / float(lot))
+        return abs(qty_value - (nearest * float(lot))) <= 1e-6
+
+    @staticmethod
+    def _liquidity_bucket(row: Dict[str, Any]) -> str:
+        adv_value = max(0.0, _to_float(row.get("avg_daily_dollar_volume"), 0.0))
+        liquidity_score = max(0.0, _to_float(row.get("liquidity_score"), 0.0))
+        expected_cost_bps = max(0.0, _to_float(row.get("expected_cost_bps"), 0.0))
+        if adv_value >= 20_000_000.0 and liquidity_score >= 0.75 and expected_cost_bps <= 12.0:
+            return "DEEP"
+        if adv_value >= 3_000_000.0 and liquidity_score >= 0.45 and expected_cost_bps <= 24.0:
+            return "CORE"
+        if adv_value <= 750_000.0 or liquidity_score <= 0.30 or expected_cost_bps >= 45.0:
+            return "STRESSED"
+        return "THIN"
+
+    def _dynamic_execution_context(
+        self,
+        row: Dict[str, Any],
+        *,
+        session: ExecutionSessionProfile,
+    ) -> Dict[str, Any]:
+        is_entry = self._is_long_entry_order(row) or self._is_short_entry_order(row)
+        liquidity_bucket = self._liquidity_bucket(row)
+        adv_value = max(0.0, _to_float(row.get("avg_daily_dollar_volume"), 0.0))
+        order_value = abs(_to_float(row.get("order_value"), 0.0))
+        order_adv_pct = float(order_value / max(adv_value, 1e-9)) if adv_value > 0.0 else 0.0
+        order_rules = self.market_structure.order_rules
+        buy_lot_multiple = self._effective_buy_lot_multiple(row)
+        odd_lot_discount_risk = bool(order_rules.odd_lot_discount_risk)
+        price_limit_pct = max(0.0, float(order_rules.price_limit_pct or 0.0))
+        day_turnaround_allowed = bool(order_rules.day_turnaround_allowed)
+        market_rule_notes: List[str] = []
+
+        session_edge_add = {"OPEN": 2.0, "MIDDAY": 0.0, "CLOSE": 1.0}.get(session.session_bucket, 0.0)
+        liquidity_edge_add = {"DEEP": 0.0, "CORE": 1.5, "THIN": 4.0, "STRESSED": 8.0}.get(liquidity_bucket, 2.5)
+        liquidity_buffer_add = {"DEEP": 0.0, "CORE": 0.5, "THIN": 2.0, "STRESSED": 4.0}.get(liquidity_bucket, 1.0)
+
+        size_edge_add = 0.0
+        size_buffer_add = 0.0
+        if order_adv_pct >= 0.05:
+            size_edge_add = 8.0
+            size_buffer_add = 4.0
+            market_rule_notes.append("order_gt_5pct_adv")
+        elif order_adv_pct >= 0.02:
+            size_edge_add = 5.0
+            size_buffer_add = 2.5
+            market_rule_notes.append("order_gt_2pct_adv")
+        elif order_adv_pct >= 0.01:
+            size_edge_add = 2.0
+            size_buffer_add = 1.0
+            market_rule_notes.append("order_gt_1pct_adv")
+
+        market_rule_edge_add = 0.0
+        market_rule_buffer_add = 0.0
+        if odd_lot_discount_risk:
+            market_rule_edge_add += 1.5
+            market_rule_buffer_add += 1.0
+            market_rule_notes.append("odd_lot_discount_risk")
+        if price_limit_pct > 0.0:
+            market_rule_edge_add += min(6.0, price_limit_pct * 0.4)
+            market_rule_buffer_add += min(3.0, price_limit_pct * 0.2)
+            market_rule_notes.append("price_limit_market")
+        if is_entry and not day_turnaround_allowed:
+            market_rule_edge_add += 2.0
+            market_rule_buffer_add += 1.0
+            market_rule_notes.append("no_day_turnaround")
+        if buy_lot_multiple >= 100 and str(row.get("action") or "").upper() == "BUY":
+            market_rule_edge_add += 1.5
+            market_rule_buffer_add += 0.5
+            market_rule_notes.append("board_lot_buy")
+
+        dynamic_adv_scale = {"DEEP": 1.00, "CORE": 0.90, "THIN": 0.70, "STRESSED": 0.50}.get(liquidity_bucket, 0.75)
+        dynamic_split_scale = {"DEEP": 1.00, "CORE": 0.85, "THIN": 0.65, "STRESSED": 0.50}.get(liquidity_bucket, 0.70)
+        dynamic_limit_buffer_scale = 1.0 + {"OPEN": 0.15, "MIDDAY": 0.0, "CLOSE": 0.10}.get(session.session_bucket, 0.0)
+        dynamic_limit_buffer_scale += {"DEEP": 0.0, "CORE": 0.05, "THIN": 0.20, "STRESSED": 0.35}.get(liquidity_bucket, 0.10)
+        dynamic_force_min_slices = 1
+
+        if odd_lot_discount_risk:
+            dynamic_adv_scale -= 0.10
+            dynamic_split_scale -= 0.10
+            dynamic_limit_buffer_scale += 0.10
+            dynamic_force_min_slices = max(dynamic_force_min_slices, 2)
+        if price_limit_pct > 0.0:
+            dynamic_adv_scale -= 0.10
+            dynamic_split_scale -= 0.15
+            dynamic_limit_buffer_scale += 0.20
+            dynamic_force_min_slices = max(dynamic_force_min_slices, 2)
+        if is_entry and not day_turnaround_allowed:
+            dynamic_adv_scale -= 0.05
+            dynamic_split_scale -= 0.05
+            dynamic_limit_buffer_scale += 0.08
+        if order_adv_pct >= 0.02:
+            dynamic_adv_scale -= 0.15
+            dynamic_split_scale -= 0.15
+            dynamic_limit_buffer_scale += 0.10
+            dynamic_force_min_slices += 1
+        elif order_adv_pct >= 0.01:
+            dynamic_adv_scale -= 0.08
+            dynamic_split_scale -= 0.08
+            dynamic_limit_buffer_scale += 0.05
+        if liquidity_bucket == "THIN":
+            dynamic_force_min_slices = max(dynamic_force_min_slices, 2)
+        elif liquidity_bucket == "STRESSED":
+            dynamic_force_min_slices = max(dynamic_force_min_slices, 3)
+
+        dynamic_adv_scale = max(0.20, min(1.05, float(dynamic_adv_scale)))
+        dynamic_split_scale = max(0.15, min(1.05, float(dynamic_split_scale)))
+        dynamic_limit_buffer_scale = max(1.0, float(dynamic_limit_buffer_scale))
+        dynamic_force_min_slices = int(min(max(1, int(self.execution_cfg.max_slices_per_symbol or 1)), dynamic_force_min_slices))
+        dynamic_prefer_limit_order = bool(
+            odd_lot_discount_risk
+            or price_limit_pct > 0.0
+            or liquidity_bucket in {"THIN", "STRESSED"}
+        )
+        base_min_expected_edge_bps = max(0.0, float(self.execution_cfg.min_expected_edge_bps or 0.0))
+        base_edge_cost_buffer_bps = max(0.0, float(self.execution_cfg.edge_cost_buffer_bps or 0.0))
+        dynamic_edge_floor_bps = float(
+            base_min_expected_edge_bps + session_edge_add + liquidity_edge_add + size_edge_add + market_rule_edge_add
+        )
+        dynamic_edge_buffer_bps = float(
+            base_edge_cost_buffer_bps + liquidity_buffer_add + size_buffer_add + market_rule_buffer_add
+        )
+        return {
+            "dynamic_liquidity_bucket": liquidity_bucket,
+            "dynamic_order_adv_pct": float(order_adv_pct),
+            "market_rule_buy_lot_multiple": int(buy_lot_multiple),
+            "market_rule_odd_lot_discount_risk": bool(odd_lot_discount_risk),
+            "market_rule_day_turnaround_allowed": bool(day_turnaround_allowed),
+            "market_rule_price_limit_pct": float(price_limit_pct),
+            "market_rule_research_only": bool(self.market_structure.research_only),
+            "dynamic_market_rule_notes": ",".join(market_rule_notes),
+            "dynamic_edge_floor_bps": float(dynamic_edge_floor_bps),
+            "dynamic_edge_buffer_bps": float(dynamic_edge_buffer_bps),
+            "dynamic_adv_scale": float(dynamic_adv_scale),
+            "dynamic_split_trigger_scale": float(dynamic_split_scale),
+            "dynamic_limit_buffer_scale": float(dynamic_limit_buffer_scale),
+            "dynamic_force_min_slices": int(dynamic_force_min_slices),
+            "dynamic_prefer_limit_order": bool(dynamic_prefer_limit_order),
+            "dynamic_session_edge_add_bps": float(session_edge_add),
+            "dynamic_liquidity_edge_add_bps": float(liquidity_edge_add),
+            "dynamic_market_rule_edge_add_bps": float(market_rule_edge_add),
+            "dynamic_size_edge_add_bps": float(size_edge_add),
+            "dynamic_liquidity_buffer_add_bps": float(liquidity_buffer_add),
+            "dynamic_market_rule_buffer_add_bps": float(market_rule_buffer_add),
+            "dynamic_size_buffer_add_bps": float(size_buffer_add),
+        }
+
+    def _apply_market_rule_gates(
+        self,
+        order_rows: List[Dict[str, Any]],
+    ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        session = self._current_execution_session_profile()
+        filtered: List[Dict[str, Any]] = []
+        blocked: List[Dict[str, Any]] = []
+        for row in order_rows:
+            enriched_row = dict(row)
+            enriched_row.update(self._dynamic_execution_context(enriched_row, session=session))
+
+            if self.market_structure.research_only and (self._is_long_entry_order(enriched_row) or self._is_short_entry_order(enriched_row)):
+                blocked_row = dict(enriched_row)
+                blocked_row["status"] = "BLOCKED_MARKET_RULE"
+                blocked_row["market_rule_status"] = "BLOCKED_RESEARCH_ONLY"
+                blocked_row["market_rule_reason"] = "当前市场仍是 research-only，执行链只保留研究输出。"
+                blocked_row["reason"] = f"{str(row.get('reason') or '')}|market_rule_research_only".strip("|")
+                annotate_execution_user_explanation(blocked_row)
+                blocked.append(blocked_row)
+                continue
+
+            buy_lot_multiple = int(enriched_row.get("market_rule_buy_lot_multiple", 1) or 1)
+            if str(enriched_row.get("action") or "").upper() == "BUY" and not self._qty_is_multiple(enriched_row.get("delta_qty"), buy_lot_multiple):
+                blocked_row = dict(enriched_row)
+                blocked_row["status"] = "BLOCKED_MARKET_RULE"
+                blocked_row["market_rule_status"] = "BLOCKED_BOARD_LOT"
+                blocked_row["market_rule_reason"] = (
+                    f"买入数量 {float(_to_float(enriched_row.get('delta_qty'), 0.0)):.4f} 不是 board lot {buy_lot_multiple} 的整数倍。"
+                )
+                blocked_row["reason"] = f"{str(row.get('reason') or '')}|market_rule_board_lot".strip("|")
+                annotate_execution_user_explanation(blocked_row)
+                blocked.append(blocked_row)
+                continue
+
+            if self._is_short_entry_order(enriched_row) and not bool(enriched_row.get("market_rule_day_turnaround_allowed", True)):
+                blocked_row = dict(enriched_row)
+                blocked_row["status"] = "BLOCKED_MARKET_RULE"
+                blocked_row["market_rule_status"] = "BLOCKED_SHORT_ENTRY"
+                blocked_row["market_rule_reason"] = "当前市场规则不支持这类自动 short entry / same-day turnaround 行为。"
+                blocked_row["reason"] = f"{str(row.get('reason') or '')}|market_rule_short_entry".strip("|")
+                annotate_execution_user_explanation(blocked_row)
+                blocked.append(blocked_row)
+                continue
+
+            enriched_row["market_rule_status"] = "RULES_OK"
+            enriched_row["market_rule_reason"] = (
+                f"liquidity={str(enriched_row.get('dynamic_liquidity_bucket') or '-')} "
+                f"adv={float(enriched_row.get('dynamic_order_adv_pct', 0.0) or 0.0):.3f} "
+                f"notes={str(enriched_row.get('dynamic_market_rule_notes') or '-')}"
+            )
+            filtered.append(enriched_row)
+        return filtered, blocked
+
     def _split_ratio_weights(self, slice_count: int, session: ExecutionSessionProfile) -> List[float]:
         count = max(1, int(slice_count))
         if count == 1:
@@ -552,6 +769,10 @@ class InvestmentExecutionEngine:
             "expected_edge_score": float(row.get("expected_edge_score", 0.0) or 0.0),
             "expected_edge_bps": float(row.get("expected_edge_bps", 0.0) or 0.0),
             "edge_gate_threshold_bps": float(row.get("edge_gate_threshold_bps", 0.0) or 0.0),
+            "edge_gate_base_min_expected_edge_bps": float(row.get("edge_gate_base_min_expected_edge_bps", 0.0) or 0.0),
+            "edge_gate_dynamic_floor_bps": float(row.get("edge_gate_dynamic_floor_bps", 0.0) or 0.0),
+            "edge_gate_base_buffer_bps": float(row.get("edge_gate_base_buffer_bps", 0.0) or 0.0),
+            "edge_gate_dynamic_buffer_bps": float(row.get("edge_gate_dynamic_buffer_bps", 0.0) or 0.0),
             "expected_cost_bps": float(row.get("expected_cost_bps", 0.0) or 0.0),
             "spread_proxy_bps": float(row.get("spread_proxy_bps", 0.0) or 0.0),
             "slippage_proxy_bps": float(row.get("slippage_proxy_bps", 0.0) or 0.0),
@@ -566,6 +787,20 @@ class InvestmentExecutionEngine:
             "session_bucket": str(row.get("session_bucket", "") or ""),
             "session_label": str(row.get("session_label", "") or ""),
             "execution_aggressiveness": float(row.get("execution_aggressiveness", 0.0) or 0.0),
+            "dynamic_liquidity_bucket": str(row.get("dynamic_liquidity_bucket", "") or ""),
+            "dynamic_order_adv_pct": float(row.get("dynamic_order_adv_pct", 0.0) or 0.0),
+            "dynamic_market_rule_notes": str(row.get("dynamic_market_rule_notes", "") or ""),
+            "dynamic_adv_scale": float(row.get("dynamic_adv_scale", 0.0) or 0.0),
+            "dynamic_split_trigger_scale": float(row.get("dynamic_split_trigger_scale", 0.0) or 0.0),
+            "dynamic_limit_buffer_scale": float(row.get("dynamic_limit_buffer_scale", 0.0) or 0.0),
+            "dynamic_force_min_slices": int(row.get("dynamic_force_min_slices", 1) or 1),
+            "dynamic_prefer_limit_order": bool(row.get("dynamic_prefer_limit_order", False)),
+            "market_rule_status": str(row.get("market_rule_status", "") or ""),
+            "market_rule_reason": str(row.get("market_rule_reason", "") or ""),
+            "market_rule_buy_lot_multiple": int(row.get("market_rule_buy_lot_multiple", 1) or 1),
+            "market_rule_price_limit_pct": float(row.get("market_rule_price_limit_pct", 0.0) or 0.0),
+            "market_rule_day_turnaround_allowed": bool(row.get("market_rule_day_turnaround_allowed", True)),
+            "market_rule_research_only": bool(row.get("market_rule_research_only", False)),
             "adv_participation_pct": float(row.get("adv_participation_pct", 0.0) or 0.0),
             "adv_cap_order_value": float(row.get("adv_cap_order_value", 0.0) or 0.0),
             "adv_capped": bool(row.get("adv_capped", False)),
@@ -737,10 +972,23 @@ class InvestmentExecutionEngine:
                 blocked.append(blocked_row)
                 continue
 
-            lot_size = max(1, int(_to_float(row.get("lot_size"), self.execution_cfg.lot_size)))
+            lot_size = max(
+                1,
+                int(
+                    _to_float(
+                        row.get("market_rule_buy_lot_multiple"),
+                        _to_float(row.get("lot_size"), self.execution_cfg.lot_size),
+                    )
+                ),
+            )
             adv_value = max(0.0, _to_float(row.get("avg_daily_dollar_volume"), 0.0))
             adv_cap_order_value = 0.0
             adv_participation_pct = 0.0
+            dynamic_adv_scale = max(0.20, _to_float(row.get("dynamic_adv_scale"), 1.0))
+            dynamic_split_trigger_scale = max(0.15, _to_float(row.get("dynamic_split_trigger_scale"), 1.0))
+            dynamic_limit_buffer_scale = max(1.0, _to_float(row.get("dynamic_limit_buffer_scale"), 1.0))
+            dynamic_force_min_slices = max(1, int(_to_float(row.get("dynamic_force_min_slices"), 1)))
+            dynamic_prefer_limit_order = bool(row.get("dynamic_prefer_limit_order", False))
             hotspot_adv_scale = max(0.10, _to_float(row.get("hotspot_adv_scale"), 1.0))
             hotspot_split_trigger_scale = max(0.10, _to_float(row.get("hotspot_split_trigger_scale"), 1.0))
             hotspot_limit_buffer_scale = max(1.0, _to_float(row.get("hotspot_limit_buffer_scale"), 1.0))
@@ -756,6 +1004,7 @@ class InvestmentExecutionEngine:
                     adv_value
                     * max(0.0, _to_float(self.execution_cfg.adv_max_participation_pct, 0.05))
                     * max(0.10, float(session.participation_scale))
+                    * float(dynamic_adv_scale)
                     * min(float(hotspot_adv_scale), float(risk_alert_adv_scale))
                 )
                 adv_participation_pct = float(abs(_to_float(row.get("order_value"), 0.0)) / max(adv_value, 1e-9))
@@ -792,6 +1041,7 @@ class InvestmentExecutionEngine:
                     adv_value
                     * max(0.0, _to_float(self.execution_cfg.adv_split_trigger_pct, 0.02))
                     * max(0.10, float(session.participation_scale))
+                    * float(dynamic_split_trigger_scale)
                     * min(float(hotspot_split_trigger_scale), float(risk_alert_split_trigger_scale))
                 )
             slice_count = 1
@@ -800,6 +1050,7 @@ class InvestmentExecutionEngine:
                     max(2, int((capped_order_value / max(split_trigger_value, 1e-9)) + 0.9999)),
                     max(1, int(self.execution_cfg.max_slices_per_symbol or 1)),
                 ))
+            slice_count = int(min(max(1, int(self.execution_cfg.max_slices_per_symbol or 1)), max(slice_count, dynamic_force_min_slices)))
             if bool(row.get("hotspot_penalty_applied", False)):
                 slice_count = int(min(max(1, int(self.execution_cfg.max_slices_per_symbol or 1)), max(slice_count, hotspot_force_min_slices)))
             if bool(row.get("risk_alert_applied", False)):
@@ -811,11 +1062,13 @@ class InvestmentExecutionEngine:
             base_buffer_bps = (
                 float(self.execution_cfg.limit_price_buffer_bps or 0.0)
                 * float(session.limit_buffer_scale)
+                * float(dynamic_limit_buffer_scale)
                 * max(float(hotspot_limit_buffer_scale), float(risk_alert_limit_buffer_scale))
             )
             execution_order_type = str(self.execution_cfg.order_type or "MKT").upper()
             if (
-                hotspot_force_limit_order
+                dynamic_prefer_limit_order
+                or hotspot_force_limit_order
                 or risk_alert_force_limit_order
                 or (slice_count > 1 and bool(self.execution_cfg.prefer_limit_orders_for_sliced_execution))
             ):
@@ -901,6 +1154,8 @@ class InvestmentExecutionEngine:
                 "risk_alert_reason": str(row.get("risk_alert_reason") or ""),
                 "hotspot_penalty_status": str(row.get("hotspot_penalty_status") or ""),
                 "hotspot_penalty_reason": str(row.get("hotspot_penalty_reason") or ""),
+                "market_rule_status": str(row.get("market_rule_status") or ""),
+                "market_rule_reason": str(row.get("market_rule_reason") or ""),
             },
         )
 
@@ -1117,8 +1372,8 @@ class InvestmentExecutionEngine:
 
         filtered: List[Dict[str, Any]] = []
         blocked: List[Dict[str, Any]] = []
-        min_expected_edge_bps = max(0.0, float(self.execution_cfg.min_expected_edge_bps or 0.0))
-        edge_cost_buffer_bps = max(0.0, float(self.execution_cfg.edge_cost_buffer_bps or 0.0))
+        base_min_expected_edge_bps = max(0.0, float(self.execution_cfg.min_expected_edge_bps or 0.0))
+        base_edge_cost_buffer_bps = max(0.0, float(self.execution_cfg.edge_cost_buffer_bps or 0.0))
         edge_score_to_bps_scale = max(1e-6, float(self.execution_cfg.edge_score_to_bps_scale or 140.0))
 
         for row in order_rows:
@@ -1150,16 +1405,28 @@ class InvestmentExecutionEngine:
                 0.0,
                 _to_float(row.get("expected_edge_bps"), expected_edge_score * edge_score_to_bps_scale),
             )
-            required_edge_bps = max(min_expected_edge_bps, expected_cost_bps + edge_cost_buffer_bps)
+            dynamic_edge_floor_bps = max(
+                base_min_expected_edge_bps,
+                _to_float(row.get("dynamic_edge_floor_bps"), base_min_expected_edge_bps),
+            )
+            dynamic_edge_buffer_bps = max(
+                base_edge_cost_buffer_bps,
+                _to_float(row.get("dynamic_edge_buffer_bps"), base_edge_cost_buffer_bps),
+            )
+            required_edge_bps = max(dynamic_edge_floor_bps, expected_cost_bps + dynamic_edge_buffer_bps)
 
             row["expected_edge_threshold"] = float(expected_edge_threshold)
             row["expected_edge_score"] = float(expected_edge_score)
             row["expected_edge_bps"] = float(expected_edge_bps)
+            row["edge_gate_base_min_expected_edge_bps"] = float(base_min_expected_edge_bps)
+            row["edge_gate_dynamic_floor_bps"] = float(dynamic_edge_floor_bps)
+            row["edge_gate_base_buffer_bps"] = float(base_edge_cost_buffer_bps)
+            row["edge_gate_dynamic_buffer_bps"] = float(dynamic_edge_buffer_bps)
             row["edge_gate_threshold_bps"] = float(required_edge_bps)
             row["edge_gate_status"] = "PASS"
             row["edge_gate_reason"] = (
                 f"expected_edge={expected_edge_bps:.1f}bps >= required={required_edge_bps:.1f}bps "
-                f"(cost={expected_cost_bps:.1f} + buffer={edge_cost_buffer_bps:.1f})"
+                f"(floor={dynamic_edge_floor_bps:.1f}; cost={expected_cost_bps:.1f} + buffer={dynamic_edge_buffer_bps:.1f})"
             )
             if expected_edge_bps + 1e-9 >= required_edge_bps:
                 annotate_execution_user_explanation(row)
@@ -1171,7 +1438,7 @@ class InvestmentExecutionEngine:
             blocked_row["edge_gate_status"] = "BLOCKED"
             blocked_row["edge_gate_reason"] = (
                 f"expected_edge={expected_edge_bps:.1f}bps < required={required_edge_bps:.1f}bps "
-                f"(cost={expected_cost_bps:.1f} + buffer={edge_cost_buffer_bps:.1f})"
+                f"(floor={dynamic_edge_floor_bps:.1f}; cost={expected_cost_bps:.1f} + buffer={dynamic_edge_buffer_bps:.1f})"
             )
             blocked_row["reason"] = f"{str(row.get('reason') or '')}|edge_gate".strip("|")
             annotate_execution_user_explanation(blocked_row)
@@ -1583,6 +1850,7 @@ class InvestmentExecutionEngine:
             f"loss={float(summary.get('risk_stress_worst_loss', 0.0) or 0.0):.3f}",
             f"- Order count: {int(summary.get('order_count', 0) or 0)}",
             f"- Blocked total: {int(summary.get('blocked_order_count', 0) or 0)}",
+            f"- Blocked by market rule: {int(summary.get('blocked_market_rule_order_count', 0) or 0)}",
             f"- Blocked by edge: {int(summary.get('blocked_edge_order_count', 0) or 0)}",
             f"- Blocked by quality: {int(summary.get('blocked_quality_order_count', 0) or 0)}",
             f"- Blocked by opportunity: {int(summary.get('blocked_opportunity_order_count', 0) or 0)}",
@@ -1674,6 +1942,10 @@ class InvestmentExecutionEngine:
                 hotspot_reason = str(intent.get("metadata", {}).get("hotspot_penalty_reason") or row.get("hotspot_penalty_reason") or "").strip()
                 if hotspot_status or hotspot_reason:
                     lines.append(f"  hotspot: {hotspot_status or 'N/A'} {hotspot_reason}".rstrip())
+                market_rule_status = str(intent.get("metadata", {}).get("market_rule_status") or row.get("market_rule_status") or "").strip()
+                market_rule_reason = str(intent.get("metadata", {}).get("market_rule_reason") or row.get("market_rule_reason") or "").strip()
+                if market_rule_status or market_rule_reason:
+                    lines.append(f"  market_rule: {market_rule_status or 'N/A'} {market_rule_reason}".rstrip())
                 if opp_status or opp_reason:
                     lines.append(f"  opportunity: {opp_status or 'N/A'} {opp_reason}".rstrip())
         path.write_text("\n".join(lines), encoding="utf-8")
@@ -1691,7 +1963,8 @@ class InvestmentExecutionEngine:
             for row in candidates
             if str(row.get("symbol") or "").strip()
         }
-        target_weights, risk_overlay = build_target_allocations(candidates, plans, cfg=self.paper_cfg, return_details=True)
+        effective_paper_cfg = apply_active_market_risk_overrides(self.paper_cfg, strategy_payload)
+        target_weights, risk_overlay = build_target_allocations(candidates, plans, cfg=effective_paper_cfg, return_details=True)
         account = self._account_snapshot()
         broker_equity = float(account.get("netliq", 0.0) or 0.0)
         broker_cash = float(account.get("cash", 0.0) or 0.0)
@@ -1726,7 +1999,8 @@ class InvestmentExecutionEngine:
                 lot_size_map=lot_size_map,
                 priority_context_map=priority_context_map,
             )
-            edge_allowed, edge_blocked = self._apply_expected_edge_gates(raw_order_rows)
+            market_rule_allowed, market_rule_blocked = self._apply_market_rule_gates(raw_order_rows)
+            edge_allowed, edge_blocked = self._apply_expected_edge_gates(market_rule_allowed)
             quality_allowed, quality_blocked = self._apply_quality_gates(report_path, edge_allowed)
             opportunity_allowed, opportunity_blocked = self._apply_opportunity_gates(report_path, quality_allowed)
             shadow_review_allowed, shadow_review_blocked = self._apply_shadow_ml_review_gates(report_path, opportunity_allowed)
@@ -1762,7 +2036,8 @@ class InvestmentExecutionEngine:
                 + list(risk_alert_manual_review_blocked)
             )
             blocked_rows = (
-                list(edge_blocked)
+                list(market_rule_blocked)
+                + list(edge_blocked)
                 + list(quality_blocked)
                 + list(opportunity_blocked)
                 + list(risk_alert_deferred_blocked)
@@ -1840,6 +2115,7 @@ class InvestmentExecutionEngine:
                             "target_weights": target_weights,
                             "risk_overlay": risk_overlay,
                             "blocked_order_count": int(len(blocked_rows)),
+                            "blocked_market_rule_order_count": int(len(market_rule_blocked)),
                             "blocked_edge_order_count": int(len(edge_blocked)),
                             "blocked_manual_review_order_count": int(len(manual_review_blocked)),
                             "blocked_shadow_review_order_count": int(len(shadow_review_blocked)),
@@ -1978,10 +2254,24 @@ class InvestmentExecutionEngine:
                 "risk_base_net_exposure": float(risk_overlay.get("base_net_exposure", 0.0) or 0.0),
                 "risk_base_gross_exposure": float(risk_overlay.get("base_gross_exposure", 0.0) or 0.0),
                 "risk_base_short_exposure": float(risk_overlay.get("base_short_exposure", 0.0) or 0.0),
+                "risk_market_profile_budget_net_exposure": float(risk_overlay.get("market_profile_net_exposure_budget", 0.0) or 0.0),
+                "risk_market_profile_budget_gross_exposure": float(risk_overlay.get("market_profile_gross_exposure_budget", 0.0) or 0.0),
+                "risk_market_profile_budget_short_exposure": float(risk_overlay.get("market_profile_short_exposure_budget", 0.0) or 0.0),
                 "risk_dynamic_scale": float(risk_overlay.get("dynamic_scale", 1.0) or 1.0),
                 "risk_dynamic_net_exposure": float(risk_overlay.get("dynamic_net_exposure", 0.0) or 0.0),
                 "risk_dynamic_gross_exposure": float(risk_overlay.get("dynamic_gross_exposure", 0.0) or 0.0),
                 "risk_dynamic_short_exposure": float(risk_overlay.get("dynamic_short_exposure", 0.0) or 0.0),
+                "risk_market_profile_budget_net_tightening": float(risk_overlay.get("market_profile_budget_tightening_net", 0.0) or 0.0),
+                "risk_market_profile_budget_gross_tightening": float(risk_overlay.get("market_profile_budget_tightening_gross", 0.0) or 0.0),
+                "risk_throttle_net_tightening": float(risk_overlay.get("throttle_net_tightening", 0.0) or 0.0),
+                "risk_throttle_gross_tightening": float(risk_overlay.get("throttle_gross_tightening", 0.0) or 0.0),
+                "risk_recovery_active": bool(risk_overlay.get("recovery_active", False)),
+                "risk_recovery_bonus_scale": float(risk_overlay.get("recovery_bonus_scale", 0.0) or 0.0),
+                "risk_recovery_net_credit": float(risk_overlay.get("recovery_net_credit", 0.0) or 0.0),
+                "risk_recovery_gross_credit": float(risk_overlay.get("recovery_gross_credit", 0.0) or 0.0),
+                "risk_dominant_throttle_layer": str(risk_overlay.get("dominant_throttle_layer", "") or ""),
+                "risk_dominant_throttle_layer_label": str(risk_overlay.get("dominant_throttle_layer_label", "") or ""),
+                "risk_layered_throttle_text": str(risk_overlay.get("layered_throttle_text", "") or ""),
                 "risk_net_exposure_tightening": float(
                     max(
                         0.0,
@@ -2039,6 +2329,7 @@ class InvestmentExecutionEngine:
                 "risk_correlation_reduced_symbols": list(risk_overlay.get("correlation_reduced_symbols", []) or []),
                 "order_count": int(len(order_rows)),
                 "blocked_order_count": int(len(blocked_rows)),
+                "blocked_market_rule_order_count": int(len(market_rule_blocked)),
                 "blocked_edge_order_count": int(len(edge_blocked)),
                 "blocked_quality_order_count": int(len(quality_blocked)),
                 "blocked_opportunity_order_count": int(len(opportunity_blocked)),
@@ -2100,6 +2391,7 @@ class InvestmentExecutionEngine:
                         "submitted": bool(submit),
                         "order_count": int(len(order_rows)),
                         "blocked_order_count": int(len(blocked_rows)),
+                        "blocked_market_rule_order_count": int(len(market_rule_blocked)),
                         "execution_session_bucket": str(summary.get("execution_session_bucket") or ""),
                         "execution_style": str(summary.get("execution_style") or ""),
                         "strategy_effective_controls_applied": bool(summary.get("strategy_effective_controls_applied", False)),
