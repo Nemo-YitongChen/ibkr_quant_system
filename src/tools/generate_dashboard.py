@@ -84,6 +84,8 @@ DASHBOARD_TRANSLATIONS_EN.update({
     "live 自动提交已开启": "Live auto submit is enabled.",
     "live 只读模式，仅显示真实账户数据与分析": "Live read-only mode; show real-account data and analysis only.",
     "本地模拟账本 + 快照回标，用于无下单闭环、阈值复盘与策略升级。": "Local simulated ledger plus snapshot labeling for closed-loop review without order submission, threshold review, and strategy upgrades.",
+    "补丁治理概览": "Patch Governance Overview",
+    "当前还没有可展示的补丁审批历史。": "No patch review history is available yet.",
 })
 
 DASHBOARD_FRAGMENT_TRANSLATIONS_EN.update({
@@ -1515,6 +1517,55 @@ def _load_recent_feedback_automation_history_rows(
     return out
 
 
+def _patch_kind_label(kind: str) -> str:
+    raw = str(kind or "").strip().lower()
+    if raw == "market_profile":
+        return "市场档案"
+    if raw == "calibration":
+        return "校准补丁"
+    return raw or "-"
+
+
+def _load_recent_patch_review_history_rows(
+    db_path: Path,
+    *,
+    market: str,
+    portfolio_id: str,
+    limit: int = 48,
+) -> List[Dict[str, Any]]:
+    if not db_path.exists():
+        return []
+    market_code = resolve_market_code(market)
+    try:
+        rows = Storage(str(db_path)).get_recent_investment_patch_review_history(
+            market_code,
+            portfolio_id=portfolio_id,
+            limit=max(1, int(limit)),
+        )
+    except Exception:
+        return []
+    out: List[Dict[str, Any]] = []
+    for raw in rows:
+        row = dict(raw)
+        details_json = dict(row.get("details_json", {}) or {})
+        primary_item = dict(details_json.get("primary_item", {}) or {})
+        field = str(primary_item.get("field") or "").strip()
+        config_path = str(primary_item.get("config_path") or row.get("config_path") or "").strip()
+        if not field and config_path:
+            field = config_path.split(".")[-1]
+        review_evidence = dict(details_json.get("review_evidence", {}) or {})
+        row["patch_kind_label"] = _patch_kind_label(str(row.get("patch_kind") or ""))
+        row["primary_field"] = field
+        row["primary_config_path"] = config_path
+        row["scope_label"] = str(primary_item.get("scope_label") or primary_item.get("scope") or row.get("scope") or "")
+        row["summary"] = str(details_json.get("summary") or "")
+        row["primary_summary"] = str(details_json.get("primary_summary") or "")
+        row["manual_apply_summary"] = str(details_json.get("manual_apply_summary") or "")
+        row["review_evidence_summary"] = str(review_evidence.get("summary") or "")
+        out.append(row)
+    return out
+
+
 def _load_health_summary(db_path: Path, *, portfolio_id: str, hours: int = 24) -> Dict[str, Any]:
     if not db_path.exists():
         return {}
@@ -2714,6 +2765,12 @@ def _build_report_card(
         portfolio_id=portfolio_id,
         limit=12,
     )
+    patch_review_history_rows = _load_recent_patch_review_history_rows(
+        dashboard_db,
+        market=market_code,
+        portfolio_id=portfolio_id,
+        limit=48,
+    )
     paper_risk_history_rows = _load_recent_risk_history_rows(
         dashboard_db,
         market=market_code,
@@ -2807,6 +2864,7 @@ def _build_report_card(
         "shadow_review_recent_rows": shadow_review_recent_rows[:8],
         "shadow_review_repeat_rows": shadow_review_repeat_rows,
         "feedback_automation_history_rows": feedback_automation_history_rows,
+        "patch_review_history_rows": patch_review_history_rows,
         "paper_risk_history_rows": paper_risk_history_rows,
         "execution_risk_history_rows": execution_risk_history_rows,
         "outcome_summary_rows": outcome_summary_rows,
@@ -3473,6 +3531,153 @@ def _build_feedback_automation_history_overview(cards: List[Dict[str, Any]]) -> 
         )
     )
     return rows[:18]
+
+
+def _week_start_to_date(text: str) -> datetime | None:
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def _build_patch_review_governance_overview(cards: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    cycle_rows: List[Dict[str, Any]] = []
+    for card in cards:
+        grouped: Dict[tuple[str, str], List[Dict[str, Any]]] = {}
+        for raw in list(card.get("patch_review_history_rows", []) or []):
+            row = dict(raw)
+            patch_kind = str(row.get("patch_kind", "") or "").strip().lower()
+            if not patch_kind:
+                continue
+            signature = str(row.get("feedback_signature", "") or "").strip()
+            if not signature:
+                signature = (
+                    f"{patch_kind}|"
+                    f"{str(row.get('primary_config_path', '') or row.get('config_path', '') or '')}|"
+                    f"{str(row.get('ts', '') or '')}"
+                )
+            grouped.setdefault((patch_kind, signature), []).append(row)
+        for (_patch_kind, _signature), history_rows in grouped.items():
+            history_rows = sorted(
+                history_rows,
+                key=lambda row: (
+                    str(row.get("week_start", "") or ""),
+                    str(row.get("ts", "") or ""),
+                    str(row.get("review_status", "") or ""),
+                ),
+            )
+            first = dict(history_rows[0])
+            latest = dict(history_rows[-1])
+            applied_row = next(
+                (dict(row) for row in history_rows if str(row.get("review_status", "") or "").strip().upper() == "APPLIED"),
+                {},
+            )
+            start_week = _week_start_to_date(str(first.get("week_start", "") or ""))
+            applied_week = _week_start_to_date(str(applied_row.get("week_start", "") or ""))
+            review_to_apply_weeks = None
+            if start_week is not None and applied_week is not None:
+                review_to_apply_weeks = round(max(0.0, (applied_week - start_week).days / 7.0), 2)
+            field = str(latest.get("primary_field", "") or first.get("primary_field", "") or "").strip()
+            config_path = str(latest.get("primary_config_path", "") or first.get("primary_config_path", "") or "").strip()
+            cycle_rows.append(
+                {
+                    "market": str(card.get("market", "") or ""),
+                    "watchlist": str(card.get("watchlist", "") or ""),
+                    "portfolio_id": str(card.get("portfolio_id", "") or ""),
+                    "patch_kind": str(latest.get("patch_kind", "") or first.get("patch_kind", "") or ""),
+                    "patch_kind_label": str(latest.get("patch_kind_label", "") or first.get("patch_kind_label", "") or "-"),
+                    "field": field or (config_path.split(".")[-1] if config_path else "-"),
+                    "scope_label": str(latest.get("scope_label", "") or first.get("scope_label", "") or "-"),
+                    "latest_week": str(latest.get("week_label", "") or "-"),
+                    "latest_ts": str(latest.get("ts", "") or ""),
+                    "latest_status_label": str(latest.get("review_status_label", "") or latest.get("review_status") or "-"),
+                    "approved": any(str(row.get("review_status", "") or "").strip().upper() == "APPROVED" for row in history_rows),
+                    "rejected": any(str(row.get("review_status", "") or "").strip().upper() == "REJECTED" for row in history_rows),
+                    "applied": bool(applied_row),
+                    "review_to_apply_weeks": review_to_apply_weeks,
+                }
+            )
+    grouped_rows: Dict[tuple[str, str, str, str], Dict[str, Any]] = {}
+    for cycle in cycle_rows:
+        key = (
+            str(cycle.get("market", "") or ""),
+            str(cycle.get("patch_kind", "") or ""),
+            str(cycle.get("field", "") or ""),
+            str(cycle.get("scope_label", "") or ""),
+        )
+        agg = grouped_rows.get(key)
+        if agg is None:
+            agg = {
+                "market": str(cycle.get("market", "") or ""),
+                "patch_kind_label": str(cycle.get("patch_kind_label", "") or "-"),
+                "field": str(cycle.get("field", "") or "-"),
+                "scope_label": str(cycle.get("scope_label", "") or "-"),
+                "review_cycle_count": 0,
+                "approved_count": 0,
+                "rejected_count": 0,
+                "applied_count": 0,
+                "review_to_apply_weeks_values": [],
+                "latest_ts": "",
+                "latest_week": "-",
+                "latest_status_label": "-",
+                "examples": [],
+            }
+            grouped_rows[key] = agg
+        agg["review_cycle_count"] += 1
+        if bool(cycle.get("approved", False)):
+            agg["approved_count"] += 1
+        if bool(cycle.get("rejected", False)):
+            agg["rejected_count"] += 1
+        if bool(cycle.get("applied", False)):
+            agg["applied_count"] += 1
+        if cycle.get("review_to_apply_weeks") is not None:
+            agg["review_to_apply_weeks_values"].append(float(cycle["review_to_apply_weeks"]))
+        latest_ts = str(cycle.get("latest_ts", "") or "")
+        if latest_ts >= str(agg.get("latest_ts", "") or ""):
+            agg["latest_ts"] = latest_ts
+            agg["latest_week"] = str(cycle.get("latest_week", "") or "-")
+            agg["latest_status_label"] = str(cycle.get("latest_status_label", "") or "-")
+        example = f"{str(cycle.get('watchlist', '') or cycle.get('portfolio_id', '') or '-')}:{str(cycle.get('latest_status_label', '') or '-')}"
+        if example not in agg["examples"]:
+            agg["examples"].append(example)
+    out: List[Dict[str, Any]] = []
+    for agg in grouped_rows.values():
+        review_cycle_count = max(1, int(agg.get("review_cycle_count", 0) or 0))
+        apply_weeks_values = list(agg.get("review_to_apply_weeks_values", []) or [])
+        out.append(
+            {
+                "market": str(agg.get("market", "") or ""),
+                "patch_kind_label": str(agg.get("patch_kind_label", "") or "-"),
+                "field": str(agg.get("field", "") or "-"),
+                "scope_label": str(agg.get("scope_label", "") or "-"),
+                "review_cycle_count": review_cycle_count,
+                "approved_count": int(agg.get("approved_count", 0) or 0),
+                "rejected_count": int(agg.get("rejected_count", 0) or 0),
+                "applied_count": int(agg.get("applied_count", 0) or 0),
+                "approval_rate": round(float(agg.get("approved_count", 0) or 0) / review_cycle_count, 4),
+                "rejection_rate": round(float(agg.get("rejected_count", 0) or 0) / review_cycle_count, 4),
+                "apply_rate": round(float(agg.get("applied_count", 0) or 0) / review_cycle_count, 4),
+                "avg_review_to_apply_weeks": (
+                    round(sum(apply_weeks_values) / len(apply_weeks_values), 2) if apply_weeks_values else None
+                ),
+                "latest_week": str(agg.get("latest_week", "") or "-"),
+                "latest_status_label": str(agg.get("latest_status_label", "") or "-"),
+                "examples": " / ".join(list(agg.get("examples", []) or [])[:3]) or "-",
+            }
+        )
+    out.sort(
+        key=lambda row: (
+            -int(row.get("review_cycle_count", 0) or 0),
+            -int(row.get("applied_count", 0) or 0),
+            str(row.get("market", "") or ""),
+            str(row.get("patch_kind_label", "") or ""),
+            str(row.get("field", "") or ""),
+        )
+    )
+    return out[:18]
 
 
 def _feedback_stuck_bucket(current_state: str, current_mode: str, *, same_state_weeks: int) -> str:
@@ -4435,6 +4640,8 @@ def _build_focus_actions(cards: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     ranked = sorted(
         list(cards),
         key=lambda row: (
+            0 if bool(dict(row.get("dashboard_control", {}).get("portfolio", {}) or {}).get("weekly_feedback_patch_governance_present", False)) else 1,
+            int(dict(row.get("dashboard_control", {}).get("portfolio", {}) or {}).get("weekly_feedback_patch_governance_priority", 99) or 99),
             0 if bool(row.get("exchange_open", False)) else 1,
             int(row.get("action_priority", 99) or 99),
             int(row.get("priority_order", 999) or 999),
@@ -4444,7 +4651,10 @@ def _build_focus_actions(cards: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     )
     focus: List[Dict[str, Any]] = []
     for row in ranked:
-        action = str(row.get("recommended_action", "") or "").strip()
+        control_portfolio = dict(row.get("dashboard_control", {}).get("portfolio", {}) or {})
+        governance_action = str(control_portfolio.get("weekly_feedback_patch_governance_action_label") or "").strip()
+        governance_detail = str(control_portfolio.get("weekly_feedback_patch_governance_note") or "").strip()
+        action = governance_action or str(row.get("recommended_action", "") or "").strip()
         if not action:
             continue
         focus.append(
@@ -4454,8 +4664,12 @@ def _build_focus_actions(cards: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 "exchange_open": bool(row.get("exchange_open", False)),
                 "mode": row.get("mode", ""),
                 "action": action,
-                "detail": str(row.get("recommended_detail", "") or "-"),
-                "priority_order": int(row.get("priority_order", 0) or 0),
+                "detail": governance_detail or str(row.get("recommended_detail", "") or "-"),
+                "priority_order": (
+                    int(control_portfolio.get("weekly_feedback_patch_governance_priority", 0) or 0)
+                    if governance_action
+                    else int(row.get("priority_order", 0) or 0)
+                ),
             }
         )
         if len(focus) >= 3:
@@ -5341,6 +5555,11 @@ def _render_card(card: Dict[str, Any]) -> str:
     market_profile_review_status_summary = str(
         control_portfolio.get("weekly_feedback_market_profile_review_status_summary", "") or "-"
     )
+    calibration_patch_review_required = bool(control_portfolio.get("weekly_feedback_calibration_patch_review_required", False))
+    calibration_patch_review_ready = bool(control_portfolio.get("weekly_feedback_calibration_patch_ready_for_manual_apply", False))
+    calibration_patch_review_status_summary = str(
+        control_portfolio.get("weekly_feedback_calibration_patch_review_status_summary", "") or "-"
+    )
     control_buttons: List[str] = []
     for field in control_fields:
         label = CONTROL_BUTTON_LABELS.get(field, field)
@@ -5384,6 +5603,21 @@ def _render_card(card: Dict[str, Any]) -> str:
                 f'data-review-status="{html.escape(review_status)}" '
                 f'data-ready-for-apply="{str(market_profile_review_ready).lower()}">{html.escape(review_label)}</button>'
             )
+    calibration_patch_review_buttons: List[str] = []
+    if control_enabled and (not is_dry_run_view) and calibration_patch_review_required:
+        review_actions = [
+            ("APPROVED", "批准校准"),
+            ("REJECTED", "驳回校准"),
+            ("APPLIED", "标记校准已应用"),
+            ("CLEAR", "清除校准审批"),
+        ]
+        for review_status, review_label in review_actions:
+            calibration_patch_review_buttons.append(
+                f'<button type="button" class="control-calibration-patch-review" '
+                f'data-portfolio-id="{html.escape(portfolio_id)}" '
+                f'data-review-status="{html.escape(review_status)}" '
+                f'data-ready-for-apply="{str(calibration_patch_review_ready).lower()}">{html.escape(review_label)}</button>'
+            )
     control_panel = (
         f"""
   <div class="card-control">
@@ -5394,6 +5628,7 @@ def _render_card(card: Dict[str, Any]) -> str:
     <div class="meta"><span data-i18n-zh="反馈校准">反馈校准</span>：{html.escape(feedback_automation_label)}</div>
     <div class="meta"><span data-i18n-zh="周度反馈">周度反馈</span>：<span class="weekly-feedback-status" data-portfolio-id="{html.escape(portfolio_id)}">{html.escape(_dashboard_weekly_feedback_status_label(weekly_feedback_pending_live_confirm, weekly_feedback_confirmed_ts))}</span> | <span data-i18n-zh="阈值同步">阈值同步</span>：<span class="threshold-sync-status" data-portfolio-id="{html.escape(portfolio_id)}">{html.escape(_dashboard_threshold_sync_status_label(weekly_feedback_pending_live_confirm))}</span></div>
     <div class="meta"><span data-i18n-zh="人工审批">人工审批</span>：<span class="market-profile-review-status" data-portfolio-id="{html.escape(portfolio_id)}">{html.escape(market_profile_review_status_summary)}</span></div>
+    <div class="meta"><span data-i18n-zh="校准审批">校准审批</span>：<span class="calibration-patch-review-status" data-portfolio-id="{html.escape(portfolio_id)}">{html.escape(calibration_patch_review_status_summary)}</span></div>
     <div class="control-toolbar">
       {''.join(mode_buttons)}
     </div>
@@ -5404,11 +5639,14 @@ def _render_card(card: Dict[str, Any]) -> str:
       {''.join(market_profile_review_buttons)}
     </div>
     <div class="control-toolbar">
+      {''.join(calibration_patch_review_buttons)}
+    </div>
+    <div class="control-toolbar">
       {''.join(control_buttons)}
     </div>
   </div>
 """
-        if control_enabled and (control_buttons or mode_buttons or market_profile_review_buttons)
+        if control_enabled and (control_buttons or mode_buttons or market_profile_review_buttons or calibration_patch_review_buttons)
         else ""
     )
     if is_dry_run_view:
@@ -6081,6 +6319,7 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
     execution_feedback_summary = _build_execution_feedback_summary(execution_feedback_overview)
     feedback_automation_overview = _build_feedback_automation_overview(cards)
     feedback_automation_history_overview = _build_feedback_automation_history_overview(cards)
+    patch_review_governance_overview = _build_patch_review_governance_overview(cards)
     feedback_automation_stuck_overview = _build_feedback_automation_stuck_overview(cards)
     feedback_automation_effect_overview = _build_feedback_automation_effect_overview(cards)
     feedback_automation_effect_summary = _build_feedback_automation_effect_summary(feedback_automation_effect_overview)
@@ -6111,6 +6350,7 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
         "feedback_calibration_overview": _build_feedback_calibration_overview(cards),
         "feedback_automation_overview": feedback_automation_overview,
         "feedback_automation_history_overview": feedback_automation_history_overview,
+        "patch_review_governance_overview": patch_review_governance_overview,
         "feedback_automation_stuck_overview": feedback_automation_stuck_overview,
         "feedback_automation_effect_overview": feedback_automation_effect_overview,
         "feedback_automation_effect_summary": feedback_automation_effect_summary,
@@ -6427,6 +6667,30 @@ def _simple_weekly_strategy_context_rows(card: Dict[str, Any]) -> List[List[str]
     manual_apply_summary = str(control_portfolio.get("weekly_feedback_market_profile_manual_apply_summary") or "").strip()
     if manual_apply_summary:
         rows.append(["人工首改", manual_apply_summary])
+    calibration_summary = str(control_portfolio.get("weekly_feedback_calibration_patch_summary") or "").strip()
+    if calibration_summary:
+        rows.append(["校准建议", calibration_summary])
+    calibration_primary_summary = str(control_portfolio.get("weekly_feedback_calibration_patch_primary_summary") or "").strip()
+    if calibration_primary_summary:
+        rows.append(["校准首改", calibration_primary_summary])
+    calibration_manual_apply_summary = str(control_portfolio.get("weekly_feedback_calibration_patch_manual_apply_summary") or "").strip()
+    if calibration_manual_apply_summary:
+        rows.append(["校准处理", calibration_manual_apply_summary])
+    patch_governance_summary = str(control_portfolio.get("weekly_feedback_patch_governance_summary") or "").strip()
+    if patch_governance_summary:
+        rows.append(["治理待办", patch_governance_summary])
+    patch_governance_note = str(control_portfolio.get("weekly_feedback_patch_governance_note") or "").strip()
+    if patch_governance_note:
+        rows.append(["治理说明", patch_governance_note])
+    calibration_review_status_summary = str(control_portfolio.get("weekly_feedback_calibration_patch_review_status_summary") or "").strip()
+    if calibration_review_status_summary:
+        rows.append(["校准审批", calibration_review_status_summary])
+    calibration_review_history_summary = str(control_portfolio.get("weekly_feedback_calibration_patch_review_history_summary") or "").strip()
+    if calibration_review_history_summary:
+        rows.append(["校准历史", calibration_review_history_summary])
+    calibration_review_evidence_summary = str(control_portfolio.get("weekly_feedback_calibration_patch_review_evidence_summary") or "").strip()
+    if calibration_review_evidence_summary:
+        rows.append(["校准凭证", calibration_review_evidence_summary])
     review_status_summary = str(control_portfolio.get("weekly_feedback_market_profile_review_status_summary") or "").strip()
     if review_status_summary:
         rows.append(["审批状态", review_status_summary])
@@ -7287,6 +7551,30 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
         ]
         for row in list(payload.get("feedback_automation_history_overview", []) or [])
     ]
+    patch_review_governance_overview_rows = [
+        [
+            row.get("market", ""),
+            row.get("patch_kind_label", "") or "-",
+            row.get("field", "") or "-",
+            row.get("scope_label", "") or "-",
+            str(int(row.get("review_cycle_count", 0) or 0)),
+            str(int(row.get("approved_count", 0) or 0)),
+            str(int(row.get("rejected_count", 0) or 0)),
+            str(int(row.get("applied_count", 0) or 0)),
+            f"{float(row.get('approval_rate', 0.0) or 0.0):.0%}",
+            f"{float(row.get('rejection_rate', 0.0) or 0.0):.0%}",
+            f"{float(row.get('apply_rate', 0.0) or 0.0):.0%}",
+            (
+                f"{float(row.get('avg_review_to_apply_weeks', 0.0) or 0.0):.1f}"
+                if row.get("avg_review_to_apply_weeks") is not None
+                else "-"
+            ),
+            row.get("latest_status_label", "") or "-",
+            row.get("latest_week", "") or "-",
+            row.get("examples", "") or "-",
+        ]
+        for row in list(payload.get("patch_review_governance_overview", []) or [])
+    ]
     feedback_automation_stuck_overview_rows = [
         [
             row.get("market", ""),
@@ -7679,6 +7967,18 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     <section class="card overview">
       <h2>校准自动化历史趋势</h2>
       <div class="empty">当前还没有可展示的校准自动化历史。</div>
+    </section>
+    """
+    patch_review_governance_overview_card = f"""
+    <section class="card overview">
+      <h2>补丁治理概览</h2>
+      <div class="meta">这里聚合 review-cycle 级别的补丁审批历史，统计批准/驳回/应用率和 review-to-apply 周数；当前还不是 suggestion-to-apply 延迟。</div>
+      {_render_table(["market", "kind", "field", "scope", "tracked", "approved", "rejected", "applied", "approval", "rejection", "apply", "apply_weeks", "latest", "week", "examples"], patch_review_governance_overview_rows)}
+    </section>
+    """ if patch_review_governance_overview_rows else """
+    <section class="card overview">
+      <h2>补丁治理概览</h2>
+      <div class="empty">当前还没有可展示的补丁审批历史。</div>
     </section>
     """
     feedback_automation_stuck_overview_card = f"""
@@ -8183,6 +8483,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     {feedback_maturity_alert_overview_card}
     {feedback_automation_overview_card}
     {feedback_automation_history_overview_card}
+    {patch_review_governance_overview_card}
     {feedback_automation_stuck_overview_card}
     {feedback_automation_effect_summary_card}
     {feedback_threshold_suggestion_card}
@@ -8224,6 +8525,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     {feedback_maturity_alert_overview_card}
     {feedback_automation_overview_card}
     {feedback_automation_history_overview_card}
+    {patch_review_governance_overview_card}
     {feedback_automation_stuck_overview_card}
     {feedback_automation_effect_summary_card}
     {feedback_threshold_suggestion_card}
@@ -8256,6 +8558,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     const controlActions = Array.from(document.querySelectorAll('.control-action'));
     const controlWeeklyFeedbackButtons = Array.from(document.querySelectorAll('.control-weekly-feedback'));
     const controlMarketProfileReviewButtons = Array.from(document.querySelectorAll('.control-market-profile-review'));
+    const controlCalibrationPatchReviewButtons = Array.from(document.querySelectorAll('.control-calibration-patch-review'));
     const controlToggles = Array.from(document.querySelectorAll('.control-toggle'));
     const controlModes = Array.from(document.querySelectorAll('.control-mode'));
     const executionModeMarketButtons = Array.from(document.querySelectorAll('.execution-mode-market-filter'));
@@ -8263,6 +8566,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     const executionModeRecommendedLabels = Array.from(document.querySelectorAll('.execution-mode-recommended'));
     const executionModeChangeLabels = Array.from(document.querySelectorAll('.execution-mode-change'));
     const marketProfileReviewStatusLabels = Array.from(document.querySelectorAll('.market-profile-review-status'));
+    const calibrationPatchReviewStatusLabels = Array.from(document.querySelectorAll('.calibration-patch-review-status'));
     const executionModeSummaryCard = document.getElementById('execution-mode-summary');
     const weeklyFeedbackStatusLabels = Array.from(document.querySelectorAll('.weekly-feedback-status'));
     const thresholdSyncStatusLabels = Array.from(document.querySelectorAll('.threshold-sync-status'));
@@ -8581,6 +8885,16 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
         btn.style.display = reviewRequired ? '' : 'none';
         btn.classList.toggle('active', (row.weekly_feedback_market_profile_review_status || '') === reviewStatus);
       }});
+      controlCalibrationPatchReviewButtons.forEach((btn) => {{
+        const row = portfolios[btn.dataset.portfolioId] || {{}};
+        const reviewRequired = !!row.weekly_feedback_calibration_patch_review_required;
+        const readyForApply = !!row.weekly_feedback_calibration_patch_ready_for_manual_apply;
+        const reviewStatus = btn.dataset.reviewStatus || '';
+        const needsReady = reviewStatus === 'APPROVED' || reviewStatus === 'APPLIED';
+        btn.disabled = busy || !reviewRequired || (needsReady && !readyForApply);
+        btn.style.display = reviewRequired ? '' : 'none';
+        btn.classList.toggle('active', (row.weekly_feedback_calibration_patch_review_status || '') === reviewStatus);
+      }});
       weeklyFeedbackStatusLabels.forEach((node) => {{
         const row = portfolios[node.dataset.portfolioId] || {{}};
         node.textContent = weeklyFeedbackStatusText(row);
@@ -8592,6 +8906,10 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
       marketProfileReviewStatusLabels.forEach((node) => {{
         const row = portfolios[node.dataset.portfolioId] || {{}};
         node.textContent = row.weekly_feedback_market_profile_review_status_summary || '-';
+      }});
+      calibrationPatchReviewStatusLabels.forEach((node) => {{
+        const row = portfolios[node.dataset.portfolioId] || {{}};
+        node.textContent = row.weekly_feedback_calibration_patch_review_status_summary || '-';
       }});
       executionModeCurrentLabels.forEach((node) => {{
         const row = portfolios[node.dataset.portfolioId] || {{}};
@@ -8815,6 +9133,51 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
           reviewPayload.operator_note = noteValue.trim();
         }}
         await postControl('/review_market_profile_patch', {{
+          ...reviewPayload,
+        }});
+        window.setTimeout(fetchControlState, 400);
+      }} catch (error) {{
+        if (controlStatus) {{
+          controlStatus.textContent = renderControlStatusText({{ status: 'unreachable', url: controlUrl }}, {{ last_action: '-', last_error: error.message }}, error.message);
+        }}
+      }} finally {{
+        btn.disabled = false;
+      }}
+    }}));
+    controlCalibrationPatchReviewButtons.forEach((btn) => btn.addEventListener('click', async () => {{
+      btn.disabled = true;
+      try {{
+        const reviewPayload = {{
+          portfolio_id: btn.dataset.portfolioId,
+          status: btn.dataset.reviewStatus,
+        }};
+        if ((btn.dataset.reviewStatus || '') === 'APPLIED') {{
+          const commitLabel = currentLanguage === 'en'
+            ? 'Optional config commit SHA (leave blank to use current HEAD)'
+            : '可选配置提交 SHA（留空则自动使用当前 HEAD）';
+          const diffLabel = currentLanguage === 'en'
+            ? 'Optional config diff note'
+            : '可选配置变更说明';
+          const noteLabel = currentLanguage === 'en'
+            ? 'Optional operator note'
+            : '可选操作备注';
+          const commitValue = window.prompt(commitLabel, '');
+          if (commitValue === null) {{
+            return;
+          }}
+          const diffValue = window.prompt(diffLabel, '');
+          if (diffValue === null) {{
+            return;
+          }}
+          const noteValue = window.prompt(noteLabel, '');
+          if (noteValue === null) {{
+            return;
+          }}
+          reviewPayload.config_commit_sha = commitValue.trim();
+          reviewPayload.config_diff_note = diffValue.trim();
+          reviewPayload.operator_note = noteValue.trim();
+        }}
+        await postControl('/review_calibration_patch', {{
           ...reviewPayload,
         }});
         window.setTimeout(fetchControlState, 400);

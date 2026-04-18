@@ -23,9 +23,11 @@ def _seed_weekly_history(
     avg_execution_capture_bps: float,
     avg_actual_slippage_bps: float,
     avg_expected_cost_bps: float,
+    outcome_selected_spread_5d_bps: float,
     outcome_selected_spread_20d_bps: float,
     outcome_selected_spread_60d_bps: float,
     blocked_20d_avg_counterfactual_edge_bps: float,
+    matured_20d_avg_realized_edge_bps: float,
     strategy_control_weight_delta: float,
     risk_overlay_weight_delta: float,
 ) -> None:
@@ -49,9 +51,11 @@ def _seed_weekly_history(
             "avg_execution_capture_bps": avg_execution_capture_bps + (1.0 if idx % 3 == 0 else 0.0),
             "avg_actual_slippage_bps": avg_actual_slippage_bps + (0.5 if idx % 2 else 0.0),
             "avg_expected_cost_bps": avg_expected_cost_bps,
+            "outcome_selected_spread_5d_bps": outcome_selected_spread_5d_bps + (1.0 if idx % 2 else 0.0),
             "outcome_selected_spread_20d_bps": outcome_selected_spread_20d_bps + (2.0 if idx % 2 else 0.0),
             "outcome_selected_spread_60d_bps": outcome_selected_spread_60d_bps + (2.0 if idx % 3 == 0 else 0.0),
             "blocked_20d_avg_counterfactual_edge_bps": blocked_20d_avg_counterfactual_edge_bps + (2.0 if idx % 2 else 0.0),
+            "matured_20d_avg_realized_edge_bps": matured_20d_avg_realized_edge_bps + (2.0 if idx % 2 else 0.0),
             "market_profile_tuning_action": "",
             "dominant_driver": "EXECUTION" if market == "US" else "STRATEGY",
         }
@@ -93,7 +97,7 @@ def test_build_market_walk_forward_report_recommends_market_specific_candidates(
         market="US",
         profile="US",
         portfolio_id="US:main",
-        weeks=12,
+        weeks=15,
         weekly_return=0.006,
         max_drawdown=-0.020,
         turnover=0.18,
@@ -102,9 +106,11 @@ def test_build_market_walk_forward_report_recommends_market_specific_candidates(
         avg_execution_capture_bps=12.0,
         avg_actual_slippage_bps=4.0,
         avg_expected_cost_bps=5.0,
+        outcome_selected_spread_5d_bps=18.0,
         outcome_selected_spread_20d_bps=42.0,
         outcome_selected_spread_60d_bps=60.0,
         blocked_20d_avg_counterfactual_edge_bps=24.0,
+        matured_20d_avg_realized_edge_bps=38.0,
         strategy_control_weight_delta=0.03,
         risk_overlay_weight_delta=0.02,
     )
@@ -113,7 +119,7 @@ def test_build_market_walk_forward_report_recommends_market_specific_candidates(
         market="HK",
         profile="HK",
         portfolio_id="HK:main",
-        weeks=12,
+        weeks=15,
         weekly_return=0.004,
         max_drawdown=-0.030,
         turnover=0.42,
@@ -122,9 +128,11 @@ def test_build_market_walk_forward_report_recommends_market_specific_candidates(
         avg_execution_capture_bps=6.0,
         avg_actual_slippage_bps=11.0,
         avg_expected_cost_bps=9.0,
+        outcome_selected_spread_5d_bps=10.0,
         outcome_selected_spread_20d_bps=12.0,
         outcome_selected_spread_60d_bps=18.0,
         blocked_20d_avg_counterfactual_edge_bps=4.0,
+        matured_20d_avg_realized_edge_bps=11.0,
         strategy_control_weight_delta=0.05,
         risk_overlay_weight_delta=0.04,
     )
@@ -142,6 +150,8 @@ def test_build_market_walk_forward_report_recommends_market_specific_candidates(
     summary_rows = {str(row["market"]): row for row in report["summary_rows"]}
     assert summary_rows["US"]["selected_candidate_family"] == "EXECUTION_RELAX"
     assert summary_rows["US"]["status"] == "RECOMMEND_PATCH"
+    assert summary_rows["US"]["consecutive_stable_windows"] >= 3
+    assert summary_rows["US"]["acceptance_failed_rules"] == ""
     assert summary_rows["HK"]["selected_candidate_family"] == "TURNOVER_TIGHTEN"
     assert summary_rows["HK"]["status"] == "RECOMMEND_PATCH"
 
@@ -166,9 +176,11 @@ def test_build_market_walk_forward_report_marks_insufficient_history(tmp_path: P
         avg_execution_capture_bps=4.0,
         avg_actual_slippage_bps=7.0,
         avg_expected_cost_bps=8.0,
+        outcome_selected_spread_5d_bps=5.0,
         outcome_selected_spread_20d_bps=8.0,
         outcome_selected_spread_60d_bps=12.0,
         blocked_20d_avg_counterfactual_edge_bps=3.0,
+        matured_20d_avg_realized_edge_bps=6.0,
         strategy_control_weight_delta=0.06,
         risk_overlay_weight_delta=0.05,
     )
@@ -192,7 +204,7 @@ def test_walk_forward_main_writes_artifacts(tmp_path: Path, capsys) -> None:
         market="US",
         profile="US",
         portfolio_id="US:main",
-        weeks=12,
+        weeks=15,
         weekly_return=0.006,
         max_drawdown=-0.020,
         turnover=0.18,
@@ -201,9 +213,11 @@ def test_walk_forward_main_writes_artifacts(tmp_path: Path, capsys) -> None:
         avg_execution_capture_bps=12.0,
         avg_actual_slippage_bps=4.0,
         avg_expected_cost_bps=5.0,
+        outcome_selected_spread_5d_bps=18.0,
         outcome_selected_spread_20d_bps=42.0,
         outcome_selected_spread_60d_bps=60.0,
         blocked_20d_avg_counterfactual_edge_bps=24.0,
+        matured_20d_avg_realized_edge_bps=38.0,
         strategy_control_weight_delta=0.03,
         risk_overlay_weight_delta=0.02,
     )
@@ -237,3 +251,41 @@ def test_walk_forward_main_writes_artifacts(tmp_path: Path, capsys) -> None:
     assert (out_dir / "market_walk_forward_windows.csv").exists()
     assert (out_dir / "market_walk_forward_patch_recommendations.csv").exists()
     assert (out_dir / "market_walk_forward.md").exists()
+
+
+def test_build_market_walk_forward_report_rejects_when_outcome_support_is_not_consistent(tmp_path: Path) -> None:
+    db_path = tmp_path / "audit.db"
+    _seed_weekly_history(
+        db_path,
+        market="US",
+        profile="US",
+        portfolio_id="US:weak",
+        weeks=15,
+        weekly_return=0.004,
+        max_drawdown=-0.018,
+        turnover=0.16,
+        signal_quality_score=0.58,
+        execution_gate_blocked_weight=0.16,
+        avg_execution_capture_bps=10.0,
+        avg_actual_slippage_bps=4.0,
+        avg_expected_cost_bps=5.0,
+        outcome_selected_spread_5d_bps=-2.0,
+        outcome_selected_spread_20d_bps=18.0,
+        outcome_selected_spread_60d_bps=24.0,
+        blocked_20d_avg_counterfactual_edge_bps=20.0,
+        matured_20d_avg_realized_edge_bps=22.0,
+        strategy_control_weight_delta=0.02,
+        risk_overlay_weight_delta=0.02,
+    )
+    report = review_market_walk_forward.build_market_walk_forward_report(
+        db_path,
+        markets=["US"],
+        min_weeks=10,
+        train_weeks=6,
+        validate_weeks=3,
+        step_weeks=3,
+    )
+    row = report["summary_rows"][0]
+    assert row["selected_candidate_family"] == "EXECUTION_RELAX"
+    assert row["status"] == "WATCH"
+    assert "outcome_support_5_20_60" in str(row["acceptance_failed_rules"])

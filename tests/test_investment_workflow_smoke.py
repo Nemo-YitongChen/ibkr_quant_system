@@ -428,6 +428,12 @@ def test_investment_workflow_cli_smoke_generates_contract_artifacts(tmp_path, mo
         weekly_dir / "weekly_tuning_dataset.csv",
         weekly_dir / "weekly_tuning_dataset.json",
         weekly_dir / "weekly_tuning_history_overview.csv",
+        weekly_dir / "weekly_decision_evidence_history_overview.csv",
+        weekly_dir / "weekly_edge_calibration_summary.csv",
+        weekly_dir / "weekly_slicing_calibration_summary.csv",
+        weekly_dir / "weekly_risk_calibration_summary.csv",
+        weekly_dir / "weekly_calibration_patch_suggestions.csv",
+        weekly_dir / "weekly_patch_governance_summary.csv",
         weekly_dir / "weekly_control_timeseries.csv",
         weekly_dir / "weekly_review.md",
         reconcile_summary_path,
@@ -482,6 +488,14 @@ def test_investment_workflow_cli_smoke_generates_contract_artifacts(tmp_path, mo
     assert weekly_summary["weekly_tuning_dataset_summary"]["portfolio_count"] == 1
     assert weekly_summary["weekly_tuning_dataset"][0]["portfolio_id"] == portfolio_id
     assert weekly_summary["weekly_tuning_history_overview"][0]["portfolio_id"] == portfolio_id
+    assert weekly_summary["decision_evidence_history_overview"][0]["portfolio_id"] == portfolio_id
+    assert weekly_summary["edge_calibration_summary"][0]["portfolio_id"] == portfolio_id
+    assert weekly_summary["slicing_calibration_summary"][0]["portfolio_id"] == portfolio_id
+    assert weekly_summary["risk_calibration_summary"][0]["portfolio_id"] == portfolio_id
+    assert "calibration_patch_suggestions" in weekly_summary
+    assert isinstance(weekly_summary["calibration_patch_suggestions"], list)
+    assert "patch_governance_summary" in weekly_summary
+    assert isinstance(weekly_summary["patch_governance_summary"], list)
     assert weekly_summary["weekly_control_timeseries"][0]["portfolio_id"] == portfolio_id
     assert weekly_summary["outcome_spread_summary"][0]["portfolio_id"] == portfolio_id
     assert weekly_summary["edge_realization_summary"][0]["portfolio_id"] == portfolio_id

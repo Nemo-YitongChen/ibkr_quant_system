@@ -241,6 +241,25 @@ class SupervisorCliTests(unittest.TestCase):
                                 ),
                             }
                         ],
+                        "calibration_patch_suggestions": [
+                            {
+                                "portfolio_id": "US:watchlist",
+                                "market": "US",
+                                "adaptive_strategy_active_market_profile": "US",
+                                "scope": "SLICING_RELAX",
+                                "scope_label": "执行切片放宽",
+                                "config_scope": "EXECUTION",
+                                "config_file": str(execution_cfg_path),
+                                "config_path": "execution.adv_split_trigger_pct",
+                                "field": "adv_split_trigger_pct",
+                                "current_value": 0.02,
+                                "suggested_value": 0.025,
+                                "priority_rank": 1,
+                                "priority_label": "先调 split trigger",
+                                "source_signal_label": "CORE bucket 可能过保守",
+                                "source_note": "切片次数偏多但滑点仍低，当前 bucket 可能过度保守。",
+                            }
+                        ],
                     }
                 ),
                 encoding="utf-8",
@@ -295,6 +314,28 @@ class SupervisorCliTests(unittest.TestCase):
                 "至少 2 周",
                 str(control_portfolio["weekly_feedback_market_profile_readiness_summary"]),
             )
+            self.assertIn(
+                "adv_split_trigger_pct: 0.02 -> 0.025",
+                str(control_portfolio["weekly_feedback_calibration_patch_summary"]),
+            )
+            self.assertIn(
+                "优先改 adv_split_trigger_pct: 0.02 -> 0.025",
+                str(control_portfolio["weekly_feedback_calibration_patch_primary_summary"]),
+            )
+            self.assertTrue(bool(control_portfolio["weekly_feedback_calibration_patch_review_required"]))
+            self.assertTrue(bool(control_portfolio["weekly_feedback_calibration_patch_ready_for_manual_apply"]))
+            self.assertIn(
+                "建议先人工应用 1 项",
+                str(control_portfolio["weekly_feedback_calibration_patch_manual_apply_summary"]),
+            )
+            self.assertEqual(
+                str(dict(control_portfolio["weekly_feedback_calibration_patch_manual_apply_patch"]).get("mode") or ""),
+                "PRIMARY_ONLY",
+            )
+            self.assertEqual(
+                str(dict(control_portfolio["weekly_feedback_calibration_patch_manual_apply_patch"]).get("apply_items", [])[0]["field"]),
+                "adv_split_trigger_pct",
+            )
             effective_investment = supervisor._effective_investment_config_path(item, "US")
             effective_execution = supervisor._effective_execution_config_path(item, "US")
             self.assertNotEqual(effective_investment, investment_cfg_path.resolve())
@@ -337,12 +378,115 @@ class SupervisorCliTests(unittest.TestCase):
                 float(effective_investment_cfg["weekly_feedback"]["market_profile_suggested_patch"]["items"][0]["suggested_value"]),
                 0.025,
             )
+            self.assertEqual(
+                str(effective_investment_cfg["weekly_feedback"]["calibration_patch_primary_item"]["field"]),
+                "adv_split_trigger_pct",
+            )
             self.assertAlmostEqual(float(effective_execution_cfg["execution"]["shadow_ml_min_score_auto_submit"]), 0.00, places=6)
             self.assertAlmostEqual(float(effective_execution_cfg["execution"]["shadow_ml_min_positive_prob_auto_submit"]), 0.50, places=6)
             self.assertEqual(effective_execution_cfg["execution"]["execution_hotspot_penalties"][0]["symbol"], "AAPL")
             self.assertEqual(effective_execution_cfg["weekly_feedback"]["execution_hotspot_penalties"][0]["symbol"], "AAPL")
             self.assertEqual(str(effective_execution_cfg["weekly_feedback"]["market_profile_tuning_action"]), "REVIEW_REGIME_PLAN")
             self.assertIn("turnover_penalty", str(effective_execution_cfg["weekly_feedback"]["market_profile_tuning_note"]))
+            self.assertEqual(
+                str(effective_execution_cfg["weekly_feedback"]["calibration_patch_primary_item"]["field"]),
+                "adv_split_trigger_pct",
+            )
+            self.assertEqual(
+                str(effective_execution_cfg["weekly_feedback"]["calibration_patch_manual_apply_patch"]["mode"]),
+                "PRIMARY_ONLY",
+            )
+            self.assertEqual(
+                str(effective_execution_cfg["weekly_feedback"]["calibration_patch_manual_apply_patch"]["apply_items"][0]["field"]),
+                "adv_split_trigger_pct",
+            )
+
+    def test_supervisor_dashboard_control_surfaces_patch_governance_action(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            db_path = base / "audit.db"
+            summary_dir = base / "reports_supervisor"
+            summary_dir.mkdir(parents=True, exist_ok=True)
+            ibkr_cfg_path = base / "ibkr_us.yaml"
+            ibkr_cfg_path.write_text(
+                "\n".join(
+                    [
+                        'mode: "paper"',
+                        'account_id: "DU1234567"',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            storage = Storage(str(db_path))
+            storage.insert_investment_patch_review_history(
+                {
+                    "week_label": "2026-W15",
+                    "week_start": "2026-04-06",
+                    "ts": "2026-04-06T09:00:00+00:00",
+                    "market": "US",
+                    "portfolio_id": "US:watchlist",
+                    "patch_kind": "calibration",
+                    "feedback_signature": "sig-cal-open",
+                    "review_status": "APPROVED",
+                    "review_status_label": "已批准",
+                    "ready_for_manual_apply": 1,
+                    "profile": "US",
+                    "scope": "SLICING_RELAX",
+                    "config_file": str(base / "execution.yaml"),
+                    "config_path": "execution.adv_split_trigger_pct",
+                    "details": {
+                        "summary": "建议先复核 execution 切片参数。",
+                        "primary_summary": "优先改 adv_split_trigger_pct: 0.05 -> 0.04",
+                        "primary_item": {
+                            "field": "adv_split_trigger_pct",
+                            "config_path": "execution.adv_split_trigger_pct",
+                            "scope_label": "执行切片",
+                        },
+                    },
+                }
+            )
+            cfg_path = base / "supervisor.yaml"
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        f'summary_out_dir: "{summary_dir}"',
+                        f'dashboard_db: "{db_path}"',
+                        "markets:",
+                        '  - name: "us"',
+                        '    market: "US"',
+                        "    enabled: true",
+                        "    reports:",
+                        '      - kind: "investment"',
+                        '        watchlist_yaml: "config/watchlist.yaml"',
+                        f'        ibkr_config: "{ibkr_cfg_path}"',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(cfg_path))
+            control_portfolio = supervisor._dashboard_control_portfolios()["US:watchlist"]
+            self.assertTrue(bool(control_portfolio["weekly_feedback_patch_governance_present"]))
+            self.assertEqual(
+                str(control_portfolio["weekly_feedback_patch_governance_action"]),
+                "APPLY_APPROVED_PATCH",
+            )
+            self.assertEqual(
+                str(control_portfolio["weekly_feedback_patch_governance_action_label"]),
+                "优先应用已批准补丁",
+            )
+            self.assertEqual(
+                int(control_portfolio["weekly_feedback_patch_governance_priority"]),
+                0,
+            )
+            self.assertIn(
+                "adv_split_trigger_pct",
+                str(control_portfolio["weekly_feedback_patch_governance_summary"]),
+            )
+            self.assertIn(
+                "已批准未应用周期",
+                str(control_portfolio["weekly_feedback_patch_governance_note"]),
+            )
 
     def test_supervisor_paper_weekly_feedback_decays_previous_execution_penalties(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -489,6 +633,7 @@ class SupervisorCliTests(unittest.TestCase):
                 encoding="utf-8",
             )
             cfg_path = base / "supervisor_live.yaml"
+            db_path = base / "audit.db"
             cfg_path.write_text(
                 "\n".join(
                     [
@@ -503,6 +648,7 @@ class SupervisorCliTests(unittest.TestCase):
                         "    reports:",
                         '      - kind: "investment"',
                         '        watchlist_yaml: "config/watchlist.yaml"',
+                        f'        db: "{db_path}"',
                         f'        ibkr_config: "{ibkr_cfg_path}"',
                     ]
                 ),
@@ -791,6 +937,7 @@ class SupervisorCliTests(unittest.TestCase):
                 encoding="utf-8",
             )
             cfg_path = base / "supervisor.yaml"
+            db_path = base / "audit.db"
             cfg_path.write_text(
                 "\n".join(
                     [
@@ -805,6 +952,7 @@ class SupervisorCliTests(unittest.TestCase):
                         "    reports:",
                         '      - kind: "investment"',
                         '        watchlist_yaml: "config/watchlist.yaml"',
+                        f'        db: "{db_path}"',
                         f'        ibkr_config: "{ibkr_cfg_path}"',
                     ]
                 ),
@@ -883,6 +1031,7 @@ class SupervisorCliTests(unittest.TestCase):
                 encoding="utf-8",
             )
             cfg_path = base / "supervisor.yaml"
+            db_path = base / "audit.db"
             cfg_path.write_text(
                 "\n".join(
                     [
@@ -897,6 +1046,7 @@ class SupervisorCliTests(unittest.TestCase):
                         "    reports:",
                         '      - kind: "investment"',
                         '        watchlist_yaml: "config/watchlist.yaml"',
+                        f'        db: "{db_path}"',
                         f'        ibkr_config: "{ibkr_cfg_path}"',
                     ]
                 ),
@@ -1097,6 +1247,7 @@ class SupervisorCliTests(unittest.TestCase):
             summary_dir = base / "reports_supervisor"
             weekly_dir = base / "reports_investment_weekly"
             weekly_dir.mkdir(parents=True, exist_ok=True)
+            db_path = base / "audit.db"
             execution_cfg_path = base / "investment_execution_us.yaml"
             ibkr_cfg_path = base / "ibkr_us.yaml"
             execution_cfg_path.write_text(
@@ -1162,6 +1313,7 @@ class SupervisorCliTests(unittest.TestCase):
                         "    reports:",
                         '      - kind: "investment"',
                         '        watchlist_yaml: "config/watchlist.yaml"',
+                        f'        db: "{db_path}"',
                         f'        ibkr_config: "{ibkr_cfg_path}"',
                     ]
                 ),
@@ -1290,6 +1442,207 @@ class SupervisorCliTests(unittest.TestCase):
                 str(dict(artifact_yaml_payload["patch_candidates"][0]["review_evidence"]).get("config_commit_sha") or ""),
                 "deadbeef1234567890",
             )
+            history_rows = Storage(str(db_path)).get_recent_investment_patch_review_history(
+                "US",
+                portfolio_id="US:watchlist",
+                patch_kind="market_profile",
+                limit=5,
+            )
+            self.assertEqual(len(history_rows), 2)
+            self.assertEqual(str(history_rows[0]["review_status"]), "APPLIED")
+            self.assertEqual(str(history_rows[1]["review_status"]), "APPROVED")
+            self.assertEqual(str(history_rows[0]["config_commit_sha"]), "deadbeef1234567890")
+            self.assertEqual(str(history_rows[0]["details_json"].get("primary_item", {}).get("field") or ""), "edge_cost_buffer_bps")
+
+    def test_supervisor_calibration_patch_review_tracks_history_and_artifacts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            summary_dir = base / "reports_supervisor"
+            weekly_dir = base / "reports_investment_weekly"
+            weekly_dir.mkdir(parents=True, exist_ok=True)
+            db_path = base / "audit.db"
+            execution_cfg_path = base / "investment_execution_us.yaml"
+            ibkr_cfg_path = base / "ibkr_us.yaml"
+            execution_cfg_path.write_text(
+                "\n".join(
+                    [
+                        "execution:",
+                        "  adv_max_participation_pct: 0.05",
+                        "  adv_split_trigger_pct: 0.02",
+                        "  limit_price_buffer_bps: 8",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            ibkr_cfg_path.write_text(
+                "\n".join(
+                    [
+                        'mode: "paper"',
+                        'execution_mode: "investment_only"',
+                        'account_id: "DU1234567"',
+                        f'investment_execution_config: "{execution_cfg_path}"',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (weekly_dir / "weekly_review_summary.json").write_text(
+                json.dumps(
+                    {
+                        "calibration_patch_suggestions": [
+                            {
+                                "portfolio_id": "US:watchlist",
+                                "market": "US",
+                                "adaptive_strategy_active_market_profile": "US",
+                                "scope": "SLICING_RELAX",
+                                "scope_label": "执行切片放宽",
+                                "config_scope": "EXECUTION",
+                                "config_file": str(execution_cfg_path),
+                                "config_path": "execution.adv_split_trigger_pct",
+                                "field": "adv_split_trigger_pct",
+                                "current_value": 0.02,
+                                "suggested_value": 0.025,
+                                "priority_rank": 1,
+                                "priority_label": "先调 split trigger",
+                                "source_signal_label": "CORE bucket 可能过保守",
+                                "source_note": "切片次数偏多但滑点仍低，当前 bucket 可能过度保守。",
+                            }
+                        ]
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            cfg_path = base / "supervisor.yaml"
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        f'summary_out_dir: "{summary_dir}"',
+                        "dashboard_control_enabled: true",
+                        f'dashboard_weekly_review_dir: "{weekly_dir}"',
+                        "weekly_review_auto_apply_paper: true",
+                        "weekly_review_auto_apply_live: false",
+                        "markets:",
+                        '  - name: "us"',
+                        '    market: "US"',
+                        "    enabled: true",
+                        "    reports:",
+                        '      - kind: "investment"',
+                        '        watchlist_yaml: "config/watchlist.yaml"',
+                        f'        db: "{db_path}"',
+                        f'        ibkr_config: "{ibkr_cfg_path}"',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(cfg_path))
+            control_portfolio = supervisor._dashboard_control_portfolios()["US:watchlist"]
+            self.assertTrue(bool(control_portfolio["weekly_feedback_calibration_patch_review_required"]))
+            self.assertTrue(bool(control_portfolio["weekly_feedback_calibration_patch_ready_for_manual_apply"]))
+            self.assertIn(
+                "建议先人工应用 1 项",
+                str(control_portfolio["weekly_feedback_calibration_patch_manual_apply_summary"]),
+            )
+            control_patch = dict(control_portfolio["weekly_feedback_calibration_patch_manual_apply_patch"] or {})
+            self.assertEqual(str(control_patch.get("mode") or ""), "PRIMARY_ONLY")
+            self.assertEqual(int(control_patch.get("apply_item_count") or 0), 1)
+            self.assertEqual(str(control_patch.get("apply_items", [])[0]["field"]), "adv_split_trigger_pct")
+            approve_result = supervisor._dashboard_control_review_calibration_patch(
+                {"portfolio_id": "US:watchlist", "status": "APPROVED"}
+            )
+            self.assertTrue(bool(approve_result.get("ok", False)))
+            self.assertEqual(str(approve_result.get("review_status") or ""), "APPROVED")
+            self.assertIn("已批准", str(approve_result.get("review_status_summary") or ""))
+            self.assertEqual(len(list(approve_result.get("review_history") or [])), 1)
+            self.assertEqual(str(list(approve_result.get("review_history") or [])[0]["status"]), "APPROVED")
+            applied_result = supervisor._dashboard_control_review_calibration_patch(
+                {
+                    "portfolio_id": "US:watchlist",
+                    "status": "APPLIED",
+                    "config_commit_sha": "feedface1234567890",
+                    "config_diff_note": "raised split trigger after slicing review",
+                    "operator_note": "approved after weekly calibration review",
+                }
+            )
+            self.assertTrue(bool(applied_result.get("ok", False)))
+            self.assertEqual(str(applied_result.get("review_status") or ""), "APPLIED")
+            self.assertTrue(str(applied_result.get("applied_ts") or "").strip())
+            self.assertIn("config=", str(applied_result.get("review_evidence_summary") or ""))
+            self.assertTrue(str(dict(applied_result.get("review_evidence") or {}).get("config_file") or "").endswith(".yaml"))
+            self.assertEqual(str(applied_result.get("config_commit_sha") or ""), "feedface1234567890")
+            self.assertEqual(
+                str(dict(applied_result.get("review_evidence") or {}).get("config_diff_note") or ""),
+                "raised split trigger after slicing review",
+            )
+            self.assertEqual(
+                str(dict(applied_result.get("review_evidence") or {}).get("operator_note") or ""),
+                "approved after weekly calibration review",
+            )
+            self.assertEqual(len(list(applied_result.get("review_history") or [])), 2)
+            self.assertEqual(str(list(applied_result.get("review_history") or [])[0]["status"]), "APPROVED")
+            self.assertEqual(str(list(applied_result.get("review_history") or [])[1]["status"]), "APPLIED")
+            result = supervisor._dashboard_control_apply_weekly_feedback({"portfolio_id": "US:watchlist"})
+            self.assertTrue(bool(result.get("ok", False)))
+            self.assertTrue(bool(result.get("calibration_patch_review_required", False)))
+            self.assertEqual(str(result.get("calibration_patch_review_status") or ""), "APPLIED")
+            self.assertIn("已应用", str(result.get("calibration_patch_review_status_summary") or ""))
+            self.assertEqual(len(list(result.get("calibration_patch_review_history") or [])), 2)
+            self.assertIn("已批准", str(result.get("calibration_patch_review_history_summary") or ""))
+            self.assertIn("已应用", str(result.get("calibration_patch_review_history_summary") or ""))
+            self.assertIn("config=", str(result.get("calibration_patch_review_evidence_summary") or ""))
+            self.assertTrue(str(dict(result.get("calibration_patch_review_evidence") or {}).get("config_file") or "").endswith(".yaml"))
+            self.assertEqual(
+                str(dict(result.get("calibration_patch_review_evidence") or {}).get("config_commit_sha") or ""),
+                "feedface1234567890",
+            )
+            result_patch = dict(result.get("calibration_patch_manual_apply_patch") or {})
+            self.assertEqual(str(result_patch.get("mode") or ""), "PRIMARY_ONLY")
+            self.assertEqual(str(result_patch.get("apply_items", [])[0]["field"]), "adv_split_trigger_pct")
+            supervisor._write_dashboard_control_state()
+            artifact_json = summary_dir / "calibration_patch_candidates.json"
+            artifact_yaml = summary_dir / "calibration_patch_candidates.yaml"
+            self.assertTrue(artifact_json.exists())
+            self.assertTrue(artifact_yaml.exists())
+            artifact_payload = json.loads(artifact_json.read_text(encoding="utf-8"))
+            self.assertEqual(int(artifact_payload["candidate_count"]), 1)
+            self.assertEqual(int(artifact_payload["ready_for_manual_apply_count"]), 1)
+            self.assertEqual(str(artifact_payload["patch_candidates"][0]["review_status"]), "APPLIED")
+            self.assertIn("已应用", str(artifact_payload["patch_candidates"][0]["review_status_summary"] or ""))
+            self.assertEqual(len(list(artifact_payload["patch_candidates"][0]["review_history"] or [])), 2)
+            self.assertIn("config=", str(artifact_payload["patch_candidates"][0]["review_evidence_summary"] or ""))
+            self.assertEqual(
+                str(dict(artifact_payload["patch_candidates"][0]["review_evidence"]).get("config_commit_sha") or ""),
+                "feedface1234567890",
+            )
+            self.assertEqual(
+                str(artifact_payload["patch_candidates"][0]["manual_apply_patch"]["apply_items"][0]["field"]),
+                "adv_split_trigger_pct",
+            )
+            artifact_yaml_payload = yaml.safe_load(artifact_yaml.read_text(encoding="utf-8"))
+            self.assertEqual(
+                str(artifact_yaml_payload["patch_candidates"][0]["manual_apply_patch"]["candidate_item"]["field"]),
+                "adv_split_trigger_pct",
+            )
+            reloaded = Supervisor(str(cfg_path))
+            reloaded_portfolio = reloaded._dashboard_control_portfolios()["US:watchlist"]
+            self.assertEqual(str(reloaded_portfolio.get("weekly_feedback_calibration_patch_review_status") or ""), "APPLIED")
+            self.assertEqual(len(list(reloaded_portfolio.get("weekly_feedback_calibration_patch_review_history") or [])), 2)
+            self.assertIn(
+                "已应用",
+                str(reloaded_portfolio.get("weekly_feedback_calibration_patch_review_history_summary") or ""),
+            )
+            history_rows = Storage(str(db_path)).get_recent_investment_patch_review_history(
+                "US",
+                portfolio_id="US:watchlist",
+                patch_kind="calibration",
+                limit=5,
+            )
+            self.assertEqual(len(history_rows), 2)
+            self.assertEqual(str(history_rows[0]["review_status"]), "APPLIED")
+            self.assertEqual(str(history_rows[1]["review_status"]), "APPROVED")
+            self.assertEqual(str(history_rows[0]["config_commit_sha"]), "feedface1234567890")
+            self.assertEqual(str(history_rows[0]["details_json"].get("primary_item", {}).get("field") or ""), "adv_split_trigger_pct")
 
     def test_supervisor_paper_weekly_execution_feedback_can_target_open_session_only(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -3591,6 +3944,297 @@ class SupervisorCliTests(unittest.TestCase):
             self.assertIn("可适度放宽", html_text)
             self.assertIn("持续改善", html_text)
 
+    def test_dashboard_surfaces_patch_review_governance_overview(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            cfg_path = base / "supervisor.yaml"
+            summary_dir = base / "reports_supervisor"
+            report_root = base / "reports_investment"
+            report_dir = report_root / "watchlist"
+            report_dir.mkdir(parents=True, exist_ok=True)
+            db_path = base / "audit.db"
+            ibkr_cfg_path = base / "ibkr_us.yaml"
+            ibkr_cfg_path.write_text(
+                "\n".join(
+                    [
+                        'mode: "paper"',
+                        'account_id: "DU1234567"',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            for name in (
+                "investment_paper_summary.json",
+                "investment_execution_summary.json",
+                "investment_guard_summary.json",
+                "investment_opportunity_summary.json",
+            ):
+                (report_dir / name).write_text("{}", encoding="utf-8")
+            storage = Storage(str(db_path))
+            storage.insert_investment_patch_review_history(
+                {
+                    "week_label": "2026-W12",
+                    "week_start": "2026-03-16",
+                    "ts": "2026-03-16T09:00:00+00:00",
+                    "market": "US",
+                    "portfolio_id": "US:watchlist",
+                    "patch_kind": "calibration",
+                    "feedback_signature": "sig-cal-1",
+                    "review_status": "APPROVED",
+                    "review_status_label": "已批准",
+                    "ready_for_manual_apply": 1,
+                    "profile": "US",
+                    "scope": "SLICING_RELAX",
+                    "config_file": str(base / "execution.yaml"),
+                    "config_path": "execution.adv_split_trigger_pct",
+                    "details": {
+                        "summary": "建议先复核 execution 切片参数。",
+                        "primary_summary": "优先改 adv_split_trigger_pct: 0.05 -> 0.04",
+                        "primary_item": {
+                            "field": "adv_split_trigger_pct",
+                            "config_path": "execution.adv_split_trigger_pct",
+                            "scope_label": "执行切片",
+                        },
+                    },
+                }
+            )
+            storage.insert_investment_patch_review_history(
+                {
+                    "week_label": "2026-W13",
+                    "week_start": "2026-03-23",
+                    "ts": "2026-03-23T09:00:00+00:00",
+                    "market": "US",
+                    "portfolio_id": "US:watchlist",
+                    "patch_kind": "calibration",
+                    "feedback_signature": "sig-cal-1",
+                    "review_status": "APPLIED",
+                    "review_status_label": "已应用",
+                    "ready_for_manual_apply": 1,
+                    "profile": "US",
+                    "scope": "SLICING_RELAX",
+                    "config_file": str(base / "execution.yaml"),
+                    "config_path": "execution.adv_split_trigger_pct",
+                    "details": {
+                        "summary": "建议先复核 execution 切片参数。",
+                        "primary_summary": "优先改 adv_split_trigger_pct: 0.05 -> 0.04",
+                        "primary_item": {
+                            "field": "adv_split_trigger_pct",
+                            "config_path": "execution.adv_split_trigger_pct",
+                            "scope_label": "执行切片",
+                        },
+                    },
+                }
+            )
+            storage.insert_investment_patch_review_history(
+                {
+                    "week_label": "2026-W14",
+                    "week_start": "2026-03-30",
+                    "ts": "2026-03-30T09:00:00+00:00",
+                    "market": "US",
+                    "portfolio_id": "US:watchlist",
+                    "patch_kind": "calibration",
+                    "feedback_signature": "sig-cal-2",
+                    "review_status": "REJECTED",
+                    "review_status_label": "已驳回",
+                    "ready_for_manual_apply": 1,
+                    "profile": "US",
+                    "scope": "SLICING_RELAX",
+                    "config_file": str(base / "execution.yaml"),
+                    "config_path": "execution.adv_split_trigger_pct",
+                    "details": {
+                        "summary": "建议先复核 execution 切片参数。",
+                        "primary_summary": "优先改 adv_split_trigger_pct: 0.05 -> 0.04",
+                        "primary_item": {
+                            "field": "adv_split_trigger_pct",
+                            "config_path": "execution.adv_split_trigger_pct",
+                            "scope_label": "执行切片",
+                        },
+                    },
+                }
+            )
+            storage.insert_investment_patch_review_history(
+                {
+                    "week_label": "2026-W14",
+                    "week_start": "2026-03-30",
+                    "ts": "2026-03-30T10:00:00+00:00",
+                    "market": "US",
+                    "portfolio_id": "US:watchlist",
+                    "patch_kind": "market_profile",
+                    "feedback_signature": "sig-profile-1",
+                    "review_status": "APPROVED",
+                    "review_status_label": "已批准",
+                    "ready_for_manual_apply": 1,
+                    "profile": "US",
+                    "scope": "REGIME_PLAN",
+                    "config_file": str(base / "adaptive_strategy.yaml"),
+                    "config_path": "market_profiles.US.no_trade_band_pct",
+                    "details": {
+                        "summary": "建议先调整 US 市场档案。",
+                        "primary_summary": "优先改 no_trade_band_pct: 0.03 -> 0.025",
+                        "primary_item": {
+                            "field": "no_trade_band_pct",
+                            "config_path": "market_profiles.US.no_trade_band_pct",
+                            "scope_label": "Regime / 计划参数",
+                        },
+                    },
+                }
+            )
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        f'summary_out_dir: "{summary_dir}"',
+                        f'dashboard_db: "{db_path}"',
+                        "poll_sec: 30",
+                        "markets:",
+                        '  - name: "us"',
+                        '    market: "US"',
+                        "    enabled: true",
+                        "    reports:",
+                        '      - kind: "investment"',
+                        f'        out_dir: "{report_root}"',
+                        f'        ibkr_config: "{ibkr_cfg_path}"',
+                        '        watchlist_yaml: "config/watchlist.yaml"',
+                        "        run_investment_execution: true",
+                        "        submit_investment_execution: true",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            payload = build_dashboard(str(cfg_path), str(summary_dir))
+            self.assertEqual(len(payload["patch_review_governance_overview"]), 2)
+            calibration_row = payload["patch_review_governance_overview"][0]
+            self.assertEqual(str(calibration_row["patch_kind_label"]), "校准补丁")
+            self.assertEqual(str(calibration_row["field"]), "adv_split_trigger_pct")
+            self.assertEqual(str(calibration_row["scope_label"]), "执行切片")
+            self.assertEqual(int(calibration_row["review_cycle_count"]), 2)
+            self.assertEqual(int(calibration_row["approved_count"]), 1)
+            self.assertEqual(int(calibration_row["rejected_count"]), 1)
+            self.assertEqual(int(calibration_row["applied_count"]), 1)
+            self.assertAlmostEqual(float(calibration_row["approval_rate"]), 0.5, places=6)
+            self.assertAlmostEqual(float(calibration_row["rejection_rate"]), 0.5, places=6)
+            self.assertAlmostEqual(float(calibration_row["apply_rate"]), 0.5, places=6)
+            self.assertAlmostEqual(float(calibration_row["avg_review_to_apply_weeks"]), 1.0, places=6)
+            self.assertIn("watchlist:已驳回", str(calibration_row["examples"]))
+            market_profile_row = payload["patch_review_governance_overview"][1]
+            self.assertEqual(str(market_profile_row["patch_kind_label"]), "市场档案")
+            self.assertEqual(str(market_profile_row["field"]), "no_trade_band_pct")
+            write_dashboard(payload, str(summary_dir))
+            html_text = (summary_dir / "dashboard.html").read_text(encoding="utf-8")
+            self.assertIn("补丁治理概览", html_text)
+            self.assertIn("adv_split_trigger_pct", html_text)
+            self.assertIn("no_trade_band_pct", html_text)
+
+    def test_dashboard_focus_actions_prioritize_patch_governance_action(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            cfg_path = base / "supervisor.yaml"
+            summary_dir = base / "reports_supervisor"
+            report_root = base / "reports_investment"
+            report_dir = report_root / "watchlist"
+            report_dir.mkdir(parents=True, exist_ok=True)
+            db_path = base / "audit.db"
+            ibkr_cfg_path = base / "ibkr_us.yaml"
+            ibkr_cfg_path.write_text(
+                "\n".join(
+                    [
+                        'mode: "paper"',
+                        'account_id: "DU1234567"',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            for name in (
+                "investment_paper_summary.json",
+                "investment_execution_summary.json",
+                "investment_guard_summary.json",
+                "investment_opportunity_summary.json",
+            ):
+                (report_dir / name).write_text("{}", encoding="utf-8")
+            storage = Storage(str(db_path))
+            storage.insert_investment_patch_review_history(
+                {
+                    "week_label": "2026-W15",
+                    "week_start": "2026-04-06",
+                    "ts": "2026-04-06T09:00:00+00:00",
+                    "market": "US",
+                    "portfolio_id": "US:watchlist",
+                    "patch_kind": "calibration",
+                    "feedback_signature": "sig-cal-open",
+                    "review_status": "APPROVED",
+                    "review_status_label": "已批准",
+                    "ready_for_manual_apply": 1,
+                    "profile": "US",
+                    "scope": "SLICING_RELAX",
+                    "config_file": str(base / "execution.yaml"),
+                    "config_path": "execution.adv_split_trigger_pct",
+                    "details": {
+                        "summary": "建议先复核 execution 切片参数。",
+                        "primary_summary": "优先改 adv_split_trigger_pct: 0.05 -> 0.04",
+                        "primary_item": {
+                            "field": "adv_split_trigger_pct",
+                            "config_path": "execution.adv_split_trigger_pct",
+                            "scope_label": "执行切片",
+                        },
+                    },
+                }
+            )
+            supervisor_cfg_path = base / "supervisor_control.yaml"
+            supervisor_cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        f'summary_out_dir: "{summary_dir}"',
+                        f'dashboard_db: "{db_path}"',
+                        "markets:",
+                        '  - name: "us"',
+                        '    market: "US"',
+                        "    enabled: true",
+                        "    reports:",
+                        '      - kind: "investment"',
+                        '        watchlist_yaml: "config/watchlist.yaml"',
+                        f'        ibkr_config: "{ibkr_cfg_path}"',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(supervisor_cfg_path))
+            summary_dir.mkdir(parents=True, exist_ok=True)
+            (summary_dir / "dashboard_control_state.json").write_text(
+                json.dumps(supervisor._dashboard_control_state_payload(), ensure_ascii=False),
+                encoding="utf-8",
+            )
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        f'summary_out_dir: "{summary_dir}"',
+                        f'dashboard_db: "{db_path}"',
+                        "poll_sec: 30",
+                        "markets:",
+                        '  - name: "us"',
+                        '    market: "US"',
+                        "    enabled: true",
+                        "    reports:",
+                        '      - kind: "investment"',
+                        f'        out_dir: "{report_root}"',
+                        f'        ibkr_config: "{ibkr_cfg_path}"',
+                        '        watchlist_yaml: "config/watchlist.yaml"',
+                        "        run_investment_execution: true",
+                        "        submit_investment_execution: true",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            payload = build_dashboard(str(cfg_path), str(summary_dir))
+            self.assertTrue(payload["focus_actions"])
+            self.assertEqual(str(payload["focus_actions"][0]["action"]), "优先应用已批准补丁")
+            self.assertIn("adv_split_trigger_pct", str(payload["focus_actions"][0]["detail"]))
+            write_dashboard(payload, str(summary_dir))
+            html_text = (summary_dir / "dashboard.html").read_text(encoding="utf-8")
+            self.assertIn("治理待办", html_text)
+            self.assertIn("优先应用已批准补丁", html_text)
+
     def test_dashboard_execution_feedback_explains_why_not_auto_applied(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -4550,6 +5194,23 @@ class SupervisorCliTests(unittest.TestCase):
                                 "weekly_feedback_market_profile_readiness_summary": (
                                     "当前仅连续 1 周维持同方向，先继续观察到至少 2 周再决定是否人工应用。"
                                 ),
+                                "weekly_feedback_calibration_patch_summary": (
+                                    "建议先复核 US/US 的校准补丁：adv_split_trigger_pct: 0.02 -> 0.025；"
+                                    "当前仅进入建议层，不自动生效。"
+                                ),
+                                "weekly_feedback_calibration_patch_primary_summary": (
+                                    "优先改 adv_split_trigger_pct: 0.02 -> 0.025 (执行切片放宽 / 先调 split trigger)"
+                                ),
+                                "weekly_feedback_calibration_patch_manual_apply_summary": (
+                                    "建议先人工应用 1 项：adv_split_trigger_pct: 0.02 -> 0.025；其余 0 项继续观察 2 周。"
+                                ),
+                                "weekly_feedback_calibration_patch_review_status_summary": "待审批",
+                                "weekly_feedback_calibration_patch_review_history_summary": (
+                                    "已批准 @ 2026-03-22T09:30:00 -> 已应用 @ 2026-03-22T10:15:00 | config=investment_execution_us.yaml"
+                                ),
+                                "weekly_feedback_calibration_patch_review_evidence_summary": (
+                                    "config=investment_execution_us.yaml | sha1=abcdef1234 | git=deadbeef12"
+                                ),
                             }
                         },
                     },
@@ -4593,6 +5254,12 @@ class SupervisorCliTests(unittest.TestCase):
             self.assertIn("建议改动", html_text)
             self.assertIn("优先改动", html_text)
             self.assertIn("人工首改", html_text)
+            self.assertIn("校准建议", html_text)
+            self.assertIn("校准首改", html_text)
+            self.assertIn("校准处理", html_text)
+            self.assertIn("校准审批", html_text)
+            self.assertIn("校准历史", html_text)
+            self.assertIn("校准凭证", html_text)
             self.assertIn("审批状态", html_text)
             self.assertIn("审批历史", html_text)
             self.assertIn("建议状态", html_text)
@@ -4604,10 +5271,14 @@ class SupervisorCliTests(unittest.TestCase):
             self.assertIn("regime_risk_on_threshold", html_text)
             self.assertIn("建议先调整 US 市场档案", html_text)
             self.assertIn("优先改 no_trade_band_pct", html_text)
-            self.assertIn("当前未到人工应用阶段", html_text)
+            self.assertIn("建议先人工应用 1 项", html_text)
             self.assertIn("待审批", html_text)
             self.assertIn("已清除", html_text)
             self.assertIn("0.48", html_text)
+            self.assertIn("adv_split_trigger_pct", html_text)
+            self.assertIn("0.025", html_text)
+            self.assertIn("investment_execution_us.yaml", html_text)
+            self.assertIn("建议先人工应用 1 项", html_text)
             self.assertIn("先继续观察到至少 2 周", html_text)
             self.assertIn("策略主动转入防守", html_text)
             self.assertIn("2 笔计划单因执行 gate 暂未下发", html_text)

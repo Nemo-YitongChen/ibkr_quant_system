@@ -124,6 +124,40 @@ def test_read_csv_rows_and_markdown_writer(tmp_path: Path):
         execution_feedback_rows=[],
         control_timeseries_rows=[],
         window_label="2026-W13",
+        calibration_patch_suggestion_rows=[
+            {
+                "portfolio_id": "US:watchlist",
+                "market": "US",
+                "scope_label": "执行门槛",
+                "field": "edge_cost_buffer_bps",
+                "current_value": 5.0,
+                "suggested_value": 4.0,
+                "config_path": "market_profiles.US.edge_cost_buffer_bps",
+                "change_hint_label": "按放松方向温和下调",
+                "source_signal_label": "edge gate 偏紧",
+                "priority_label": "先改低风险 buffer",
+                "source_note": "被 edge gate 挡掉的单事后并不差，当前 edge floor/buffer 可能偏紧。",
+            }
+        ],
+        patch_governance_rows=[
+            {
+                "market": "US",
+                "patch_kind_label": "校准补丁",
+                "field": "adv_split_trigger_pct",
+                "scope_label": "执行切片",
+                "review_cycle_count": 2,
+                "open_cycle_count": 1,
+                "approved_not_applied_count": 1,
+                "approval_rate": 0.5,
+                "rejection_rate": 0.0,
+                "apply_rate": 0.5,
+                "review_latency_basis": "review_to_apply",
+                "avg_review_to_apply_weeks": 1.0,
+                "latest_week_label": "2026-W13",
+                "latest_status_label": "已批准",
+                "examples": "US:watchlist:已批准",
+            }
+        ],
     )
     text = out_path.read_text(encoding="utf-8")
     assert "# Weekly Investment Review" in text
@@ -138,6 +172,12 @@ def test_read_csv_rows_and_markdown_writer(tmp_path: Path):
     assert "执行阻断: 另外有 2 笔计划单因执行 gate 暂未下发" in text
     assert "周度解释: 本周有 2 个新开仓机会因防守环境被降级为观察" in text
     assert "控制拆解: 策略 6.0% | 风险 12.0% | 执行 0.0%" in text
+    assert "## Calibration Patch Suggestions" in text
+    assert "market_profiles.US.edge_cost_buffer_bps" in text
+    assert "edge gate 偏紧" in text
+    assert "## Patch Governance Summary" in text
+    assert "adv_split_trigger_pct" in text
+    assert "avg_review_to_apply_weeks=1.0" in text
 
 
 def test_weekly_strategy_note_prefers_defensive_cap_message() -> None:

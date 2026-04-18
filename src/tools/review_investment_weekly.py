@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from ..analysis.report import write_csv, write_json
+from ..analysis.investment_portfolio import InvestmentPaperConfig
 from ..common.account_profile import load_account_profiles, resolved_account_profile_summary
 from ..common.adaptive_strategy import (
     adaptive_strategy_context,
@@ -42,10 +43,13 @@ from ..common.logger import get_logger
 from ..common.markets import add_market_args, market_config_path, resolve_market_code
 from ..common.runtime_paths import resolve_repo_path
 from ..common.storage import Storage
+from ..portfolio.investment_allocator import InvestmentExecutionConfig
 
 log = get_logger("tools.review_investment_weekly")
 BASE_DIR = Path(__file__).resolve().parents[2]
 FEEDBACK_CALIBRATION_LOOKBACK_DAYS = 180
+DEFAULT_PAPER_CFG = InvestmentPaperConfig()
+DEFAULT_EXECUTION_CFG = InvestmentExecutionConfig()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -986,6 +990,561 @@ def _persist_weekly_tuning_history(
         )
 
 
+def _persist_weekly_decision_evidence_history(
+    db_path: Path,
+    rows: List[Dict[str, Any]],
+    *,
+    week_label: str,
+    week_start: str,
+    window_start: str,
+    window_end: str,
+) -> None:
+    if not rows:
+        return
+    storage = Storage(str(db_path))
+    review_ts = datetime.now(timezone.utc).isoformat()
+    for raw in list(rows or []):
+        row = dict(raw)
+        portfolio_id = str(row.get("portfolio_id") or "").strip()
+        market = resolve_market_code(str(row.get("market") or ""))
+        parent_order_key = str(row.get("parent_order_key") or "").strip()
+        if not portfolio_id or not market or not parent_order_key:
+            continue
+        storage.upsert_investment_weekly_decision_evidence_history(
+            {
+                "week_label": str(week_label or "").strip(),
+                "week_start": str(week_start or "").strip(),
+                "window_start": str(window_start or "").strip(),
+                "window_end": str(window_end or "").strip(),
+                "ts": review_ts,
+                "market": market,
+                "portfolio_id": portfolio_id,
+                "run_id": str(row.get("run_id") or ""),
+                "parent_order_key": parent_order_key,
+                "symbol": str(row.get("symbol") or "").upper(),
+                "action": str(row.get("action") or ""),
+                "decision_status": str(row.get("decision_status") or ""),
+                "candidate_snapshot_id": str(row.get("candidate_snapshot_id") or ""),
+                "candidate_stage": str(row.get("candidate_stage") or ""),
+                "order_value": float(row.get("order_value", 0.0) or 0.0),
+                "fill_notional": float(row.get("fill_notional", 0.0) or 0.0),
+                "signal_score": float(row.get("signal_score", 0.0) or 0.0),
+                "expected_edge_bps": float(row.get("expected_edge_bps", 0.0) or 0.0),
+                "expected_cost_bps": float(row.get("expected_cost_bps", 0.0) or 0.0),
+                "edge_gate_threshold_bps": float(row.get("edge_gate_threshold_bps", 0.0) or 0.0),
+                "blocked_market_rule_order_count": int(row.get("blocked_market_rule_order_count", 0) or 0),
+                "blocked_edge_order_count": int(row.get("blocked_edge_order_count", 0) or 0),
+                "blocked_gate_order_count": int(row.get("blocked_gate_order_count", 0) or 0),
+                "dynamic_liquidity_bucket": str(row.get("dynamic_liquidity_bucket") or ""),
+                "dynamic_order_adv_pct": float(row.get("dynamic_order_adv_pct", 0.0) or 0.0),
+                "slice_count": int(row.get("slice_count", 0) or 0),
+                "strategy_control_weight_delta": float(row.get("strategy_control_weight_delta", 0.0) or 0.0),
+                "risk_overlay_weight_delta": float(row.get("risk_overlay_weight_delta", 0.0) or 0.0),
+                "risk_market_profile_budget_weight_delta": float(
+                    row.get("risk_market_profile_budget_weight_delta", 0.0) or 0.0
+                ),
+                "risk_throttle_weight_delta": float(row.get("risk_throttle_weight_delta", 0.0) or 0.0),
+                "risk_recovery_weight_credit": float(row.get("risk_recovery_weight_credit", 0.0) or 0.0),
+                "execution_gate_blocked_weight": float(row.get("execution_gate_blocked_weight", 0.0) or 0.0),
+                "realized_slippage_bps": (
+                    float(row.get("realized_slippage_bps", 0.0) or 0.0)
+                    if row.get("realized_slippage_bps") not in (None, "")
+                    else None
+                ),
+                "realized_edge_bps": (
+                    float(row.get("realized_edge_bps", 0.0) or 0.0)
+                    if row.get("realized_edge_bps") not in (None, "")
+                    else None
+                ),
+                "execution_capture_bps": (
+                    float(row.get("execution_capture_bps", 0.0) or 0.0)
+                    if row.get("execution_capture_bps") not in (None, "")
+                    else None
+                ),
+                "first_fill_delay_seconds": (
+                    float(row.get("first_fill_delay_seconds", 0.0) or 0.0)
+                    if row.get("first_fill_delay_seconds") not in (None, "")
+                    else None
+                ),
+                "outcome_5d_bps": (
+                    float(row.get("outcome_5d_bps", 0.0) or 0.0)
+                    if row.get("outcome_5d_bps") not in (None, "")
+                    else None
+                ),
+                "outcome_20d_bps": (
+                    float(row.get("outcome_20d_bps", 0.0) or 0.0)
+                    if row.get("outcome_20d_bps") not in (None, "")
+                    else None
+                ),
+                "outcome_60d_bps": (
+                    float(row.get("outcome_60d_bps", 0.0) or 0.0)
+                    if row.get("outcome_60d_bps") not in (None, "")
+                    else None
+                ),
+                "details": row,
+            }
+        )
+
+
+def _build_weekly_decision_evidence_history_overview(
+    db_path: Path,
+    rows: List[Dict[str, Any]],
+    *,
+    limit: int = 6,
+) -> List[Dict[str, Any]]:
+    if not rows:
+        return []
+    storage = Storage(str(db_path))
+    out: List[Dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for raw in list(rows or []):
+        portfolio_id = str(raw.get("portfolio_id") or "").strip()
+        market = resolve_market_code(str(raw.get("market") or ""))
+        key = (market, portfolio_id)
+        if not market or not portfolio_id or key in seen:
+            continue
+        seen.add(key)
+        history_rows = storage.get_recent_investment_weekly_decision_evidence_history(
+            market,
+            portfolio_id=portfolio_id,
+            limit=max(20, int(limit) * 50),
+        )
+        if not history_rows:
+            continue
+        grouped: Dict[str, List[Dict[str, Any]]] = {}
+        for item in list(history_rows or []):
+            week_key = str(item.get("week_label") or "").strip()
+            if week_key:
+                grouped.setdefault(week_key, []).append(dict(item))
+        weekly_rows: List[Dict[str, Any]] = []
+        for week_key, week_items in grouped.items():
+            summary_rows = _build_weekly_decision_evidence_summary_rows(week_items)
+            if not summary_rows:
+                continue
+            summary_row = dict(summary_rows[0])
+            summary_row["week_label"] = week_key
+            summary_row["week_start"] = str((week_items[0] or {}).get("week_start") or "")
+            weekly_rows.append(summary_row)
+        weekly_rows.sort(
+            key=lambda item: (
+                str(item.get("week_start") or ""),
+                str(item.get("week_label") or ""),
+            ),
+            reverse=True,
+        )
+        tracked_rows = weekly_rows[: max(2, int(limit))]
+        if not tracked_rows:
+            continue
+        latest = dict(tracked_rows[0] or {})
+        baseline = dict(tracked_rows[-1] or latest)
+        liquidity_bucket_chain = " -> ".join(
+            f"{str(item.get('week_label') or '')}:{str(item.get('decision_primary_liquidity_bucket') or '-')}"
+            for item in reversed(tracked_rows)
+        )
+        realized_slippage_delta = float(latest.get("decision_avg_realized_slippage_bps", 0.0) or 0.0) - float(
+            baseline.get("decision_avg_realized_slippage_bps", 0.0) or 0.0
+        )
+        realized_edge_delta = float(latest.get("decision_avg_realized_edge_bps", 0.0) or 0.0) - float(
+            baseline.get("decision_avg_realized_edge_bps", 0.0) or 0.0
+        )
+        outcome_20d_delta = float(latest.get("decision_avg_outcome_20d_bps", 0.0) or 0.0) - float(
+            baseline.get("decision_avg_outcome_20d_bps", 0.0) or 0.0
+        )
+        fill_delay_delta = float(_safe_float(latest.get("decision_avg_fill_delay_seconds"), 0.0)) - float(
+            _safe_float(baseline.get("decision_avg_fill_delay_seconds"), 0.0)
+        )
+        blocked_edge_delta = float(latest.get("decision_blocked_edge_order_count", 0) or 0.0) - float(
+            baseline.get("decision_blocked_edge_order_count", 0) or 0.0
+        )
+        blocked_market_rule_delta = float(
+            latest.get("decision_blocked_market_rule_order_count", 0) or 0.0
+        ) - float(baseline.get("decision_blocked_market_rule_order_count", 0) or 0.0)
+        dynamic_adv_pct_delta = float(latest.get("decision_avg_dynamic_order_adv_pct", 0.0) or 0.0) - float(
+            baseline.get("decision_avg_dynamic_order_adv_pct", 0.0) or 0.0
+        )
+        slice_count_delta = float(latest.get("decision_avg_slice_count", 0.0) or 0.0) - float(
+            baseline.get("decision_avg_slice_count", 0.0) or 0.0
+        )
+        out.append(
+            {
+                "portfolio_id": portfolio_id,
+                "market": market,
+                "weeks_tracked": int(len(tracked_rows)),
+                "latest_week_label": str(latest.get("week_label") or ""),
+                "baseline_week_label": str(baseline.get("week_label") or ""),
+                "latest_primary_liquidity_bucket": str(latest.get("decision_primary_liquidity_bucket") or ""),
+                "liquidity_bucket_chain": liquidity_bucket_chain,
+                "latest_decision_evidence_row_count": int(latest.get("decision_evidence_row_count", 0) or 0),
+                "latest_blocked_edge_order_count": int(latest.get("decision_blocked_edge_order_count", 0) or 0),
+                "latest_blocked_market_rule_order_count": int(
+                    latest.get("decision_blocked_market_rule_order_count", 0) or 0
+                ),
+                "latest_decision_avg_expected_edge_bps": float(
+                    latest.get("decision_avg_expected_edge_bps", 0.0) or 0.0
+                ),
+                "baseline_decision_avg_expected_edge_bps": float(
+                    baseline.get("decision_avg_expected_edge_bps", 0.0) or 0.0
+                ),
+                "latest_decision_avg_realized_slippage_bps": float(
+                    latest.get("decision_avg_realized_slippage_bps", 0.0) or 0.0
+                ),
+                "baseline_decision_avg_realized_slippage_bps": float(
+                    baseline.get("decision_avg_realized_slippage_bps", 0.0) or 0.0
+                ),
+                "decision_avg_realized_slippage_bps_delta": float(realized_slippage_delta),
+                "decision_slippage_trend": _weekly_tuning_history_trend_label(
+                    realized_slippage_delta,
+                    threshold=3.0,
+                    improving_if_negative=True,
+                ),
+                "latest_decision_avg_realized_edge_bps": float(
+                    latest.get("decision_avg_realized_edge_bps", 0.0) or 0.0
+                ),
+                "baseline_decision_avg_realized_edge_bps": float(
+                    baseline.get("decision_avg_realized_edge_bps", 0.0) or 0.0
+                ),
+                "decision_avg_realized_edge_bps_delta": float(realized_edge_delta),
+                "decision_realized_edge_trend": _weekly_tuning_history_trend_label(
+                    realized_edge_delta,
+                    threshold=10.0,
+                ),
+                "latest_decision_avg_outcome_20d_bps": float(
+                    latest.get("decision_avg_outcome_20d_bps", 0.0) or 0.0
+                ),
+                "baseline_decision_avg_outcome_20d_bps": float(
+                    baseline.get("decision_avg_outcome_20d_bps", 0.0) or 0.0
+                ),
+                "decision_avg_outcome_20d_bps_delta": float(outcome_20d_delta),
+                "decision_outcome_20d_trend": _weekly_tuning_history_trend_label(
+                    outcome_20d_delta,
+                    threshold=25.0,
+                ),
+                "latest_decision_avg_fill_delay_seconds": float(
+                    latest.get("decision_avg_fill_delay_seconds", 0.0) or 0.0
+                ),
+                "baseline_decision_avg_fill_delay_seconds": float(
+                    baseline.get("decision_avg_fill_delay_seconds", 0.0) or 0.0
+                ),
+                "decision_avg_fill_delay_seconds_delta": float(fill_delay_delta),
+                "decision_fill_delay_trend": _weekly_tuning_history_trend_label(
+                    fill_delay_delta,
+                    threshold=30.0,
+                    improving_if_negative=True,
+                ),
+                "decision_blocked_edge_order_count_delta": float(blocked_edge_delta),
+                "decision_blocked_edge_trend": _weekly_tuning_history_trend_label(
+                    blocked_edge_delta,
+                    threshold=1.0,
+                    improving_if_negative=True,
+                ),
+                "decision_blocked_market_rule_order_count_delta": float(blocked_market_rule_delta),
+                "decision_market_rule_block_trend": _weekly_tuning_history_trend_label(
+                    blocked_market_rule_delta,
+                    threshold=1.0,
+                    improving_if_negative=True,
+                ),
+                "decision_avg_dynamic_order_adv_pct_delta": float(dynamic_adv_pct_delta),
+                "decision_avg_slice_count_delta": float(slice_count_delta),
+            }
+        )
+    out.sort(key=lambda row: (str(row.get("market") or ""), str(row.get("portfolio_id") or "")))
+    return out
+
+
+def _recent_decision_history_rows(
+    storage: Storage,
+    market: str,
+    portfolio_id: str,
+    *,
+    limit: int,
+) -> List[Dict[str, Any]]:
+    history_rows = storage.get_recent_investment_weekly_decision_evidence_history(
+        market,
+        portfolio_id=portfolio_id,
+        limit=max(20, int(limit) * 50),
+    )
+    if not history_rows:
+        return []
+    weekly_order: List[str] = []
+    for item in list(history_rows or []):
+        week_key = str(item.get("week_label") or "").strip()
+        if week_key and week_key not in weekly_order:
+            weekly_order.append(week_key)
+    allowed_weeks = set(weekly_order[: max(2, int(limit))])
+    return [dict(item) for item in list(history_rows or []) if str(item.get("week_label") or "").strip() in allowed_weeks]
+
+
+def _build_weekly_edge_calibration_rows(
+    db_path: Path,
+    rows: List[Dict[str, Any]],
+    *,
+    limit: int = 6,
+) -> List[Dict[str, Any]]:
+    if not rows:
+        return []
+    storage = Storage(str(db_path))
+    out: List[Dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for raw in list(rows or []):
+        portfolio_id = str(raw.get("portfolio_id") or "").strip()
+        market = resolve_market_code(str(raw.get("market") or ""))
+        key = (market, portfolio_id)
+        if not market or not portfolio_id or key in seen:
+            continue
+        seen.add(key)
+        history_rows = _recent_decision_history_rows(storage, market, portfolio_id, limit=limit)
+        if not history_rows:
+            continue
+        filled = [
+            row for row in history_rows
+            if str(row.get("decision_status") or "").strip().upper() == "FILLED"
+        ]
+        blocked_edge = [
+            row for row in history_rows
+            if int(row.get("blocked_edge_order_count", 0) or 0) > 0
+            or str(row.get("decision_status") or "").strip().upper() == "BLOCKED_EDGE"
+        ]
+        blocked_market_rule = [
+            row for row in history_rows
+            if int(row.get("blocked_market_rule_order_count", 0) or 0) > 0
+        ]
+        filled_outcome_20d = _avg_defined([row.get("outcome_20d_bps") for row in filled if row.get("outcome_20d_bps") not in (None, "")])
+        blocked_edge_outcome_20d = _avg_defined(
+            [row.get("outcome_20d_bps") for row in blocked_edge if row.get("outcome_20d_bps") not in (None, "")]
+        )
+        blocked_market_rule_outcome_20d = _avg_defined(
+            [row.get("outcome_20d_bps") for row in blocked_market_rule if row.get("outcome_20d_bps") not in (None, "")]
+        )
+        edge_gap = None
+        if filled_outcome_20d is not None and blocked_edge_outcome_20d is not None:
+            edge_gap = float(blocked_edge_outcome_20d - filled_outcome_20d)
+        market_rule_gap = None
+        if filled_outcome_20d is not None and blocked_market_rule_outcome_20d is not None:
+            market_rule_gap = float(blocked_market_rule_outcome_20d - filled_outcome_20d)
+
+        edge_quality = "OBSERVE"
+        if edge_gap is not None:
+            if edge_gap <= -25.0:
+                edge_quality = "GATE_DISCIPLINE_GOOD"
+            elif edge_gap >= 25.0:
+                edge_quality = "GATE_TOO_TIGHT"
+            else:
+                edge_quality = "GATE_MIXED"
+        market_rule_quality = "OBSERVE"
+        if market_rule_gap is not None:
+            if market_rule_gap <= -25.0:
+                market_rule_quality = "RULE_FILTER_GOOD"
+            elif market_rule_gap >= 25.0:
+                market_rule_quality = "RULE_FILTER_TOO_TIGHT"
+            else:
+                market_rule_quality = "RULE_FILTER_MIXED"
+
+        note = "继续观察 edge 与市场规则阻断的事后表现。"
+        if edge_quality == "GATE_DISCIPLINE_GOOD":
+            note = "被 edge gate 挡掉的单事后 outcome 明显弱于成交单，当前 gate 纪律有效。"
+        elif edge_quality == "GATE_TOO_TIGHT":
+            note = "被 edge gate 挡掉的单事后并不差，当前 edge floor/buffer 可能偏紧。"
+        elif market_rule_quality == "RULE_FILTER_TOO_TIGHT":
+            note = "市场规则阻断样本事后并不弱，需复核 board lot / research-only 等限制是否过保守。"
+
+        out.append(
+            {
+                "portfolio_id": portfolio_id,
+                "market": market,
+                "weeks_tracked": int(len({str(item.get('week_label') or '') for item in history_rows if str(item.get('week_label') or '').strip()})),
+                "filled_sample_count": int(len(filled)),
+                "blocked_edge_sample_count": int(len(blocked_edge)),
+                "blocked_market_rule_sample_count": int(len(blocked_market_rule)),
+                "filled_avg_outcome_20d_bps": filled_outcome_20d,
+                "blocked_edge_avg_outcome_20d_bps": blocked_edge_outcome_20d,
+                "blocked_market_rule_avg_outcome_20d_bps": blocked_market_rule_outcome_20d,
+                "blocked_edge_vs_filled_outcome_20d_bps": edge_gap,
+                "blocked_market_rule_vs_filled_outcome_20d_bps": market_rule_gap,
+                "edge_gate_quality": edge_quality,
+                "market_rule_quality": market_rule_quality,
+                "edge_calibration_note": note,
+            }
+        )
+    out.sort(key=lambda row: (str(row.get("market") or ""), str(row.get("portfolio_id") or "")))
+    return out
+
+
+def _build_weekly_slicing_calibration_rows(
+    db_path: Path,
+    rows: List[Dict[str, Any]],
+    *,
+    limit: int = 6,
+) -> List[Dict[str, Any]]:
+    if not rows:
+        return []
+    storage = Storage(str(db_path))
+    out: List[Dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    portfolio_keys = {
+        (resolve_market_code(str(raw.get("market") or "")), str(raw.get("portfolio_id") or "").strip())
+        for raw in list(rows or [])
+        if resolve_market_code(str(raw.get("market") or "")) and str(raw.get("portfolio_id") or "").strip()
+    }
+    for market, portfolio_id in sorted(portfolio_keys):
+        history_rows = _recent_decision_history_rows(storage, market, portfolio_id, limit=limit)
+        bucket_groups: Dict[str, List[Dict[str, Any]]] = {}
+        for item in list(history_rows or []):
+            bucket = str(item.get("dynamic_liquidity_bucket") or "").strip().upper()
+            if bucket:
+                bucket_groups.setdefault(bucket, []).append(dict(item))
+        for bucket, bucket_rows in bucket_groups.items():
+            key = (market, portfolio_id, bucket)
+            if key in seen:
+                continue
+            seen.add(key)
+            filled_rows = [
+                row for row in bucket_rows
+                if str(row.get("decision_status") or "").strip().upper() == "FILLED"
+            ]
+            avg_adv_pct = _avg_defined([row.get("dynamic_order_adv_pct") for row in bucket_rows if row.get("dynamic_order_adv_pct") not in (None, "")])
+            avg_slice_count = _avg_defined([row.get("slice_count") for row in bucket_rows if row.get("slice_count") not in (None, "")])
+            avg_slippage = _avg_defined([row.get("realized_slippage_bps") for row in filled_rows if row.get("realized_slippage_bps") not in (None, "")])
+            avg_fill_delay = _avg_defined([row.get("first_fill_delay_seconds") for row in filled_rows if row.get("first_fill_delay_seconds") not in (None, "")])
+            avg_realized_edge = _avg_defined([row.get("realized_edge_bps") for row in filled_rows if row.get("realized_edge_bps") not in (None, "")])
+            avg_outcome_20d = _avg_defined([row.get("outcome_20d_bps") for row in filled_rows if row.get("outcome_20d_bps") not in (None, "")])
+
+            assessment = "BALANCED"
+            note = "当前 bucket 的切片强度与成交质量大体匹配。"
+            if (avg_slice_count or 0.0) >= 3.5 and (avg_slippage or 0.0) <= 8.0:
+                assessment = "POSSIBLY_TOO_CONSERVATIVE"
+                note = "切片次数偏多但滑点仍低，当前 bucket 可能过度保守。"
+            elif (avg_slice_count or 0.0) <= 1.5 and (avg_slippage or 0.0) >= 18.0:
+                assessment = "NEED_MORE_SLICING"
+                note = "切片偏少且滑点偏高，当前 bucket 可能需要更积极拆单。"
+            elif (avg_fill_delay or 0.0) >= 150.0 and (avg_slice_count or 0.0) >= 3.0:
+                assessment = "DELAY_HEAVY"
+                note = "成交等待偏长，当前切片节奏可能拖慢执行。"
+
+            out.append(
+                {
+                    "portfolio_id": portfolio_id,
+                    "market": market,
+                    "dynamic_liquidity_bucket": bucket,
+                    "sample_count": int(len(bucket_rows)),
+                    "filled_sample_count": int(len(filled_rows)),
+                    "avg_dynamic_order_adv_pct": avg_adv_pct,
+                    "avg_slice_count": avg_slice_count,
+                    "avg_realized_slippage_bps": avg_slippage,
+                    "avg_fill_delay_seconds": avg_fill_delay,
+                    "avg_realized_edge_bps": avg_realized_edge,
+                    "avg_outcome_20d_bps": avg_outcome_20d,
+                    "slicing_assessment": assessment,
+                    "slicing_calibration_note": note,
+                }
+            )
+    out.sort(
+        key=lambda row: (
+            str(row.get("market") or ""),
+            str(row.get("portfolio_id") or ""),
+            str(row.get("dynamic_liquidity_bucket") or ""),
+        )
+    )
+    return out
+
+
+def _build_weekly_risk_calibration_rows(
+    db_path: Path,
+    rows: List[Dict[str, Any]],
+    *,
+    limit: int = 6,
+) -> List[Dict[str, Any]]:
+    if not rows:
+        return []
+    storage = Storage(str(db_path))
+    out: List[Dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for raw in list(rows or []):
+        portfolio_id = str(raw.get("portfolio_id") or "").strip()
+        market = resolve_market_code(str(raw.get("market") or ""))
+        key = (market, portfolio_id)
+        if not market or not portfolio_id or key in seen:
+            continue
+        seen.add(key)
+        tuning_rows = storage.get_recent_investment_weekly_tuning_history(
+            market,
+            portfolio_id=portfolio_id,
+            limit=max(2, int(limit)),
+        )
+        if not tuning_rows:
+            continue
+        decision_history_rows = _recent_decision_history_rows(storage, market, portfolio_id, limit=limit)
+        decision_weekly_map: Dict[str, Dict[str, Any]] = {}
+        grouped_decision_history: Dict[str, List[Dict[str, Any]]] = {}
+        for item in list(decision_history_rows or []):
+            week_key = str(item.get("week_label") or "").strip()
+            if week_key:
+                grouped_decision_history.setdefault(week_key, []).append(dict(item))
+        for week_key, week_items in grouped_decision_history.items():
+            summary_rows = _build_weekly_decision_evidence_summary_rows(week_items)
+            if summary_rows:
+                decision_weekly_map[week_key] = dict(summary_rows[0])
+
+        latest = dict(tuning_rows[0] or {})
+        baseline = dict(tuning_rows[-1] or latest)
+        latest_details = dict(latest.get("details_json") or {})
+        baseline_details = dict(baseline.get("details_json") or {})
+        latest_decision = dict(decision_weekly_map.get(str(latest.get("week_label") or ""), {}) or {})
+        baseline_decision = dict(decision_weekly_map.get(str(baseline.get("week_label") or ""), {}) or {})
+
+        latest_budget = float(latest_details.get("risk_market_profile_budget_weight_delta", 0.0) or 0.0)
+        latest_throttle = float(latest_details.get("risk_throttle_weight_delta", 0.0) or 0.0)
+        latest_recovery = float(latest_details.get("risk_recovery_weight_credit", 0.0) or 0.0)
+        baseline_budget = float(baseline_details.get("risk_market_profile_budget_weight_delta", 0.0) or 0.0)
+        baseline_throttle = float(baseline_details.get("risk_throttle_weight_delta", 0.0) or 0.0)
+        baseline_recovery = float(baseline_details.get("risk_recovery_weight_credit", 0.0) or 0.0)
+        outcome_20d_delta = float(latest_decision.get("decision_avg_outcome_20d_bps", 0.0) or 0.0) - float(
+            baseline_decision.get("decision_avg_outcome_20d_bps", 0.0) or 0.0
+        )
+        realized_edge_delta = float(latest_decision.get("decision_avg_realized_edge_bps", 0.0) or 0.0) - float(
+            baseline_decision.get("decision_avg_realized_edge_bps", 0.0) or 0.0
+        )
+        component_scores = {
+            "BUDGET": abs(latest_budget),
+            "THROTTLE": abs(latest_throttle),
+            "RECOVERY": abs(latest_recovery),
+        }
+        dominant_component = max(component_scores.items(), key=lambda item: (float(item[1] or 0.0), str(item[0] or "")))[0]
+        calibration_target = "OBSERVE"
+        note = "当前风险预算、throttle 与 recovery 还需要继续观察。"
+        if dominant_component == "BUDGET" and latest_budget > baseline_budget and outcome_20d_delta < -25.0:
+            calibration_target = "BUDGET_TOO_TIGHT"
+            note = "最近收益拖累更像来自 market-profile budget 收紧，优先复核 net/gross exposure budget。"
+        elif dominant_component == "THROTTLE" and latest_throttle > baseline_throttle and outcome_20d_delta < -25.0:
+            calibration_target = "THROTTLE_TOO_TIGHT"
+            note = "最近收益拖累更像来自 throttle 层，优先复核相关性/流动性/集中度 throttle。"
+        elif latest_recovery > baseline_recovery and outcome_20d_delta > 25.0 and realized_edge_delta > 10.0:
+            calibration_target = "RECOVERY_HELPING"
+            note = "recovery 近期在改善收益恢复，可继续保持温和回补节奏。"
+
+        out.append(
+            {
+                "portfolio_id": portfolio_id,
+                "market": market,
+                "latest_week_label": str(latest.get("week_label") or ""),
+                "baseline_week_label": str(baseline.get("week_label") or ""),
+                "latest_budget_weight_delta": latest_budget,
+                "baseline_budget_weight_delta": baseline_budget,
+                "latest_throttle_weight_delta": latest_throttle,
+                "baseline_throttle_weight_delta": baseline_throttle,
+                "latest_recovery_weight_credit": latest_recovery,
+                "baseline_recovery_weight_credit": baseline_recovery,
+                "latest_dominant_throttle_layer": str(latest_details.get("risk_dominant_throttle_layer") or ""),
+                "latest_dominant_throttle_layer_label": str(latest_details.get("risk_dominant_throttle_layer_label") or ""),
+                "decision_avg_outcome_20d_bps_delta": float(outcome_20d_delta),
+                "decision_avg_realized_edge_bps_delta": float(realized_edge_delta),
+                "risk_calibration_target": calibration_target,
+                "risk_calibration_note": note,
+            }
+        )
+    out.sort(key=lambda row: (str(row.get("market") or ""), str(row.get("portfolio_id") or "")))
+    return out
+
+
 def _weekly_tuning_history_trend_label(
     delta: float,
     *,
@@ -1095,6 +1654,221 @@ def _build_weekly_tuning_history_overview(
         )
     )
     return out
+
+
+def _patch_review_kind_label(kind: str) -> str:
+    raw = str(kind or "").strip().lower()
+    if raw == "market_profile":
+        return "市场档案"
+    if raw == "calibration":
+        return "校准补丁"
+    return raw or "-"
+
+
+def _patch_review_week_start_dt(text: str) -> datetime | None:
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def _build_weekly_patch_governance_summary_rows(
+    db_path: Path,
+    rows: List[Dict[str, Any]],
+    *,
+    limit: int = 24,
+) -> List[Dict[str, Any]]:
+    if not rows:
+        return []
+    storage = Storage(str(db_path))
+    cycle_rows: List[Dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for raw in list(rows or []):
+        portfolio_id = str(raw.get("portfolio_id") or "").strip()
+        market = resolve_market_code(str(raw.get("market") or ""))
+        key = (market, portfolio_id)
+        if not market or not portfolio_id or key in seen:
+            continue
+        seen.add(key)
+        history_rows = storage.get_recent_investment_patch_review_history(
+            market,
+            portfolio_id=portfolio_id,
+            limit=max(20, int(limit) * 8),
+        )
+        if not history_rows:
+            continue
+        grouped: Dict[tuple[str, str], List[Dict[str, Any]]] = {}
+        for item in list(history_rows or []):
+            row = dict(item)
+            patch_kind = str(row.get("patch_kind") or "").strip().lower()
+            if not patch_kind:
+                continue
+            feedback_signature = str(row.get("feedback_signature") or "").strip()
+            if not feedback_signature:
+                details_json = dict(row.get("details_json") or {})
+                primary_item = dict(details_json.get("primary_item") or {})
+                feedback_signature = (
+                    f"{patch_kind}|"
+                    f"{str(primary_item.get('config_path') or row.get('config_path') or '').strip()}|"
+                    f"{str(row.get('week_label') or '').strip()}"
+                )
+            grouped.setdefault((patch_kind, feedback_signature), []).append(row)
+        for (patch_kind, _feedback_signature), cycle_events in grouped.items():
+            cycle_events.sort(
+                key=lambda item: (
+                    str(item.get("week_start") or ""),
+                    str(item.get("ts") or ""),
+                    int(item.get("id", 0) or 0),
+                )
+            )
+            first = dict(cycle_events[0] or {})
+            latest = dict(cycle_events[-1] or {})
+            first_details = dict(first.get("details_json") or {})
+            latest_details = dict(latest.get("details_json") or {})
+            latest_primary_item = dict(latest_details.get("primary_item") or first_details.get("primary_item") or {})
+            config_path = str(latest_primary_item.get("config_path") or latest.get("config_path") or "").strip()
+            field = str(latest_primary_item.get("field") or "").strip()
+            if not field and config_path:
+                field = config_path.split(".")[-1]
+            scope_label = str(
+                latest_primary_item.get("scope_label")
+                or latest_primary_item.get("scope")
+                or latest.get("scope")
+                or "-"
+            )
+            applied_row = next(
+                (
+                    dict(item)
+                    for item in cycle_events
+                    if str(item.get("review_status") or "").strip().upper() == "APPLIED"
+                ),
+                {},
+            )
+            start_week = _patch_review_week_start_dt(str(first.get("week_start") or ""))
+            applied_week = _patch_review_week_start_dt(str(applied_row.get("week_start") or ""))
+            review_to_apply_weeks = None
+            if start_week is not None and applied_week is not None:
+                review_to_apply_weeks = round(max(0.0, (applied_week - start_week).days / 7.0), 2)
+            latest_status = str(latest.get("review_status") or "").strip().upper()
+            cycle_rows.append(
+                {
+                    "market": market,
+                    "portfolio_id": portfolio_id,
+                    "patch_kind": patch_kind,
+                    "patch_kind_label": _patch_review_kind_label(patch_kind),
+                    "field": field or "-",
+                    "scope_label": scope_label,
+                    "latest_week_label": str(latest.get("week_label") or "-"),
+                    "latest_ts": str(latest.get("ts") or ""),
+                    "latest_status": latest_status,
+                    "latest_status_label": str(latest.get("review_status_label") or latest_status or "-"),
+                    "approved": any(
+                        str(item.get("review_status") or "").strip().upper() == "APPROVED"
+                        for item in cycle_events
+                    ),
+                    "rejected": any(
+                        str(item.get("review_status") or "").strip().upper() == "REJECTED"
+                        for item in cycle_events
+                    ),
+                    "applied": bool(applied_row),
+                    "approved_not_applied": latest_status == "APPROVED" and not bool(applied_row),
+                    "open_cycle": latest_status not in {"APPLIED", "REJECTED", "CLEAR"},
+                    "review_to_apply_weeks": review_to_apply_weeks,
+                }
+            )
+    grouped_rows: Dict[tuple[str, str, str, str], Dict[str, Any]] = {}
+    for cycle in cycle_rows:
+        key = (
+            str(cycle.get("market") or ""),
+            str(cycle.get("patch_kind") or ""),
+            str(cycle.get("field") or ""),
+            str(cycle.get("scope_label") or ""),
+        )
+        agg = grouped_rows.get(key)
+        if agg is None:
+            agg = {
+                "market": str(cycle.get("market") or ""),
+                "patch_kind_label": str(cycle.get("patch_kind_label") or "-"),
+                "field": str(cycle.get("field") or "-"),
+                "scope_label": str(cycle.get("scope_label") or "-"),
+                "review_cycle_count": 0,
+                "approved_count": 0,
+                "rejected_count": 0,
+                "applied_count": 0,
+                "approved_not_applied_count": 0,
+                "open_cycle_count": 0,
+                "review_to_apply_weeks_values": [],
+                "latest_ts": "",
+                "latest_week_label": "-",
+                "latest_status_label": "-",
+                "examples": [],
+            }
+            grouped_rows[key] = agg
+        agg["review_cycle_count"] += 1
+        if bool(cycle.get("approved", False)):
+            agg["approved_count"] += 1
+        if bool(cycle.get("rejected", False)):
+            agg["rejected_count"] += 1
+        if bool(cycle.get("applied", False)):
+            agg["applied_count"] += 1
+        if bool(cycle.get("approved_not_applied", False)):
+            agg["approved_not_applied_count"] += 1
+        if bool(cycle.get("open_cycle", False)):
+            agg["open_cycle_count"] += 1
+        if cycle.get("review_to_apply_weeks") is not None:
+            agg["review_to_apply_weeks_values"].append(float(cycle["review_to_apply_weeks"]))
+        latest_ts = str(cycle.get("latest_ts") or "")
+        if latest_ts >= str(agg.get("latest_ts") or ""):
+            agg["latest_ts"] = latest_ts
+            agg["latest_week_label"] = str(cycle.get("latest_week_label") or "-")
+            agg["latest_status_label"] = str(cycle.get("latest_status_label") or "-")
+        example = f"{str(cycle.get('portfolio_id') or '-') or '-'}:{str(cycle.get('latest_status_label') or '-')}"
+        if example not in agg["examples"]:
+            agg["examples"].append(example)
+    out: List[Dict[str, Any]] = []
+    for agg in grouped_rows.values():
+        review_cycle_count = max(1, int(agg.get("review_cycle_count", 0) or 0))
+        review_to_apply_values = list(agg.get("review_to_apply_weeks_values") or [])
+        out.append(
+            {
+                "market": str(agg.get("market") or ""),
+                "patch_kind_label": str(agg.get("patch_kind_label") or "-"),
+                "field": str(agg.get("field") or "-"),
+                "scope_label": str(agg.get("scope_label") or "-"),
+                "review_cycle_count": review_cycle_count,
+                "approved_count": int(agg.get("approved_count", 0) or 0),
+                "rejected_count": int(agg.get("rejected_count", 0) or 0),
+                "applied_count": int(agg.get("applied_count", 0) or 0),
+                "approved_not_applied_count": int(agg.get("approved_not_applied_count", 0) or 0),
+                "open_cycle_count": int(agg.get("open_cycle_count", 0) or 0),
+                "approval_rate": round(float(agg.get("approved_count", 0) or 0) / review_cycle_count, 4),
+                "rejection_rate": round(float(agg.get("rejected_count", 0) or 0) / review_cycle_count, 4),
+                "apply_rate": round(float(agg.get("applied_count", 0) or 0) / review_cycle_count, 4),
+                "avg_review_to_apply_weeks": (
+                    round(sum(review_to_apply_values) / len(review_to_apply_values), 2)
+                    if review_to_apply_values
+                    else None
+                ),
+                "review_latency_basis": "review_to_apply",
+                "latest_week_label": str(agg.get("latest_week_label") or "-"),
+                "latest_status_label": str(agg.get("latest_status_label") or "-"),
+                "examples": " / ".join(list(agg.get("examples") or [])[:3]) or "-",
+            }
+        )
+    out.sort(
+        key=lambda row: (
+            -int(row.get("open_cycle_count", 0) or 0),
+            -int(row.get("approved_not_applied_count", 0) or 0),
+            -int(row.get("review_cycle_count", 0) or 0),
+            str(row.get("market") or ""),
+            str(row.get("patch_kind_label") or ""),
+            str(row.get("field") or ""),
+        )
+    )
+    return out[:24]
 
 
 def _build_weekly_control_timeseries_rows(
@@ -2968,7 +3742,653 @@ def _runtime_config_paths_for_market(market: str) -> Dict[str, Path]:
         "adaptive_strategy": _resolve_project_path(
             str(ibkr_cfg.get("adaptive_strategy_config", "config/adaptive_strategy_framework.yaml"))
         ),
+        "investment_paper": _resolve_project_path(
+            str(ibkr_cfg.get("investment_paper_config", f"config/investment_paper_{market_code.lower()}.yaml" if market_code else "config/investment_paper.yaml"))
+        ),
+        "investment_execution": _resolve_project_path(
+            str(ibkr_cfg.get("investment_execution_config", f"config/investment_execution_{market_code.lower()}.yaml" if market_code else "config/investment_execution.yaml"))
+        ),
     }
+
+
+def _calibration_patch_field_meta(field: str) -> Dict[str, Any]:
+    return {
+        "min_expected_edge_bps": {
+            "field_label": "min expected edge",
+            "step": 2.0,
+            "bounds": (4.0, 60.0),
+            "precision": 1,
+        },
+        "edge_cost_buffer_bps": {
+            "field_label": "edge cost buffer",
+            "step": 1.0,
+            "bounds": (1.0, 20.0),
+            "precision": 1,
+        },
+        "risk_budget_net_exposure": {
+            "field_label": "risk budget net exposure",
+            "step": 0.03,
+            "bounds": (0.20, 1.00),
+            "precision": 2,
+        },
+        "risk_budget_gross_exposure": {
+            "field_label": "risk budget gross exposure",
+            "step": 0.03,
+            "bounds": (0.25, 1.20),
+            "precision": 2,
+        },
+        "risk_budget_short_exposure": {
+            "field_label": "risk budget short exposure",
+            "step": 0.02,
+            "bounds": (0.00, 0.50),
+            "precision": 2,
+        },
+        "risk_recovery_max_bonus": {
+            "field_label": "risk recovery max bonus",
+            "step": 0.01,
+            "bounds": (0.00, 0.15),
+            "precision": 2,
+        },
+        "adv_max_participation_pct": {
+            "field_label": "ADV max participation",
+            "step": 0.005,
+            "bounds": (0.005, 0.20),
+            "precision": 3,
+        },
+        "adv_split_trigger_pct": {
+            "field_label": "ADV split trigger",
+            "step": 0.005,
+            "bounds": (0.002, 0.10),
+            "precision": 3,
+        },
+        "limit_price_buffer_bps": {
+            "field_label": "limit price buffer",
+            "step": 2.0,
+            "bounds": (2.0, 40.0),
+            "precision": 1,
+        },
+        "max_slices_per_symbol": {
+            "field_label": "max slices per symbol",
+            "step": 1.0,
+            "bounds": (1.0, 8.0),
+            "precision": 0,
+        },
+        "correlation_soft_limit": {
+            "field_label": "correlation soft limit",
+            "step": 0.03,
+            "bounds": (0.30, 0.90),
+            "precision": 2,
+        },
+        "stress_loss_soft_limit": {
+            "field_label": "stress loss soft limit",
+            "step": 0.01,
+            "bounds": (0.03, 0.20),
+            "precision": 3,
+        },
+        "portfolio_liquidity_soft_floor": {
+            "field_label": "portfolio liquidity soft floor",
+            "step": 0.03,
+            "bounds": (0.10, 0.80),
+            "precision": 2,
+        },
+        "portfolio_atr_soft_limit": {
+            "field_label": "portfolio ATR soft limit",
+            "step": 0.005,
+            "bounds": (0.02, 0.15),
+            "precision": 3,
+        },
+        "sector_concentration_soft_limit": {
+            "field_label": "sector concentration soft limit",
+            "step": 0.03,
+            "bounds": (0.20, 0.80),
+            "precision": 2,
+        },
+        "market_sentiment_soft_floor": {
+            "field_label": "market sentiment soft floor",
+            "step": 0.05,
+            "bounds": (-0.60, 0.10),
+            "precision": 2,
+        },
+    }.get(str(field or "").strip(), {})
+
+
+def _calibration_patch_priority(scope: str, field: str) -> tuple[int, str]:
+    scope_code = str(scope or "").strip().upper()
+    field_name = str(field or "").strip()
+    rankings: Dict[str, Dict[str, tuple[int, str]]] = {
+        "EXECUTION_GATE": {
+            "edge_cost_buffer_bps": (1, "先改低风险 buffer"),
+            "min_expected_edge_bps": (2, "再改主门槛"),
+        },
+        "SLICING_RELAX": {
+            "adv_split_trigger_pct": (1, "先调 split trigger"),
+            "adv_max_participation_pct": (2, "再调 ADV 上限"),
+            "limit_price_buffer_bps": (3, "最后调 limit buffer"),
+        },
+        "SLICING_TIGHTEN": {
+            "adv_split_trigger_pct": (1, "先调 split trigger"),
+            "adv_max_participation_pct": (2, "再调 ADV 上限"),
+            "max_slices_per_symbol": (3, "必要时再抬 slices 上限"),
+            "limit_price_buffer_bps": (4, "最后调 limit buffer"),
+        },
+        "RISK_BUDGET": {
+            "risk_budget_net_exposure": (1, "先改 net budget"),
+            "risk_budget_gross_exposure": (2, "再改 gross budget"),
+            "risk_budget_short_exposure": (3, "最后改 short budget"),
+        },
+        "RISK_THROTTLE": {
+            "correlation_soft_limit": (1, "先改相关性阈值"),
+            "stress_loss_soft_limit": (1, "先改 stress 阈值"),
+            "portfolio_liquidity_soft_floor": (1, "先改流动性阈值"),
+            "portfolio_atr_soft_limit": (1, "先改波动率阈值"),
+            "sector_concentration_soft_limit": (1, "先改集中度阈值"),
+            "market_sentiment_soft_floor": (1, "先改情绪阈值"),
+        },
+        "RISK_RECOVERY": {
+            "risk_recovery_max_bonus": (1, "先改 recovery bonus"),
+        },
+    }
+    return rankings.get(scope_code, {}).get(field_name, (9, "后续再评估"))
+
+
+def _calibration_patch_value(field: str, current_value: Any, change_hint: str) -> Any:
+    meta = _calibration_patch_field_meta(field)
+    if not meta:
+        return current_value
+    try:
+        current = float(current_value)
+    except Exception:
+        return current_value
+    step = float(meta.get("step", 0.0) or 0.0)
+    lower, upper = meta.get("bounds", (-1e9, 1e9))
+    precision = int(meta.get("precision", 4) or 4)
+    direction = str(change_hint or "").strip().upper()
+    if direction in {"RELAX_LOWER", "LOWER", "REDUCE"}:
+        proposed = current - step
+    elif direction in {"INCREASE", "HIGHER", "TIGHTEN_HIGHER"}:
+        proposed = current + step
+    else:
+        proposed = current
+    proposed = _clamp(float(proposed), float(lower), float(upper))
+    if precision <= 0:
+        return int(round(proposed))
+    return round(float(proposed), precision)
+
+
+def _calibration_runtime_market_cache(market: str) -> Dict[str, Any]:
+    runtime_paths = _runtime_config_paths_for_market(market)
+    execution_payload = dict(_load_yaml_file(runtime_paths["investment_execution"]).get("execution") or {})
+    paper_payload = dict(_load_yaml_file(runtime_paths["investment_paper"]).get("paper") or {})
+    return {
+        "runtime_paths": runtime_paths,
+        "adaptive_strategy_cfg": load_adaptive_strategy(BASE_DIR, str(runtime_paths["adaptive_strategy"])),
+        "execution_payload": execution_payload,
+        "paper_payload": paper_payload,
+    }
+
+
+def _calibration_current_config_value(
+    *,
+    market: str,
+    profile: str,
+    scope: str,
+    field: str,
+    market_cache: Dict[str, Any],
+) -> tuple[str, str, Any]:
+    runtime_paths = dict(market_cache.get("runtime_paths") or {})
+    scope_code = str(scope or "").strip().upper()
+    field_name = str(field or "").strip()
+    if scope_code == "ADAPTIVE_STRATEGY":
+        cfg = market_cache.get("adaptive_strategy_cfg")
+        profile_key = str(profile or market or "DEFAULT").strip().upper()
+        profile_cfg = None
+        if cfg is not None:
+            profile_cfg = cfg.market_profiles.get(profile_key) or cfg.market_profiles.get(resolve_market_code(market)) or cfg.market_profiles.get("DEFAULT")
+        current_value = getattr(profile_cfg, field_name, None) if profile_cfg is not None else None
+        return str(runtime_paths.get("adaptive_strategy") or ""), f"market_profiles.{profile_key}.{field_name}", current_value
+    if scope_code == "EXECUTION":
+        payload = dict(market_cache.get("execution_payload") or {})
+        current_value = payload.get(field_name, getattr(DEFAULT_EXECUTION_CFG, field_name, None))
+        return str(runtime_paths.get("investment_execution") or ""), f"execution.{field_name}", current_value
+    if scope_code == "PAPER":
+        payload = dict(market_cache.get("paper_payload") or {})
+        current_value = payload.get(field_name, getattr(DEFAULT_PAPER_CFG, field_name, None))
+        return str(runtime_paths.get("investment_paper") or ""), f"paper.{field_name}", current_value
+    return "", "", None
+
+
+def _build_calibration_patch_item(
+    *,
+    portfolio_id: str,
+    market: str,
+    profile: str,
+    scope: str,
+    scope_label: str,
+    config_scope: str,
+    field: str,
+    change_hint: str,
+    change_hint_label: str,
+    source_kind: str,
+    source_signal: str,
+    source_signal_label: str,
+    source_note: str,
+    current_summary: str,
+    market_cache: Dict[str, Any],
+) -> Dict[str, Any]:
+    config_file, config_path, current_value = _calibration_current_config_value(
+        market=market,
+        profile=profile,
+        scope=config_scope,
+        field=field,
+        market_cache=market_cache,
+    )
+    if current_value in (None, ""):
+        return {}
+    suggested_value = _calibration_patch_value(field, current_value, change_hint)
+    try:
+        delta_value = round(float(suggested_value) - float(current_value), 6)
+    except Exception:
+        delta_value = 0.0
+    field_meta = _calibration_patch_field_meta(field)
+    priority_rank, priority_label = _calibration_patch_priority(scope, field)
+    suggestion_summary = (
+        f"{market}/{profile} 建议调整 {field}: {current_value} -> {suggested_value} "
+        f"（{scope_label} / {source_signal_label}）"
+    )
+    return {
+        "portfolio_id": portfolio_id,
+        "market": market,
+        "adaptive_strategy_active_market_profile": profile,
+        "scope": scope,
+        "scope_label": scope_label,
+        "config_scope": config_scope,
+        "config_file": config_file,
+        "config_path": config_path,
+        "field": field,
+        "field_label": str(field_meta.get("field_label") or field),
+        "current_value": current_value,
+        "suggested_value": suggested_value,
+        "delta_value": delta_value,
+        "change_hint": change_hint,
+        "change_hint_label": change_hint_label,
+        "priority_rank": int(priority_rank),
+        "priority_label": priority_label,
+        "source_kind": source_kind,
+        "source_signal": source_signal,
+        "source_signal_label": source_signal_label,
+        "source_note": source_note,
+        "current_summary": current_summary,
+        "auto_apply": 0,
+        "suggestion_summary": suggestion_summary,
+    }
+
+
+def _build_weekly_calibration_patch_suggestion_rows(
+    strategy_context_rows: List[Dict[str, Any]],
+    *,
+    edge_calibration_rows: List[Dict[str, Any]],
+    slicing_calibration_rows: List[Dict[str, Any]],
+    risk_calibration_rows: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    context_map = {
+        str(row.get("portfolio_id") or "").strip(): dict(row)
+        for row in list(strategy_context_rows or [])
+        if str(row.get("portfolio_id") or "").strip()
+    }
+    market_cache: Dict[str, Dict[str, Any]] = {}
+    out: List[Dict[str, Any]] = []
+
+    def cached_market_payload(market_code: str) -> Dict[str, Any]:
+        code = resolve_market_code(str(market_code or ""))
+        if code not in market_cache:
+            market_cache[code] = _calibration_runtime_market_cache(code)
+        return market_cache[code]
+
+    for raw in list(edge_calibration_rows or []):
+        row = dict(raw)
+        if str(row.get("edge_gate_quality") or "").strip().upper() != "GATE_TOO_TIGHT":
+            continue
+        portfolio_id = str(row.get("portfolio_id") or "").strip()
+        market = resolve_market_code(str(row.get("market") or ""))
+        if not portfolio_id or not market:
+            continue
+        context = dict(context_map.get(portfolio_id) or {})
+        profile = str(context.get("adaptive_strategy_active_market_profile") or market).strip().upper()
+        payload = cached_market_payload(market)
+        current_summary = str(context.get("adaptive_strategy_active_market_execution_summary") or "")
+        note = str(row.get("edge_calibration_note") or "").strip()
+        out.append(
+            _build_calibration_patch_item(
+                portfolio_id=portfolio_id,
+                market=market,
+                profile=profile,
+                scope="EXECUTION_GATE",
+                scope_label="执行门槛",
+                config_scope="ADAPTIVE_STRATEGY",
+                field="edge_cost_buffer_bps",
+                change_hint="RELAX_LOWER",
+                change_hint_label="按放松方向温和下调",
+                source_kind="EDGE_CALIBRATION",
+                source_signal="GATE_TOO_TIGHT",
+                source_signal_label="edge gate 偏紧",
+                source_note=note,
+                current_summary=current_summary,
+                market_cache=payload,
+            )
+        )
+        out.append(
+            _build_calibration_patch_item(
+                portfolio_id=portfolio_id,
+                market=market,
+                profile=profile,
+                scope="EXECUTION_GATE",
+                scope_label="执行门槛",
+                config_scope="ADAPTIVE_STRATEGY",
+                field="min_expected_edge_bps",
+                change_hint="RELAX_LOWER",
+                change_hint_label="按放松方向温和下调",
+                source_kind="EDGE_CALIBRATION",
+                source_signal="GATE_TOO_TIGHT",
+                source_signal_label="edge gate 偏紧",
+                source_note=note,
+                current_summary=current_summary,
+                market_cache=payload,
+            )
+        )
+
+    slicing_priority = {"NEED_MORE_SLICING": 0, "DELAY_HEAVY": 1, "POSSIBLY_TOO_CONSERVATIVE": 2}
+    best_slicing_rows: Dict[str, Dict[str, Any]] = {}
+    for raw in list(slicing_calibration_rows or []):
+        row = dict(raw)
+        assessment = str(row.get("slicing_assessment") or "").strip().upper()
+        if assessment not in slicing_priority:
+            continue
+        portfolio_id = str(row.get("portfolio_id") or "").strip()
+        if not portfolio_id:
+            continue
+        best = best_slicing_rows.get(portfolio_id)
+        if best is None:
+            best_slicing_rows[portfolio_id] = row
+            continue
+        current_key = (
+            slicing_priority.get(assessment, 99),
+            -int(row.get("sample_count", 0) or 0),
+            -int(row.get("filled_sample_count", 0) or 0),
+        )
+        best_key = (
+            slicing_priority.get(str(best.get("slicing_assessment") or "").strip().upper(), 99),
+            -int(best.get("sample_count", 0) or 0),
+            -int(best.get("filled_sample_count", 0) or 0),
+        )
+        if current_key < best_key:
+            best_slicing_rows[portfolio_id] = row
+
+    for portfolio_id, row in sorted(best_slicing_rows.items()):
+        market = resolve_market_code(str(row.get("market") or ""))
+        if not market:
+            continue
+        context = dict(context_map.get(portfolio_id) or {})
+        profile = str(context.get("adaptive_strategy_active_market_profile") or market).strip().upper()
+        payload = cached_market_payload(market)
+        assessment = str(row.get("slicing_assessment") or "").strip().upper()
+        current_summary = str(context.get("adaptive_strategy_active_market_execution_summary") or "")
+        note = str(row.get("slicing_calibration_note") or "").strip()
+        bucket = str(row.get("dynamic_liquidity_bucket") or "").strip().upper() or "-"
+        if assessment == "POSSIBLY_TOO_CONSERVATIVE":
+            out.append(
+                _build_calibration_patch_item(
+                    portfolio_id=portfolio_id,
+                    market=market,
+                    profile=profile,
+                    scope="SLICING_RELAX",
+                    scope_label="执行切片放宽",
+                    config_scope="EXECUTION",
+                    field="adv_split_trigger_pct",
+                    change_hint="INCREASE",
+                    change_hint_label="优先抬高 split trigger",
+                    source_kind="SLICING_CALIBRATION",
+                    source_signal=assessment,
+                    source_signal_label=f"{bucket} bucket 可能过保守",
+                    source_note=note,
+                    current_summary=current_summary,
+                    market_cache=payload,
+                )
+            )
+            out.append(
+                _build_calibration_patch_item(
+                    portfolio_id=portfolio_id,
+                    market=market,
+                    profile=profile,
+                    scope="SLICING_RELAX",
+                    scope_label="执行切片放宽",
+                    config_scope="EXECUTION",
+                    field="adv_max_participation_pct",
+                    change_hint="INCREASE",
+                    change_hint_label="温和抬高 ADV 上限",
+                    source_kind="SLICING_CALIBRATION",
+                    source_signal=assessment,
+                    source_signal_label=f"{bucket} bucket 可能过保守",
+                    source_note=note,
+                    current_summary=current_summary,
+                    market_cache=payload,
+                )
+            )
+        elif assessment == "DELAY_HEAVY":
+            out.append(
+                _build_calibration_patch_item(
+                    portfolio_id=portfolio_id,
+                    market=market,
+                    profile=profile,
+                    scope="SLICING_RELAX",
+                    scope_label="执行切片放宽",
+                    config_scope="EXECUTION",
+                    field="limit_price_buffer_bps",
+                    change_hint="INCREASE",
+                    change_hint_label="温和抬高 limit buffer",
+                    source_kind="SLICING_CALIBRATION",
+                    source_signal=assessment,
+                    source_signal_label=f"{bucket} bucket 成交偏慢",
+                    source_note=note,
+                    current_summary=current_summary,
+                    market_cache=payload,
+                )
+            )
+            out.append(
+                _build_calibration_patch_item(
+                    portfolio_id=portfolio_id,
+                    market=market,
+                    profile=profile,
+                    scope="SLICING_RELAX",
+                    scope_label="执行切片放宽",
+                    config_scope="EXECUTION",
+                    field="adv_split_trigger_pct",
+                    change_hint="INCREASE",
+                    change_hint_label="优先抬高 split trigger",
+                    source_kind="SLICING_CALIBRATION",
+                    source_signal=assessment,
+                    source_signal_label=f"{bucket} bucket 成交偏慢",
+                    source_note=note,
+                    current_summary=current_summary,
+                    market_cache=payload,
+                )
+            )
+        elif assessment == "NEED_MORE_SLICING":
+            out.append(
+                _build_calibration_patch_item(
+                    portfolio_id=portfolio_id,
+                    market=market,
+                    profile=profile,
+                    scope="SLICING_TIGHTEN",
+                    scope_label="执行切片收紧",
+                    config_scope="EXECUTION",
+                    field="adv_split_trigger_pct",
+                    change_hint="REDUCE",
+                    change_hint_label="优先降低 split trigger",
+                    source_kind="SLICING_CALIBRATION",
+                    source_signal=assessment,
+                    source_signal_label=f"{bucket} bucket 需要更细拆单",
+                    source_note=note,
+                    current_summary=current_summary,
+                    market_cache=payload,
+                )
+            )
+            out.append(
+                _build_calibration_patch_item(
+                    portfolio_id=portfolio_id,
+                    market=market,
+                    profile=profile,
+                    scope="SLICING_TIGHTEN",
+                    scope_label="执行切片收紧",
+                    config_scope="EXECUTION",
+                    field="adv_max_participation_pct",
+                    change_hint="REDUCE",
+                    change_hint_label="温和降低 ADV 上限",
+                    source_kind="SLICING_CALIBRATION",
+                    source_signal=assessment,
+                    source_signal_label=f"{bucket} bucket 需要更细拆单",
+                    source_note=note,
+                    current_summary=current_summary,
+                    market_cache=payload,
+                )
+            )
+            out.append(
+                _build_calibration_patch_item(
+                    portfolio_id=portfolio_id,
+                    market=market,
+                    profile=profile,
+                    scope="SLICING_TIGHTEN",
+                    scope_label="执行切片收紧",
+                    config_scope="EXECUTION",
+                    field="max_slices_per_symbol",
+                    change_hint="INCREASE",
+                    change_hint_label="必要时提高 slices 上限",
+                    source_kind="SLICING_CALIBRATION",
+                    source_signal=assessment,
+                    source_signal_label=f"{bucket} bucket 需要更细拆单",
+                    source_note=note,
+                    current_summary=current_summary,
+                    market_cache=payload,
+                )
+            )
+
+    throttle_field_map = {
+        "CORRELATION": ("correlation_soft_limit", "INCREASE", "按放松方向温和上调"),
+        "STRESS": ("stress_loss_soft_limit", "INCREASE", "按放松方向温和上调"),
+        "RETURNS_VAR": ("stress_loss_soft_limit", "INCREASE", "按放松方向温和上调"),
+        "ATR": ("portfolio_atr_soft_limit", "INCREASE", "按放松方向温和上调"),
+        "LIQUIDITY": ("portfolio_liquidity_soft_floor", "REDUCE", "按放松方向温和下调"),
+        "CONCENTRATION": ("sector_concentration_soft_limit", "INCREASE", "按放松方向温和上调"),
+        "SENTIMENT": ("market_sentiment_soft_floor", "REDUCE", "按放松方向温和下调"),
+    }
+    for raw in list(risk_calibration_rows or []):
+        row = dict(raw)
+        target = str(row.get("risk_calibration_target") or "").strip().upper()
+        if target not in {"BUDGET_TOO_TIGHT", "THROTTLE_TOO_TIGHT", "RECOVERY_HELPING"}:
+            continue
+        portfolio_id = str(row.get("portfolio_id") or "").strip()
+        market = resolve_market_code(str(row.get("market") or ""))
+        if not portfolio_id or not market:
+            continue
+        context = dict(context_map.get(portfolio_id) or {})
+        profile = str(context.get("adaptive_strategy_active_market_profile") or market).strip().upper()
+        payload = cached_market_payload(market)
+        note = str(row.get("risk_calibration_note") or "").strip()
+        if target == "BUDGET_TOO_TIGHT":
+            out.append(
+                _build_calibration_patch_item(
+                    portfolio_id=portfolio_id,
+                    market=market,
+                    profile=profile,
+                    scope="RISK_BUDGET",
+                    scope_label="风险预算",
+                    config_scope="ADAPTIVE_STRATEGY",
+                    field="risk_budget_net_exposure",
+                    change_hint="INCREASE",
+                    change_hint_label="优先抬高 net budget",
+                    source_kind="RISK_CALIBRATION",
+                    source_signal=target,
+                    source_signal_label="budget 层偏紧",
+                    source_note=note,
+                    current_summary=str(context.get("adaptive_strategy_market_profile_note") or ""),
+                    market_cache=payload,
+                )
+            )
+            out.append(
+                _build_calibration_patch_item(
+                    portfolio_id=portfolio_id,
+                    market=market,
+                    profile=profile,
+                    scope="RISK_BUDGET",
+                    scope_label="风险预算",
+                    config_scope="ADAPTIVE_STRATEGY",
+                    field="risk_budget_gross_exposure",
+                    change_hint="INCREASE",
+                    change_hint_label="再抬高 gross budget",
+                    source_kind="RISK_CALIBRATION",
+                    source_signal=target,
+                    source_signal_label="budget 层偏紧",
+                    source_note=note,
+                    current_summary=str(context.get("adaptive_strategy_market_profile_note") or ""),
+                    market_cache=payload,
+                )
+            )
+        elif target == "THROTTLE_TOO_TIGHT":
+            dominant_layer = str(row.get("latest_dominant_throttle_layer") or "").strip().upper()
+            field_name, change_hint, change_hint_label = throttle_field_map.get(
+                dominant_layer,
+                ("correlation_soft_limit", "INCREASE", "按放松方向温和上调"),
+            )
+            out.append(
+                _build_calibration_patch_item(
+                    portfolio_id=portfolio_id,
+                    market=market,
+                    profile=profile,
+                    scope="RISK_THROTTLE",
+                    scope_label="风险 throttle",
+                    config_scope="PAPER",
+                    field=field_name,
+                    change_hint=change_hint,
+                    change_hint_label=change_hint_label,
+                    source_kind="RISK_CALIBRATION",
+                    source_signal=target,
+                    source_signal_label=f"{str(row.get('latest_dominant_throttle_layer_label') or dominant_layer or '-') } 层偏紧",
+                    source_note=note,
+                    current_summary=str(row.get("latest_dominant_throttle_layer_label") or dominant_layer or ""),
+                    market_cache=payload,
+                )
+            )
+        elif target == "RECOVERY_HELPING":
+            out.append(
+                _build_calibration_patch_item(
+                    portfolio_id=portfolio_id,
+                    market=market,
+                    profile=profile,
+                    scope="RISK_RECOVERY",
+                    scope_label="风险恢复",
+                    config_scope="ADAPTIVE_STRATEGY",
+                    field="risk_recovery_max_bonus",
+                    change_hint="INCREASE",
+                    change_hint_label="温和抬高 recovery bonus",
+                    source_kind="RISK_CALIBRATION",
+                    source_signal=target,
+                    source_signal_label="recovery 正在改善收益恢复",
+                    source_note=note,
+                    current_summary=str(context.get("adaptive_strategy_market_profile_note") or ""),
+                    market_cache=payload,
+                )
+            )
+
+    out = [row for row in out if row]
+    out.sort(
+        key=lambda row: (
+            int(row.get("priority_rank", 99) or 99),
+            str(row.get("market") or ""),
+            str(row.get("portfolio_id") or ""),
+            str(row.get("scope") or ""),
+            str(row.get("field") or ""),
+        )
+    )
+    return out
 
 
 def _weekly_strategy_note(
@@ -3841,6 +5261,30 @@ def _order_edge_metrics(row: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _order_execution_microstructure(row: Dict[str, Any]) -> Dict[str, Any]:
+    details = _parse_json_dict(row.get("details"))
+    plan_row = dict(details.get("plan_row") or {}) if isinstance(details.get("plan_row"), dict) else {}
+
+    def _pick(key: str, default: Any = "") -> Any:
+        direct = row.get(key)
+        if direct not in (None, ""):
+            return direct
+        nested = details.get(key)
+        if nested not in (None, ""):
+            return nested
+        plan_val = plan_row.get(key)
+        if plan_val not in (None, ""):
+            return plan_val
+        return default
+
+    return {
+        "dynamic_liquidity_bucket": str(_pick("dynamic_liquidity_bucket", "") or "").strip().upper(),
+        "dynamic_order_adv_pct": _safe_float(_pick("dynamic_order_adv_pct", 0.0), 0.0),
+        "slice_count": max(1, _safe_int(_pick("slice_count", 1), 1)),
+        "market_rule_status": str(_pick("market_rule_status", "") or "").strip().upper(),
+    }
+
+
 def _enrich_snapshot_rows(snapshot_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     enriched: List[Dict[str, Any]] = []
     for raw in list(snapshot_rows or []):
@@ -4002,13 +5446,21 @@ def _build_execution_parent_rows(
                 "edge_gate_threshold_bps_numerator": 0.0,
                 "score_before_cost_numerator": 0.0,
                 "expected_edge_score_numerator": 0.0,
+                "dynamic_order_adv_pct_numerator": 0.0,
                 "submitted_ts": "",
+                "slice_count_max": 1,
+                "blocked_market_rule_order_count": 0,
+                "blocked_edge_order_count": 0,
+                "blocked_gate_order_count": 0,
                 "statuses": set(),
                 "broker_order_ids": set(),
+                "dynamic_liquidity_bucket_value_map": {},
+                "market_rule_statuses": set(),
             },
         )
         order_value = abs(_safe_float(row.get("order_value"), 0.0))
         status_bucket = _execution_order_status_bucket(row)
+        micro = _order_execution_microstructure(row)
         bucket["order_row_count"] = int(bucket["order_row_count"]) + 1
         bucket["order_value"] = float(bucket["order_value"]) + order_value
         bucket["expected_edge_bps_numerator"] = float(bucket["expected_edge_bps_numerator"]) + order_value * _safe_float(row.get("expected_edge_bps"), 0.0)
@@ -4016,7 +5468,25 @@ def _build_execution_parent_rows(
         bucket["edge_gate_threshold_bps_numerator"] = float(bucket["edge_gate_threshold_bps_numerator"]) + order_value * _safe_float(row.get("edge_gate_threshold_bps"), 0.0)
         bucket["score_before_cost_numerator"] = float(bucket["score_before_cost_numerator"]) + order_value * _safe_float(row.get("score_before_cost"), 0.0)
         bucket["expected_edge_score_numerator"] = float(bucket["expected_edge_score_numerator"]) + order_value * _safe_float(row.get("expected_edge_score"), 0.0)
+        bucket["dynamic_order_adv_pct_numerator"] = float(bucket["dynamic_order_adv_pct_numerator"]) + order_value * _safe_float(micro.get("dynamic_order_adv_pct"), 0.0)
+        bucket["slice_count_max"] = max(int(bucket.get("slice_count_max", 1) or 1), int(micro.get("slice_count", 1) or 1))
         bucket["statuses"].add(status_bucket)
+        if status_bucket == "BLOCKED_GATE":
+            bucket["blocked_gate_order_count"] = int(bucket.get("blocked_gate_order_count", 0) or 0) + 1
+        if str(row.get("status") or "").strip().upper() == "BLOCKED_MARKET_RULE":
+            bucket["blocked_market_rule_order_count"] = int(bucket.get("blocked_market_rule_order_count", 0) or 0) + 1
+        if status_bucket == "BLOCKED_EDGE":
+            bucket["blocked_edge_order_count"] = int(bucket.get("blocked_edge_order_count", 0) or 0) + 1
+        bucket_name = str(micro.get("dynamic_liquidity_bucket") or "").strip().upper()
+        if bucket_name:
+            bucket_value_map = dict(bucket.get("dynamic_liquidity_bucket_value_map") or {})
+            bucket_value_map[bucket_name] = float(bucket_value_map.get(bucket_name, 0.0) or 0.0) + float(order_value)
+            bucket["dynamic_liquidity_bucket_value_map"] = bucket_value_map
+        market_rule_status = str(micro.get("market_rule_status") or "").strip().upper()
+        if market_rule_status:
+            cast_rule_statuses = set(bucket.get("market_rule_statuses") or set())
+            cast_rule_statuses.add(market_rule_status)
+            bucket["market_rule_statuses"] = cast_rule_statuses
         broker_order_id = _safe_int(row.get("broker_order_id"), 0)
         if broker_order_id > 0:
             cast_ids = set(bucket.get("broker_order_ids") or set())
@@ -4097,6 +5567,17 @@ def _build_execution_parent_rows(
             float(bucket.get("expected_edge_score_numerator", 0.0) or 0.0) / float(bucket.get("order_value", 0.0) or 1.0)
             if float(bucket.get("order_value", 0.0) or 0.0) > 0.0 else 0.0
         )
+        avg_dynamic_order_adv_pct = (
+            float(bucket.get("dynamic_order_adv_pct_numerator", 0.0) or 0.0) / float(bucket.get("order_value", 0.0) or 1.0)
+            if float(bucket.get("order_value", 0.0) or 0.0) > 0.0 else 0.0
+        )
+        liquidity_bucket_value_map = dict(bucket.get("dynamic_liquidity_bucket_value_map") or {})
+        dominant_liquidity_bucket = ""
+        if liquidity_bucket_value_map:
+            dominant_liquidity_bucket = max(
+                liquidity_bucket_value_map.items(),
+                key=lambda item: (float(item[1] or 0.0), str(item[0] or "")),
+            )[0]
         row = {
             "portfolio_id": str(bucket.get("portfolio_id") or ""),
             "market": str(bucket.get("market") or ""),
@@ -4118,6 +5599,13 @@ def _build_execution_parent_rows(
             "edge_gate_threshold_bps": float(edge_gate_threshold_bps),
             "required_edge_gap_bps": max(0.0, float(edge_gate_threshold_bps) - float(expected_edge_bps)),
             "expected_edge_value": float(float(bucket.get("order_value", 0.0) or 0.0) * float(expected_edge_bps) / 10000.0),
+            "blocked_market_rule_order_count": int(bucket.get("blocked_market_rule_order_count", 0) or 0),
+            "blocked_edge_order_count": int(bucket.get("blocked_edge_order_count", 0) or 0),
+            "blocked_gate_order_count": int(bucket.get("blocked_gate_order_count", 0) or 0),
+            "dynamic_liquidity_bucket": str(dominant_liquidity_bucket),
+            "avg_dynamic_order_adv_pct": float(avg_dynamic_order_adv_pct),
+            "slice_count": int(bucket.get("slice_count_max", 1) or 1),
+            "market_rule_statuses": ",".join(sorted(str(item) for item in list(bucket.get("market_rule_statuses") or set()) if str(item).strip())),
             "submitted_ts": str(bucket.get("submitted_ts") or ""),
             "fill_count": int(len(order_fills)),
             "fill_notional": float(fill_notional),
@@ -4153,6 +5641,12 @@ def _build_execution_parent_rows(
                 if future_return_bps is not None and realized_total_cost_bps is not None
                 else None
             )
+        row["realized_slippage_bps"] = row.get("avg_actual_slippage_bps")
+        row["realized_edge_bps"] = (
+            row.get("outcome_20d_realized_edge_bps")
+            if row.get("outcome_20d_realized_edge_bps") not in (None, "")
+            else row.get("execution_capture_bps")
+        )
         parent_rows.append(row)
     parent_rows.sort(
         key=lambda row: (
@@ -4449,6 +5943,188 @@ def _build_weekly_blocked_edge_attribution_rows(execution_parent_rows: List[Dict
             output[f"matured_{horizon_days}d_avg_counterfactual_edge_bps"] = _avg_bps(samples, edge_key)
         out.append(output)
     out.sort(key=lambda row: (str(row.get("market") or ""), str(row.get("portfolio_id") or "")))
+    return out
+
+
+def _build_weekly_decision_evidence_rows(
+    execution_parent_rows: List[Dict[str, Any]],
+    *,
+    strategy_context_rows: List[Dict[str, Any]] | None = None,
+    attribution_rows: List[Dict[str, Any]] | None = None,
+) -> List[Dict[str, Any]]:
+    strategy_context_map = {
+        str(row.get("portfolio_id") or "").strip(): dict(row)
+        for row in list(strategy_context_rows or [])
+        if str(row.get("portfolio_id") or "").strip()
+    }
+    attribution_map = {
+        str(row.get("portfolio_id") or "").strip(): dict(row)
+        for row in list(attribution_rows or [])
+        if str(row.get("portfolio_id") or "").strip()
+    }
+    out: List[Dict[str, Any]] = []
+    for raw in list(execution_parent_rows or []):
+        row = dict(raw or {})
+        portfolio_id = str(row.get("portfolio_id") or "").strip()
+        if not portfolio_id:
+            continue
+        strategy_context = dict(strategy_context_map.get(portfolio_id) or {})
+        attribution = dict(attribution_map.get(portfolio_id) or {})
+        realized_edge_bps = row.get("realized_edge_bps")
+        if realized_edge_bps in (None, ""):
+            realized_edge_bps = row.get("execution_capture_bps")
+        out.append(
+            {
+                "portfolio_id": portfolio_id,
+                "market": str(row.get("market") or ""),
+                "run_id": str(row.get("run_id") or ""),
+                "parent_order_key": str(row.get("parent_order_key") or ""),
+                "symbol": str(row.get("symbol") or ""),
+                "action": str(row.get("action") or ""),
+                "decision_status": str(row.get("status_bucket") or ""),
+                "candidate_snapshot_id": str(row.get("linked_snapshot_id") or ""),
+                "candidate_stage": str(row.get("linked_snapshot_stage") or ""),
+                "order_value": float(row.get("order_value", 0.0) or 0.0),
+                "fill_notional": float(row.get("fill_notional", 0.0) or 0.0),
+                "signal_score": float(row.get("score_before_cost", 0.0) or 0.0),
+                "expected_edge_bps": float(row.get("expected_edge_bps", 0.0) or 0.0),
+                "expected_cost_bps": float(row.get("expected_cost_bps", 0.0) or 0.0),
+                "edge_gate_threshold_bps": float(row.get("edge_gate_threshold_bps", 0.0) or 0.0),
+                "required_edge_gap_bps": float(row.get("required_edge_gap_bps", 0.0) or 0.0),
+                "blocked_market_rule_order_count": int(row.get("blocked_market_rule_order_count", 0) or 0),
+                "blocked_edge_order_count": int(row.get("blocked_edge_order_count", 0) or 0),
+                "blocked_gate_order_count": int(row.get("blocked_gate_order_count", 0) or 0),
+                "dynamic_liquidity_bucket": str(row.get("dynamic_liquidity_bucket") or ""),
+                "dynamic_order_adv_pct": float(row.get("avg_dynamic_order_adv_pct", 0.0) or 0.0),
+                "slice_count": int(row.get("slice_count", 1) or 1),
+                "strategy_control_weight_delta": float(attribution.get("strategy_control_weight_delta", 0.0) or 0.0),
+                "risk_overlay_weight_delta": float(attribution.get("risk_overlay_weight_delta", 0.0) or 0.0),
+                "risk_market_profile_budget_weight_delta": float(
+                    attribution.get("risk_market_profile_budget_weight_delta", 0.0) or 0.0
+                ),
+                "risk_throttle_weight_delta": float(
+                    attribution.get("risk_throttle_weight_delta", 0.0) or 0.0
+                ),
+                "risk_recovery_weight_credit": float(
+                    attribution.get("risk_recovery_weight_credit", 0.0) or 0.0
+                ),
+                "execution_gate_blocked_weight": float(
+                    attribution.get("execution_gate_blocked_weight", 0.0) or 0.0
+                ),
+                "strategy_effective_controls_note": str(
+                    strategy_context.get("strategy_effective_controls_note") or ""
+                ),
+                "execution_gate_summary": str(strategy_context.get("execution_gate_summary") or ""),
+                "realized_slippage_bps": row.get("realized_slippage_bps"),
+                "realized_edge_bps": realized_edge_bps,
+                "execution_capture_bps": row.get("execution_capture_bps"),
+                "first_fill_delay_seconds": row.get("first_fill_delay_seconds"),
+                "outcome_5d_bps": row.get("outcome_5d_future_return_bps"),
+                "outcome_20d_bps": row.get("outcome_20d_future_return_bps"),
+                "outcome_60d_bps": row.get("outcome_60d_future_return_bps"),
+                "outcome_5d_realized_edge_bps": row.get("outcome_5d_realized_edge_bps"),
+                "outcome_20d_realized_edge_bps": row.get("outcome_20d_realized_edge_bps"),
+                "outcome_60d_realized_edge_bps": row.get("outcome_60d_realized_edge_bps"),
+            }
+        )
+    out.sort(
+        key=lambda item: (
+            str(item.get("market") or ""),
+            str(item.get("portfolio_id") or ""),
+            str(item.get("parent_order_key") or ""),
+        )
+    )
+    return out
+
+
+def _build_weekly_decision_evidence_summary_rows(
+    decision_evidence_rows: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    for row in list(decision_evidence_rows or []):
+        portfolio_id = str(row.get("portfolio_id") or "").strip()
+        if portfolio_id:
+            grouped.setdefault(portfolio_id, []).append(dict(row))
+
+    def _weighted_avg(rows: List[Dict[str, Any]], key: str, *, weight_key: str = "order_value") -> float | None:
+        numerator = 0.0
+        denominator = 0.0
+        for item in list(rows or []):
+            value = item.get(key)
+            if value in (None, ""):
+                continue
+            weight = abs(_safe_float(item.get(weight_key), 0.0))
+            if weight <= 0.0:
+                weight = 1.0
+            numerator += weight * _safe_float(value, 0.0)
+            denominator += weight
+        if denominator <= 0.0:
+            return None
+        return float(numerator / denominator)
+
+    out: List[Dict[str, Any]] = []
+    for portfolio_id, rows in grouped.items():
+        liquidity_counts: Dict[str, float] = {}
+        has_fill_weight = any(abs(_safe_float(item.get("fill_notional"), 0.0)) > 0.0 for item in list(rows or []))
+        for item in list(rows or []):
+            bucket = str(item.get("dynamic_liquidity_bucket") or "").strip().upper()
+            if not bucket:
+                continue
+            weight = abs(_safe_float(item.get("fill_notional" if has_fill_weight else "order_value"), 0.0))
+            liquidity_counts[bucket] = float(liquidity_counts.get(bucket, 0.0) or 0.0) + weight
+        primary_bucket = ""
+        if liquidity_counts:
+            primary_bucket = max(
+                liquidity_counts.items(),
+                key=lambda part: (float(part[1] or 0.0), str(part[0] or "")),
+            )[0]
+        out.append(
+            {
+                "portfolio_id": portfolio_id,
+                "market": str(rows[0].get("market") or ""),
+                "decision_evidence_row_count": int(len(rows)),
+                "decision_blocked_market_rule_order_count": int(
+                    sum(int(item.get("blocked_market_rule_order_count", 0) or 0) for item in rows)
+                ),
+                "decision_blocked_edge_order_count": int(
+                    sum(int(item.get("blocked_edge_order_count", 0) or 0) for item in rows)
+                ),
+                "decision_primary_liquidity_bucket": str(primary_bucket),
+                "decision_avg_dynamic_order_adv_pct": _weighted_avg(rows, "dynamic_order_adv_pct"),
+                "decision_avg_slice_count": _weighted_avg(rows, "slice_count"),
+                "decision_avg_expected_edge_bps": _weighted_avg(rows, "expected_edge_bps"),
+                "decision_avg_expected_cost_bps": _weighted_avg(rows, "expected_cost_bps"),
+                "decision_avg_edge_gate_threshold_bps": _weighted_avg(rows, "edge_gate_threshold_bps"),
+                "decision_avg_realized_slippage_bps": _weighted_avg(
+                    [item for item in rows if item.get("realized_slippage_bps") not in (None, "")],
+                    "realized_slippage_bps",
+                    weight_key="fill_notional",
+                ),
+                "decision_avg_realized_edge_bps": _weighted_avg(
+                    [item for item in rows if item.get("realized_edge_bps") not in (None, "")],
+                    "realized_edge_bps",
+                    weight_key="fill_notional",
+                ),
+                "decision_avg_fill_delay_seconds": _weighted_avg(
+                    [item for item in rows if item.get("first_fill_delay_seconds") not in (None, "")],
+                    "first_fill_delay_seconds",
+                    weight_key="fill_notional",
+                ),
+                "decision_avg_outcome_5d_bps": _weighted_avg(
+                    [item for item in rows if item.get("outcome_5d_bps") not in (None, "")],
+                    "outcome_5d_bps",
+                ),
+                "decision_avg_outcome_20d_bps": _weighted_avg(
+                    [item for item in rows if item.get("outcome_20d_bps") not in (None, "")],
+                    "outcome_20d_bps",
+                ),
+                "decision_avg_outcome_60d_bps": _weighted_avg(
+                    [item for item in rows if item.get("outcome_60d_bps") not in (None, "")],
+                    "outcome_60d_bps",
+                ),
+            }
+        )
+    out.sort(key=lambda item: (str(item.get("market") or ""), str(item.get("portfolio_id") or "")))
     return out
 
 
@@ -5612,6 +7288,7 @@ def _build_market_profile_tuning_summary(
 def _build_weekly_tuning_dataset_rows(
     summary_rows: List[Dict[str, Any]],
     *,
+    decision_evidence_rows: List[Dict[str, Any]] | None = None,
     strategy_context_rows: List[Dict[str, Any]] | None = None,
     attribution_rows: List[Dict[str, Any]] | None = None,
     outcome_spread_rows: List[Dict[str, Any]] | None = None,
@@ -5635,6 +7312,11 @@ def _build_weekly_tuning_dataset_rows(
     attribution_map = {
         str(row.get("portfolio_id") or ""): dict(row)
         for row in list(attribution_rows or [])
+        if str(row.get("portfolio_id") or "").strip()
+    }
+    decision_evidence_summary_map = {
+        str(row.get("portfolio_id") or ""): dict(row)
+        for row in _build_weekly_decision_evidence_summary_rows(list(decision_evidence_rows or []))
         if str(row.get("portfolio_id") or "").strip()
     }
     outcome_spread_map: Dict[str, Dict[int, Dict[str, Any]]] = {}
@@ -5693,6 +7375,7 @@ def _build_weekly_tuning_dataset_rows(
             continue
         strategy_context = dict(strategy_context_map.get(portfolio_id) or {})
         attribution = dict(attribution_map.get(portfolio_id) or {})
+        decision_evidence = dict(decision_evidence_summary_map.get(portfolio_id) or {})
         outcome_spreads = dict(outcome_spread_map.get(portfolio_id) or {})
         edge_realization = dict(edge_realization_map.get(portfolio_id) or {})
         blocked_edge = dict(blocked_edge_map.get(portfolio_id) or {})
@@ -5770,15 +7453,53 @@ def _build_weekly_tuning_dataset_rows(
                 "planned_execution_cost_total": float(attribution.get("planned_execution_cost_total", 0.0) or 0.0),
                 "execution_cost_total": float(attribution.get("execution_cost_total", 0.0) or 0.0),
                 "execution_cost_gap": float(attribution.get("execution_cost_gap", 0.0) or 0.0),
-                "avg_expected_cost_bps": float(attribution.get("avg_expected_cost_bps", 0.0) or 0.0),
-                "avg_actual_slippage_bps": float(attribution.get("avg_actual_slippage_bps", 0.0) or 0.0),
-                "avg_expected_edge_bps": float(edge_realization.get("avg_expected_edge_bps", 0.0) or 0.0),
-                "avg_edge_gate_threshold_bps": float(edge_realization.get("avg_edge_gate_threshold_bps", 0.0) or 0.0),
+                "avg_expected_cost_bps": float(
+                    decision_evidence.get("decision_avg_expected_cost_bps", attribution.get("avg_expected_cost_bps", 0.0)) or 0.0
+                ),
+                "avg_actual_slippage_bps": float(
+                    decision_evidence.get("decision_avg_realized_slippage_bps", attribution.get("avg_actual_slippage_bps", 0.0)) or 0.0
+                ),
+                "avg_expected_edge_bps": float(
+                    decision_evidence.get("decision_avg_expected_edge_bps", edge_realization.get("avg_expected_edge_bps", 0.0)) or 0.0
+                ),
+                "avg_edge_gate_threshold_bps": float(
+                    decision_evidence.get("decision_avg_edge_gate_threshold_bps", edge_realization.get("avg_edge_gate_threshold_bps", 0.0)) or 0.0
+                ),
                 "avg_execution_capture_bps": float(edge_realization.get("avg_execution_capture_bps", 0.0) or 0.0),
                 "avg_fill_delay_seconds": float(edge_realization.get("avg_fill_delay_seconds", 0.0) or 0.0),
                 "median_fill_delay_seconds": float(edge_realization.get("median_fill_delay_seconds", 0.0) or 0.0),
                 "matured_20d_avg_realized_edge_bps": float(
-                    edge_realization.get("matured_20d_avg_realized_edge_bps", 0.0) or 0.0
+                    decision_evidence.get("decision_avg_realized_edge_bps", edge_realization.get("matured_20d_avg_realized_edge_bps", 0.0)) or 0.0
+                ),
+                "decision_evidence_row_count": int(
+                    decision_evidence.get("decision_evidence_row_count", 0) or 0
+                ),
+                "decision_blocked_market_rule_order_count": int(
+                    decision_evidence.get("decision_blocked_market_rule_order_count", 0) or 0
+                ),
+                "decision_blocked_edge_order_count": int(
+                    decision_evidence.get("decision_blocked_edge_order_count", 0) or 0
+                ),
+                "decision_primary_liquidity_bucket": str(
+                    decision_evidence.get("decision_primary_liquidity_bucket") or ""
+                ),
+                "decision_avg_dynamic_order_adv_pct": float(
+                    decision_evidence.get("decision_avg_dynamic_order_adv_pct", 0.0) or 0.0
+                ),
+                "decision_avg_slice_count": float(
+                    decision_evidence.get("decision_avg_slice_count", 0.0) or 0.0
+                ),
+                "decision_avg_realized_edge_bps": float(
+                    decision_evidence.get("decision_avg_realized_edge_bps", 0.0) or 0.0
+                ),
+                "decision_avg_outcome_5d_bps": float(
+                    decision_evidence.get("decision_avg_outcome_5d_bps", 0.0) or 0.0
+                ),
+                "decision_avg_outcome_20d_bps": float(
+                    decision_evidence.get("decision_avg_outcome_20d_bps", 0.0) or 0.0
+                ),
+                "decision_avg_outcome_60d_bps": float(
+                    decision_evidence.get("decision_avg_outcome_60d_bps", 0.0) or 0.0
                 ),
                 "outcome_selected_spread_5d_bps": float(
                     dict(outcome_spreads.get(5) or {}).get("selected_spread_vs_unselected_bps", 0.0) or 0.0
@@ -6348,6 +8069,12 @@ def main(argv: List[str] | None = None) -> None:
         execution_gate_rows=execution_gate_rows,
         runs_by_portfolio=runs_by_portfolio,
     )
+    decision_evidence_rows = _build_weekly_decision_evidence_rows(
+        execution_parent_rows,
+        strategy_context_rows=strategy_context_rows,
+        attribution_rows=attribution_rows,
+    )
+    decision_evidence_summary_rows = _build_weekly_decision_evidence_summary_rows(decision_evidence_rows)
     risk_feedback_rows = _build_risk_feedback_rows(
         risk_review_rows,
         attribution_rows=attribution_rows,
@@ -6492,6 +8219,7 @@ def main(argv: List[str] | None = None) -> None:
     )
     weekly_tuning_dataset_rows = _build_weekly_tuning_dataset_rows(
         summary_rows,
+        decision_evidence_rows=decision_evidence_rows,
         strategy_context_rows=strategy_context_rows,
         attribution_rows=attribution_rows,
         outcome_spread_rows=outcome_spread_rows,
@@ -6518,9 +8246,43 @@ def main(argv: List[str] | None = None) -> None:
         window_start=since_ts,
         window_end=datetime.now(timezone.utc).isoformat(),
     )
+    _persist_weekly_decision_evidence_history(
+        db_path,
+        decision_evidence_rows,
+        week_label=review_week_label,
+        week_start=review_week_start,
+        window_start=since_ts,
+        window_end=datetime.now(timezone.utc).isoformat(),
+    )
     weekly_tuning_history_overview_rows = _build_weekly_tuning_history_overview(
         db_path,
         weekly_tuning_dataset_rows,
+    )
+    weekly_decision_evidence_history_overview_rows = _build_weekly_decision_evidence_history_overview(
+        db_path,
+        decision_evidence_rows,
+    )
+    weekly_edge_calibration_rows = _build_weekly_edge_calibration_rows(
+        db_path,
+        decision_evidence_rows,
+    )
+    weekly_slicing_calibration_rows = _build_weekly_slicing_calibration_rows(
+        db_path,
+        decision_evidence_rows,
+    )
+    weekly_risk_calibration_rows = _build_weekly_risk_calibration_rows(
+        db_path,
+        weekly_tuning_dataset_rows,
+    )
+    weekly_calibration_patch_suggestion_rows = _build_weekly_calibration_patch_suggestion_rows(
+        strategy_context_rows,
+        edge_calibration_rows=weekly_edge_calibration_rows,
+        slicing_calibration_rows=weekly_slicing_calibration_rows,
+        risk_calibration_rows=weekly_risk_calibration_rows,
+    )
+    weekly_patch_governance_summary_rows = _build_weekly_patch_governance_summary_rows(
+        db_path,
+        summary_rows,
     )
     weekly_control_timeseries_rows = _build_weekly_control_timeseries_rows(
         db_path,
@@ -6559,6 +8321,8 @@ def main(argv: List[str] | None = None) -> None:
     write_csv(str(out_dir / "weekly_outcome_spread_summary.csv"), outcome_spread_rows)
     write_csv(str(out_dir / "weekly_edge_realization_summary.csv"), edge_realization_rows)
     write_csv(str(out_dir / "weekly_blocked_edge_attribution.csv"), blocked_edge_attribution_rows)
+    write_csv(str(out_dir / "weekly_decision_evidence.csv"), decision_evidence_rows)
+    write_csv(str(out_dir / "weekly_decision_evidence_summary.csv"), decision_evidence_summary_rows)
     write_csv(str(out_dir / "weekly_execution_effects.csv"), execution_effect_rows)
     write_csv(str(out_dir / "weekly_planned_execution_costs.csv"), planned_execution_cost_rows)
     write_csv(str(out_dir / "weekly_execution_session_summary.csv"), execution_session_rows)
@@ -6571,6 +8335,12 @@ def main(argv: List[str] | None = None) -> None:
     write_csv(str(out_dir / "weekly_market_profile_patch_readiness.csv"), market_profile_patch_readiness_rows)
     write_csv(str(out_dir / "weekly_tuning_dataset.csv"), weekly_tuning_dataset_rows)
     write_csv(str(out_dir / "weekly_tuning_history_overview.csv"), weekly_tuning_history_overview_rows)
+    write_csv(str(out_dir / "weekly_decision_evidence_history_overview.csv"), weekly_decision_evidence_history_overview_rows)
+    write_csv(str(out_dir / "weekly_edge_calibration_summary.csv"), weekly_edge_calibration_rows)
+    write_csv(str(out_dir / "weekly_slicing_calibration_summary.csv"), weekly_slicing_calibration_rows)
+    write_csv(str(out_dir / "weekly_risk_calibration_summary.csv"), weekly_risk_calibration_rows)
+    write_csv(str(out_dir / "weekly_calibration_patch_suggestions.csv"), weekly_calibration_patch_suggestion_rows)
+    write_csv(str(out_dir / "weekly_patch_governance_summary.csv"), weekly_patch_governance_summary_rows)
     write_csv(str(out_dir / "weekly_control_timeseries.csv"), weekly_control_timeseries_rows)
     write_csv(str(out_dir / "weekly_broker_positions.csv"), [row for rows in broker_latest_rows_by_portfolio.values() for row in rows])
     write_csv(str(out_dir / "weekly_broker_comparison.csv"), broker_diff_rows)
@@ -6581,7 +8351,14 @@ def main(argv: List[str] | None = None) -> None:
             "window_start": since_ts,
             "window_end": datetime.now(timezone.utc).isoformat(),
             "summary": weekly_tuning_dataset_summary,
+            "decision_evidence_summary": decision_evidence_summary_rows,
             "history_overview": weekly_tuning_history_overview_rows,
+            "decision_evidence_history_overview": weekly_decision_evidence_history_overview_rows,
+            "edge_calibration_summary": weekly_edge_calibration_rows,
+            "slicing_calibration_summary": weekly_slicing_calibration_rows,
+            "risk_calibration_summary": weekly_risk_calibration_rows,
+            "calibration_patch_suggestions": weekly_calibration_patch_suggestion_rows,
+            "patch_governance_summary": weekly_patch_governance_summary_rows,
             "control_timeseries": weekly_control_timeseries_rows,
             "rows": weekly_tuning_dataset_rows,
         },
@@ -6615,6 +8392,14 @@ def main(argv: List[str] | None = None) -> None:
         "outcome_spread_summary": outcome_spread_rows,
         "edge_realization_summary": edge_realization_rows,
         "blocked_edge_attribution_summary": blocked_edge_attribution_rows,
+        "decision_evidence_summary": decision_evidence_summary_rows,
+        "decision_evidence_rows": decision_evidence_rows,
+        "decision_evidence_history_overview": weekly_decision_evidence_history_overview_rows,
+        "edge_calibration_summary": weekly_edge_calibration_rows,
+        "slicing_calibration_summary": weekly_slicing_calibration_rows,
+        "risk_calibration_summary": weekly_risk_calibration_rows,
+        "calibration_patch_suggestions": weekly_calibration_patch_suggestion_rows,
+        "patch_governance_summary": weekly_patch_governance_summary_rows,
         "execution_effect_summary": execution_effect_rows,
         "planned_execution_cost_summary": planned_execution_cost_rows,
         "execution_session_summary": execution_session_rows,
@@ -6673,6 +8458,13 @@ def main(argv: List[str] | None = None) -> None:
         execution_feedback_rows,
         weekly_control_timeseries_rows,
         window_label,
+        decision_evidence_summary_rows=decision_evidence_summary_rows,
+        decision_evidence_history_overview_rows=weekly_decision_evidence_history_overview_rows,
+        edge_calibration_rows=weekly_edge_calibration_rows,
+        slicing_calibration_rows=weekly_slicing_calibration_rows,
+        risk_calibration_rows=weekly_risk_calibration_rows,
+        calibration_patch_suggestion_rows=weekly_calibration_patch_suggestion_rows,
+        patch_governance_rows=weekly_patch_governance_summary_rows,
     )
     summary_fields, artifact_fields = _cli_summary_payload(summary_payload, out_dir)
     emit_cli_summary(

@@ -365,11 +365,17 @@ def _aggregate_market_week_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, An
                 "avg_execution_capture_bps": _mean(
                     _safe_float(row.get("avg_execution_capture_bps"), 0.0) for row in bucket
                 ),
+                "matured_20d_avg_realized_edge_bps": _mean(
+                    _safe_float(row.get("matured_20d_avg_realized_edge_bps"), 0.0) for row in bucket
+                ),
                 "avg_actual_slippage_bps": _mean(
                     _safe_float(row.get("avg_actual_slippage_bps"), 0.0) for row in bucket
                 ),
                 "avg_expected_cost_bps": _mean(
                     _safe_float(row.get("avg_expected_cost_bps"), 0.0) for row in bucket
+                ),
+                "outcome_selected_spread_5d_bps": _mean(
+                    _safe_float(row.get("outcome_selected_spread_5d_bps"), 0.0) for row in bucket
                 ),
                 "outcome_selected_spread_20d_bps": _mean(
                     _safe_float(row.get("outcome_selected_spread_20d_bps"), 0.0) for row in bucket
@@ -520,6 +526,106 @@ def _score_candidate_rows(candidate: Dict[str, Any], rows: List[Dict[str, Any]],
     return float(_mean(scores))
 
 
+def _window_slice_summary(rows: List[Dict[str, Any]], ref: Dict[str, float]) -> Dict[str, float]:
+    if not rows:
+        return {
+            "turnover": 0.0,
+            "turnover_target": float(ref.get("turnover_target", 0.0) or 0.0),
+            "signal_quality_score": 0.0,
+            "outcome_selected_spread_5d_bps": 0.0,
+            "outcome_selected_spread_20d_bps": 0.0,
+            "outcome_selected_spread_60d_bps": 0.0,
+            "matured_20d_avg_realized_edge_bps": 0.0,
+        }
+    return {
+        "turnover": _mean(_safe_float(row.get("turnover"), 0.0) for row in rows),
+        "turnover_target": float(ref.get("turnover_target", 0.0) or 0.0),
+        "signal_quality_score": _mean(_safe_float(row.get("signal_quality_score"), 0.0) for row in rows),
+        "outcome_selected_spread_5d_bps": _mean(_safe_float(row.get("outcome_selected_spread_5d_bps"), 0.0) for row in rows),
+        "outcome_selected_spread_20d_bps": _mean(_safe_float(row.get("outcome_selected_spread_20d_bps"), 0.0) for row in rows),
+        "outcome_selected_spread_60d_bps": _mean(_safe_float(row.get("outcome_selected_spread_60d_bps"), 0.0) for row in rows),
+        "matured_20d_avg_realized_edge_bps": _mean(
+            _safe_float(row.get("matured_20d_avg_realized_edge_bps"), 0.0) for row in rows
+        ),
+    }
+
+
+def _max_consecutive_true(flags: Iterable[bool]) -> int:
+    best = 0
+    current = 0
+    for flag in list(flags or []):
+        if bool(flag):
+            current += 1
+            best = max(best, current)
+        else:
+            current = 0
+    return int(best)
+
+
+def _acceptance_status(
+    *,
+    best_candidate: Dict[str, Any],
+    family_rows: List[Dict[str, Any]],
+    baseline_mean_validation: float,
+    window_count: int,
+) -> Dict[str, Any]:
+    best_family = str(best_candidate.get("family") or "BASELINE")
+    improvement = float(best_candidate.get("mean_validation_score", 0.0) or 0.0) - float(baseline_mean_validation)
+    win_rate = float(best_candidate.get("selected_window_rate", 0.0) or 0.0)
+    min_windows_pass = int(window_count) >= 3
+    post_cost_pass = improvement >= 0.50
+    consecutive_stable_windows = _max_consecutive_true(
+        float(row.get("validation_improvement", 0.0) or 0.0) >= -0.25
+        for row in sorted(family_rows, key=lambda item: int(item.get("window_index", 0) or 0))
+    )
+    stability_pass = consecutive_stable_windows >= 3
+    outcome_support_pass = (
+        float(best_candidate.get("mean_validate_outcome_5d_bps", 0.0) or 0.0) > 0.0
+        and float(best_candidate.get("mean_validate_outcome_20d_bps", 0.0) or 0.0) > 0.0
+        and float(best_candidate.get("mean_validate_outcome_60d_bps", 0.0) or 0.0) > 0.0
+    )
+    turnover_target = max(0.05, float(best_candidate.get("mean_validate_turnover_target", 0.0) or 0.0))
+    turnover_guard_pass = (
+        float(best_candidate.get("mean_validate_turnover", 0.0) or 0.0) <= turnover_target * 1.25
+        or improvement >= 1.00
+    )
+    rules = {
+        "min_validation_windows": bool(min_windows_pass),
+        "post_cost_improvement": bool(post_cost_pass),
+        "stability": bool(stability_pass),
+        "outcome_support_5_20_60": bool(outcome_support_pass),
+        "turnover_guard": bool(turnover_guard_pass),
+    }
+    accepted = (
+        best_family != "BASELINE"
+        and all(bool(value) for value in rules.values())
+        and win_rate >= 0.50
+    )
+    if best_family == "BASELINE":
+        status = "KEEP_BASELINE"
+        reason = "baseline remains the most stable candidate."
+    elif accepted:
+        status = "RECOMMEND_PATCH"
+        reason = "candidate passed minimum windows, post-cost improvement, stability, outcome support, and turnover guard."
+    elif improvement > 0.0:
+        status = "WATCH"
+        reason = "candidate improved validation, but failed one or more acceptance checks."
+    else:
+        status = "KEEP_BASELINE"
+        reason = "candidate failed to clear post-cost validation improvement over baseline."
+    failed_rules = [name for name, passed in rules.items() if not passed]
+    return {
+        "status": status,
+        "status_reason": reason,
+        "accepted": bool(accepted),
+        "win_rate": float(win_rate),
+        "improvement_score": float(improvement),
+        "consecutive_stable_windows": int(consecutive_stable_windows),
+        "acceptance_failed_rules": ",".join(failed_rules),
+        "acceptance_rules": rules,
+    }
+
+
 def _build_walk_forward_windows(
     market: str,
     rows: List[Dict[str, Any]],
@@ -539,6 +645,7 @@ def _build_walk_forward_windows(
         train_slice = rows[start : start + train_weeks]
         validate_slice = rows[start + train_weeks : start + train_weeks + validate_weeks]
         ref = _build_reference(profile, train_slice)
+        validate_summary = _window_slice_summary(validate_slice, ref)
         best_validation_family = "BASELINE"
         best_validation_score = None
         for candidate in list(candidates or []):
@@ -558,8 +665,17 @@ def _build_walk_forward_windows(
                 "patch_summary": str(candidate.get("patch_summary") or ""),
                 "train_score": float(train_score),
                 "validation_score": float(validation_score),
+                "train_post_cost_score": float(train_score),
+                "validation_post_cost_score": float(validation_score),
                 "baseline_validation_score": float(baseline_validation),
                 "validation_improvement": float(validation_score - baseline_validation),
+                "validate_turnover": float(validate_summary.get("turnover", 0.0) or 0.0),
+                "validate_turnover_target": float(validate_summary.get("turnover_target", 0.0) or 0.0),
+                "validate_signal_quality_score": float(validate_summary.get("signal_quality_score", 0.0) or 0.0),
+                "validate_outcome_5d_bps": float(validate_summary.get("outcome_selected_spread_5d_bps", 0.0) or 0.0),
+                "validate_outcome_20d_bps": float(validate_summary.get("outcome_selected_spread_20d_bps", 0.0) or 0.0),
+                "validate_outcome_60d_bps": float(validate_summary.get("outcome_selected_spread_60d_bps", 0.0) or 0.0),
+                "validate_realized_edge_20d_bps": float(validate_summary.get("matured_20d_avg_realized_edge_bps", 0.0) or 0.0),
             }
             candidate_rows.append(row)
             if best_validation_score is None or validation_score > best_validation_score:
@@ -586,6 +702,13 @@ def _build_walk_forward_windows(
                 "validate_week_end": str(validate_slice[-1].get("week_start") or ""),
                 "selected_candidate_family": best_validation_family,
                 "selected_candidate_label": _candidate_family_label(best_validation_family),
+                "validate_turnover": float(validate_summary.get("turnover", 0.0) or 0.0),
+                "validate_turnover_target": float(validate_summary.get("turnover_target", 0.0) or 0.0),
+                "validate_signal_quality_score": float(validate_summary.get("signal_quality_score", 0.0) or 0.0),
+                "validate_outcome_5d_bps": float(validate_summary.get("outcome_selected_spread_5d_bps", 0.0) or 0.0),
+                "validate_outcome_20d_bps": float(validate_summary.get("outcome_selected_spread_20d_bps", 0.0) or 0.0),
+                "validate_outcome_60d_bps": float(validate_summary.get("outcome_selected_spread_60d_bps", 0.0) or 0.0),
+                "validate_realized_edge_20d_bps": float(validate_summary.get("matured_20d_avg_realized_edge_bps", 0.0) or 0.0),
             }
         )
     return candidate_rows, window_rows
@@ -728,6 +851,12 @@ def build_market_walk_forward_report(
                     "mean_train_score": float(train_mean),
                     "mean_validation_score": float(validation_mean),
                     "mean_validation_improvement": float(improvement_mean),
+                    "mean_validate_turnover": float(_mean(_safe_float(row.get("validate_turnover"), 0.0) for row in family_rows)),
+                    "mean_validate_turnover_target": float(_mean(_safe_float(row.get("validate_turnover_target"), 0.0) for row in family_rows)),
+                    "mean_validate_outcome_5d_bps": float(_mean(_safe_float(row.get("validate_outcome_5d_bps"), 0.0) for row in family_rows)),
+                    "mean_validate_outcome_20d_bps": float(_mean(_safe_float(row.get("validate_outcome_20d_bps"), 0.0) for row in family_rows)),
+                    "mean_validate_outcome_60d_bps": float(_mean(_safe_float(row.get("validate_outcome_60d_bps"), 0.0) for row in family_rows)),
+                    "mean_validate_realized_edge_20d_bps": float(_mean(_safe_float(row.get("validate_realized_edge_20d_bps"), 0.0) for row in family_rows)),
                     "patch_summary": str(candidate.get("patch_summary") or ""),
                 }
             )
@@ -742,6 +871,12 @@ def build_market_walk_forward_report(
                 "mean_train_score": float(train_mean),
                 "mean_validation_score": float(validation_mean),
                 "mean_validation_improvement": float(improvement_mean),
+                "mean_validate_turnover": float(_mean(_safe_float(row.get("validate_turnover"), 0.0) for row in family_rows)),
+                "mean_validate_turnover_target": float(_mean(_safe_float(row.get("validate_turnover_target"), 0.0) for row in family_rows)),
+                "mean_validate_outcome_5d_bps": float(_mean(_safe_float(row.get("validate_outcome_5d_bps"), 0.0) for row in family_rows)),
+                "mean_validate_outcome_20d_bps": float(_mean(_safe_float(row.get("validate_outcome_20d_bps"), 0.0) for row in family_rows)),
+                "mean_validate_outcome_60d_bps": float(_mean(_safe_float(row.get("validate_outcome_60d_bps"), 0.0) for row in family_rows)),
+                "mean_validate_realized_edge_20d_bps": float(_mean(_safe_float(row.get("validate_realized_edge_20d_bps"), 0.0) for row in family_rows)),
                 "complexity": int(candidate.get("complexity") or 0),
             }
             if best_candidate is None:
@@ -755,19 +890,16 @@ def build_market_walk_forward_report(
 
         best_candidate = dict(best_candidate or {})
         best_family = str(best_candidate.get("family") or "BASELINE")
-        improvement = float(best_candidate.get("mean_validation_score", 0.0) - baseline_mean_validation)
-        win_rate = float(best_candidate.get("selected_window_rate", 0.0))
-        status = "KEEP_BASELINE"
-        status_reason = "baseline remains the most stable validation candidate."
-        if best_family != "BASELINE":
-            if improvement >= 0.75 and win_rate >= 0.50:
-                status = "RECOMMEND_PATCH"
-                status_reason = "non-baseline candidate improved validation score and won a majority of windows."
-            elif improvement > 0.25:
-                status = "WATCH"
-                status_reason = "non-baseline candidate showed some improvement, but not enough consistency yet."
-            else:
-                status_reason = "non-baseline candidate did not improve validation enough to displace baseline."
+        acceptance = _acceptance_status(
+            best_candidate=best_candidate,
+            family_rows=grouped_candidates.get(best_family, []),
+            baseline_mean_validation=baseline_mean_validation,
+            window_count=len(window_rows),
+        )
+        improvement = float(acceptance.get("improvement_score", 0.0) or 0.0)
+        win_rate = float(acceptance.get("win_rate", 0.0) or 0.0)
+        status = str(acceptance.get("status") or "KEEP_BASELINE")
+        status_reason = str(acceptance.get("status_reason") or "baseline remains the most stable validation candidate.")
         patch_rows.extend(_candidate_patch_rows(market_code, profile_key, best_candidate))
         summary_rows.append(
             {
@@ -781,6 +913,15 @@ def build_market_walk_forward_report(
                 "tuned_validation_score": float(best_candidate.get("mean_validation_score", 0.0) or 0.0),
                 "improvement_score": float(improvement),
                 "win_rate": float(win_rate),
+                "consecutive_stable_windows": int(acceptance.get("consecutive_stable_windows", 0) or 0),
+                "acceptance_failed_rules": str(acceptance.get("acceptance_failed_rules") or ""),
+                "acceptance_rules": dict(acceptance.get("acceptance_rules") or {}),
+                "mean_validate_turnover": float(best_candidate.get("mean_validate_turnover", 0.0) or 0.0),
+                "mean_validate_turnover_target": float(best_candidate.get("mean_validate_turnover_target", 0.0) or 0.0),
+                "mean_validate_outcome_5d_bps": float(best_candidate.get("mean_validate_outcome_5d_bps", 0.0) or 0.0),
+                "mean_validate_outcome_20d_bps": float(best_candidate.get("mean_validate_outcome_20d_bps", 0.0) or 0.0),
+                "mean_validate_outcome_60d_bps": float(best_candidate.get("mean_validate_outcome_60d_bps", 0.0) or 0.0),
+                "mean_validate_realized_edge_20d_bps": float(best_candidate.get("mean_validate_realized_edge_20d_bps", 0.0) or 0.0),
                 "status": status,
                 "status_reason": status_reason,
                 "patch_summary": str(best_candidate.get("patch_summary") or "keep baseline"),
@@ -812,6 +953,7 @@ def build_market_walk_forward_report(
             "market_count": int(len(summary_rows)),
             "window_count": int(len(window_rows_out)),
             "recommended_patch_count": int(sum(1 for row in summary_rows if str(row.get("status") or "") == "RECOMMEND_PATCH")),
+            "watch_count": int(sum(1 for row in summary_rows if str(row.get("status") or "") == "WATCH")),
             "best_market": str(best_summary.get("market") or "-"),
             "best_candidate": str(best_summary.get("selected_candidate_family") or "BASELINE"),
         },
@@ -852,6 +994,20 @@ def _write_walk_forward_markdown(
                     delta=float(row.get("improvement_score", 0.0) or 0.0),
                     win_rate=float(row.get("win_rate", 0.0) or 0.0),
                     reason=str(row.get("status_reason") or ""),
+                )
+            )
+            if str(row.get("acceptance_failed_rules") or "").strip():
+                lines.append(f"  failed_rules: {str(row.get('acceptance_failed_rules') or '')}")
+            lines.append(
+                "  acceptance: stable_windows={stable} turnover={turnover:.3f}/{target:.3f} "
+                "outcome_5/20/60={o5:.1f}/{o20:.1f}/{o60:.1f} realized_20d={realized:.1f}".format(
+                    stable=int(row.get("consecutive_stable_windows", 0) or 0),
+                    turnover=float(row.get("mean_validate_turnover", 0.0) or 0.0),
+                    target=float(row.get("mean_validate_turnover_target", 0.0) or 0.0),
+                    o5=float(row.get("mean_validate_outcome_5d_bps", 0.0) or 0.0),
+                    o20=float(row.get("mean_validate_outcome_20d_bps", 0.0) or 0.0),
+                    o60=float(row.get("mean_validate_outcome_60d_bps", 0.0) or 0.0),
+                    realized=float(row.get("mean_validate_realized_edge_20d_bps", 0.0) or 0.0),
                 )
             )
             lines.append(f"  patch: {str(row.get('patch_summary') or 'keep baseline')}")

@@ -474,6 +474,86 @@ class Storage:
                 "ON investment_weekly_tuning_history (market, portfolio_id, week_start DESC, ts DESC)"
             )
             c.execute("""
+            CREATE TABLE IF NOT EXISTS investment_weekly_decision_evidence_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                week_label TEXT,
+                week_start TEXT,
+                window_start TEXT,
+                window_end TEXT,
+                ts TEXT,
+                market TEXT,
+                portfolio_id TEXT,
+                run_id TEXT,
+                parent_order_key TEXT,
+                symbol TEXT,
+                action TEXT,
+                decision_status TEXT,
+                candidate_snapshot_id TEXT,
+                candidate_stage TEXT,
+                order_value REAL,
+                fill_notional REAL,
+                signal_score REAL,
+                expected_edge_bps REAL,
+                expected_cost_bps REAL,
+                edge_gate_threshold_bps REAL,
+                blocked_market_rule_order_count INTEGER,
+                blocked_edge_order_count INTEGER,
+                blocked_gate_order_count INTEGER,
+                dynamic_liquidity_bucket TEXT,
+                dynamic_order_adv_pct REAL,
+                slice_count INTEGER,
+                strategy_control_weight_delta REAL,
+                risk_overlay_weight_delta REAL,
+                risk_market_profile_budget_weight_delta REAL,
+                risk_throttle_weight_delta REAL,
+                risk_recovery_weight_credit REAL,
+                execution_gate_blocked_weight REAL,
+                realized_slippage_bps REAL,
+                realized_edge_bps REAL,
+                execution_capture_bps REAL,
+                first_fill_delay_seconds REAL,
+                outcome_5d_bps REAL,
+                outcome_20d_bps REAL,
+                outcome_60d_bps REAL,
+                details TEXT
+            )""")
+            c.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_investment_weekly_decision_evidence_history_key "
+                "ON investment_weekly_decision_evidence_history (week_label, portfolio_id, run_id, parent_order_key)"
+            )
+            c.execute(
+                "CREATE INDEX IF NOT EXISTS idx_investment_weekly_decision_evidence_history_lookup "
+                "ON investment_weekly_decision_evidence_history (market, portfolio_id, week_start DESC, ts DESC)"
+            )
+            self._ensure_column(c, "investment_weekly_decision_evidence_history", "order_value REAL")
+            self._ensure_column(c, "investment_weekly_decision_evidence_history", "fill_notional REAL")
+            c.execute("""
+            CREATE TABLE IF NOT EXISTS investment_patch_review_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                week_label TEXT,
+                week_start TEXT,
+                ts TEXT,
+                market TEXT,
+                portfolio_id TEXT,
+                patch_kind TEXT,
+                feedback_signature TEXT,
+                review_status TEXT,
+                review_status_label TEXT,
+                ready_for_manual_apply INTEGER,
+                profile TEXT,
+                scope TEXT,
+                config_file TEXT,
+                config_path TEXT,
+                config_commit_sha TEXT,
+                config_diff_note TEXT,
+                operator_note TEXT,
+                details TEXT
+            )""")
+            c.execute(
+                "CREATE INDEX IF NOT EXISTS idx_investment_patch_review_history_lookup "
+                "ON investment_patch_review_history (market, portfolio_id, patch_kind, week_start DESC, ts DESC)"
+            )
+            c.execute("""
             CREATE TABLE IF NOT EXISTS investment_execution_orders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 run_id TEXT,
@@ -959,6 +1039,55 @@ class Storage:
                 list(row.values()),
             )
 
+    def upsert_investment_weekly_decision_evidence_history(self, row: Dict[str, Any]):
+        row = dict(row)
+        row.setdefault("ts", datetime.utcnow().isoformat())
+        row["week_label"] = str(row.get("week_label") or "").strip()
+        row["market"] = str(row.get("market") or "").upper()
+        row["portfolio_id"] = str(row.get("portfolio_id") or "").strip()
+        row["run_id"] = str(row.get("run_id") or "").strip()
+        row["parent_order_key"] = str(row.get("parent_order_key") or "").strip()
+        details = row.get("details")
+        if isinstance(details, (dict, list)):
+            row["details"] = json.dumps(details, ensure_ascii=False)
+        with self._conn() as c:
+            c.execute(
+                """
+                DELETE FROM investment_weekly_decision_evidence_history
+                WHERE week_label=? AND portfolio_id=? AND run_id=? AND parent_order_key=?
+                """,
+                (
+                    str(row.get("week_label") or "").strip(),
+                    str(row.get("portfolio_id") or "").strip(),
+                    str(row.get("run_id") or "").strip(),
+                    str(row.get("parent_order_key") or "").strip(),
+                ),
+            )
+            cols = ",".join(row.keys())
+            qs = ",".join(["?"] * len(row))
+            c.execute(
+                f"INSERT INTO investment_weekly_decision_evidence_history ({cols}) VALUES ({qs})",
+                list(row.values()),
+            )
+
+    def insert_investment_patch_review_history(self, row: Dict[str, Any]):
+        row = dict(row)
+        row.setdefault("ts", datetime.utcnow().isoformat())
+        row["week_label"] = str(row.get("week_label") or "").strip()
+        row["market"] = str(row.get("market") or "").upper()
+        row["portfolio_id"] = str(row.get("portfolio_id") or "").strip()
+        row["patch_kind"] = str(row.get("patch_kind") or "").strip().lower()
+        details = row.get("details")
+        if isinstance(details, (dict, list)):
+            row["details"] = json.dumps(details, ensure_ascii=False)
+        with self._conn() as c:
+            cols = ",".join(row.keys())
+            qs = ",".join(["?"] * len(row))
+            c.execute(
+                f"INSERT INTO investment_patch_review_history ({cols}) VALUES ({qs})",
+                list(row.values()),
+            )
+
     def update_investment_execution_run(self, run_id: str, **fields: Any):
         if not str(run_id or "").strip() or not fields:
             return
@@ -1139,6 +1268,90 @@ class Storage:
                     market_code,
                     str(portfolio_id or "").strip(),
                     str(portfolio_id or "").strip(),
+                    max(1, int(limit)),
+                ),
+            ).fetchall()
+        out: List[Dict[str, Any]] = []
+        for raw in rows:
+            row = dict(raw)
+            details = row.get("details")
+            if isinstance(details, str) and details:
+                try:
+                    row["details_json"] = json.loads(details)
+                except Exception:
+                    row["details_json"] = {}
+            else:
+                row["details_json"] = {}
+            out.append(row)
+        return out
+
+    def get_recent_investment_weekly_decision_evidence_history(
+        self,
+        market: str,
+        portfolio_id: str = "",
+        *,
+        symbol: str = "",
+        limit: int = 200,
+    ) -> List[Dict[str, Any]]:
+        market_code = str(market or "").upper()
+        with self._conn() as c:
+            c.row_factory = sqlite3.Row
+            rows = c.execute(
+                """
+                SELECT *
+                FROM investment_weekly_decision_evidence_history
+                WHERE market=? AND (?='' OR portfolio_id=?) AND (?='' OR symbol=?)
+                ORDER BY week_start DESC, ts DESC, id DESC
+                LIMIT ?
+                """,
+                (
+                    market_code,
+                    str(portfolio_id or "").strip(),
+                    str(portfolio_id or "").strip(),
+                    str(symbol or "").strip().upper(),
+                    str(symbol or "").strip().upper(),
+                    max(1, int(limit)),
+                ),
+            ).fetchall()
+        out: List[Dict[str, Any]] = []
+        for raw in rows:
+            row = dict(raw)
+            details = row.get("details")
+            if isinstance(details, str) and details:
+                try:
+                    row["details_json"] = json.loads(details)
+                except Exception:
+                    row["details_json"] = {}
+            else:
+                row["details_json"] = {}
+            out.append(row)
+        return out
+
+    def get_recent_investment_patch_review_history(
+        self,
+        market: str,
+        portfolio_id: str = "",
+        *,
+        patch_kind: str = "",
+        limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        market_code = str(market or "").upper()
+        with self._conn() as c:
+            c.row_factory = sqlite3.Row
+            rows = c.execute(
+                """
+                SELECT *
+                FROM investment_patch_review_history
+                WHERE market=? AND (?='' OR portfolio_id=?) AND (?='' OR patch_kind=?)
+                ORDER BY week_start DESC, ts DESC, id DESC
+                LIMIT ?
+                """,
+                (
+                    market_code,
+                    str(portfolio_id or "").strip(),
+                    str(portfolio_id or "").strip(),
+                    str(patch_kind or "").strip().lower(),
+                    str(patch_kind or "").strip().lower(),
                     max(1, int(limit)),
                 ),
             ).fetchall()

@@ -48,6 +48,13 @@ def write_weekly_review_markdown(
     execution_feedback_rows: List[Dict[str, Any]],
     control_timeseries_rows: List[Dict[str, Any]],
     window_label: str,
+    decision_evidence_summary_rows: List[Dict[str, Any]] | None = None,
+    decision_evidence_history_overview_rows: List[Dict[str, Any]] | None = None,
+    edge_calibration_rows: List[Dict[str, Any]] | None = None,
+    slicing_calibration_rows: List[Dict[str, Any]] | None = None,
+    risk_calibration_rows: List[Dict[str, Any]] | None = None,
+    calibration_patch_suggestion_rows: List[Dict[str, Any]] | None = None,
+    patch_governance_rows: List[Dict[str, Any]] | None = None,
 ) -> None:
     lines = [
         "# Weekly Investment Review",
@@ -289,6 +296,179 @@ def write_weekly_review_markdown(
                 f"20d={float(row.get('matured_20d_avg_counterfactual_edge_bps', 0.0) or 0.0):.1f}bps "
                 f"60d={float(row.get('matured_60d_avg_counterfactual_edge_bps', 0.0) or 0.0):.1f}bps"
             )
+
+    lines.append("")
+    lines.append("## Weekly Decision Evidence")
+    if not decision_evidence_summary_rows:
+        lines.append("- (no decision evidence rows)")
+    else:
+        for row in decision_evidence_summary_rows:
+            lines.append(
+                f"- **{row['portfolio_id']}** market={row['market']} "
+                f"rows={int(row.get('decision_evidence_row_count', 0) or 0)} "
+                f"market_rule_blocked={int(row.get('decision_blocked_market_rule_order_count', 0) or 0)} "
+                f"edge_blocked={int(row.get('decision_blocked_edge_order_count', 0) or 0)} "
+                f"bucket={row.get('decision_primary_liquidity_bucket', '-') or '-'}"
+            )
+            lines.append(
+                f"  决策参数: expected_edge={float(row.get('decision_avg_expected_edge_bps', 0.0) or 0.0):.1f}bps "
+                f"expected_cost={float(row.get('decision_avg_expected_cost_bps', 0.0) or 0.0):.1f}bps "
+                f"gate={float(row.get('decision_avg_edge_gate_threshold_bps', 0.0) or 0.0):.1f}bps "
+                f"adv={float(row.get('decision_avg_dynamic_order_adv_pct', 0.0) or 0.0):.3f} "
+                f"slices={float(row.get('decision_avg_slice_count', 0.0) or 0.0):.2f}"
+            )
+            lines.append(
+                f"  结果: slippage={float(row.get('decision_avg_realized_slippage_bps', 0.0) or 0.0):.1f}bps "
+                f"realized_edge={float(row.get('decision_avg_realized_edge_bps', 0.0) or 0.0):.1f}bps "
+                f"outcome_5/20/60={float(row.get('decision_avg_outcome_5d_bps', 0.0) or 0.0):.1f}/"
+                f"{float(row.get('decision_avg_outcome_20d_bps', 0.0) or 0.0):.1f}/"
+                f"{float(row.get('decision_avg_outcome_60d_bps', 0.0) or 0.0):.1f}bps"
+            )
+
+    lines.append("")
+    lines.append("## Decision Evidence History")
+    if not decision_evidence_history_overview_rows:
+        lines.append("- (no decision evidence history rows)")
+    else:
+        for row in decision_evidence_history_overview_rows:
+            lines.append(
+                f"- **{row['portfolio_id']}** market={row['market']} "
+                f"weeks={int(row.get('weeks_tracked', 0) or 0)} "
+                f"latest={row.get('latest_week_label', '-') or '-'} "
+                f"baseline={row.get('baseline_week_label', '-') or '-'} "
+                f"bucket={row.get('latest_primary_liquidity_bucket', '-') or '-'}"
+            )
+            if row.get("liquidity_bucket_chain"):
+                lines.append(f"  Bucket 演变: {row.get('liquidity_bucket_chain', '')}")
+            lines.append(
+                f"  结果趋势: slippage_delta={float(row.get('decision_avg_realized_slippage_bps_delta', 0.0) or 0.0):.1f}bps "
+                f"({row.get('decision_slippage_trend', '-') or '-'}) "
+                f"realized_edge_delta={float(row.get('decision_avg_realized_edge_bps_delta', 0.0) or 0.0):.1f}bps "
+                f"({row.get('decision_realized_edge_trend', '-') or '-'}) "
+                f"outcome20_delta={float(row.get('decision_avg_outcome_20d_bps_delta', 0.0) or 0.0):.1f}bps "
+                f"({row.get('decision_outcome_20d_trend', '-') or '-'})"
+            )
+            lines.append(
+                f"  Gate/执行: blocked_edge_delta={float(row.get('decision_blocked_edge_order_count_delta', 0.0) or 0.0):.1f} "
+                f"({row.get('decision_blocked_edge_trend', '-') or '-'}) "
+                f"market_rule_delta={float(row.get('decision_blocked_market_rule_order_count_delta', 0.0) or 0.0):.1f} "
+                f"({row.get('decision_market_rule_block_trend', '-') or '-'}) "
+                f"adv_delta={float(row.get('decision_avg_dynamic_order_adv_pct_delta', 0.0) or 0.0):.3f} "
+                f"slice_delta={float(row.get('decision_avg_slice_count_delta', 0.0) or 0.0):.2f}"
+            )
+
+    lines.append("")
+    lines.append("## Edge Calibration")
+    if not edge_calibration_rows:
+        lines.append("- (no edge calibration rows)")
+    else:
+        for row in edge_calibration_rows:
+            lines.append(
+                f"- **{row['portfolio_id']}** market={row['market']} "
+                f"filled={int(row.get('filled_sample_count', 0) or 0)} "
+                f"blocked_edge={int(row.get('blocked_edge_sample_count', 0) or 0)} "
+                f"blocked_rule={int(row.get('blocked_market_rule_sample_count', 0) or 0)} "
+                f"edge_quality={row.get('edge_gate_quality', '-') or '-'}"
+            )
+            lines.append(
+                f"  Outcome20: filled={float(row.get('filled_avg_outcome_20d_bps', 0.0) or 0.0):.1f}bps "
+                f"blocked_edge={float(row.get('blocked_edge_avg_outcome_20d_bps', 0.0) or 0.0):.1f}bps "
+                f"gap={float(row.get('blocked_edge_vs_filled_outcome_20d_bps', 0.0) or 0.0):.1f}bps "
+                f"rule_gap={float(row.get('blocked_market_rule_vs_filled_outcome_20d_bps', 0.0) or 0.0):.1f}bps"
+            )
+            if row.get("edge_calibration_note"):
+                lines.append(f"  结论: {row.get('edge_calibration_note', '')}")
+
+    lines.append("")
+    lines.append("## Slicing Calibration")
+    if not slicing_calibration_rows:
+        lines.append("- (no slicing calibration rows)")
+    else:
+        for row in slicing_calibration_rows:
+            lines.append(
+                f"- **{row['portfolio_id']} / {row.get('dynamic_liquidity_bucket', '-') or '-'}** market={row['market']} "
+                f"samples={int(row.get('sample_count', 0) or 0)} "
+                f"filled={int(row.get('filled_sample_count', 0) or 0)} "
+                f"assessment={row.get('slicing_assessment', '-') or '-'}"
+            )
+            lines.append(
+                f"  执行: adv={float(row.get('avg_dynamic_order_adv_pct', 0.0) or 0.0):.3f} "
+                f"slices={float(row.get('avg_slice_count', 0.0) or 0.0):.2f} "
+                f"slippage={float(row.get('avg_realized_slippage_bps', 0.0) or 0.0):.1f}bps "
+                f"delay={float(row.get('avg_fill_delay_seconds', 0.0) or 0.0):.1f}s"
+            )
+            if row.get("slicing_calibration_note"):
+                lines.append(f"  结论: {row.get('slicing_calibration_note', '')}")
+
+    lines.append("")
+    lines.append("## Risk Calibration")
+    if not risk_calibration_rows:
+        lines.append("- (no risk calibration rows)")
+    else:
+        for row in risk_calibration_rows:
+            lines.append(
+                f"- **{row['portfolio_id']}** market={row['market']} "
+                f"target={row.get('risk_calibration_target', '-') or '-'} "
+                f"outcome20_delta={float(row.get('decision_avg_outcome_20d_bps_delta', 0.0) or 0.0):.1f}bps "
+                f"realized_edge_delta={float(row.get('decision_avg_realized_edge_bps_delta', 0.0) or 0.0):.1f}bps"
+            )
+            lines.append(
+                f"  风险拆分: budget={float(row.get('latest_budget_weight_delta', 0.0) or 0.0):.3f} "
+                f"throttle={float(row.get('latest_throttle_weight_delta', 0.0) or 0.0):.3f} "
+                f"recovery={float(row.get('latest_recovery_weight_credit', 0.0) or 0.0):.3f} "
+                f"layer={row.get('latest_dominant_throttle_layer_label', row.get('latest_dominant_throttle_layer', '-')) or '-'}"
+            )
+            if row.get("risk_calibration_note"):
+                lines.append(f"  结论: {row.get('risk_calibration_note', '')}")
+
+    lines.append("")
+    lines.append("## Calibration Patch Suggestions")
+    if not calibration_patch_suggestion_rows:
+        lines.append("- (no calibration patch suggestions)")
+    else:
+        for row in calibration_patch_suggestion_rows:
+            lines.append(
+                f"- **{row.get('portfolio_id', '-') or '-'}** market={row.get('market', '-') or '-'} "
+                f"scope={row.get('scope_label', row.get('scope', '-')) or '-'} "
+                f"field={row.get('field', '-') or '-'} "
+                f"current={row.get('current_value', '-') if row.get('current_value', '-') not in (None, '') else '-'} "
+                f"suggested={row.get('suggested_value', '-') if row.get('suggested_value', '-') not in (None, '') else '-'}"
+            )
+            lines.append(
+                f"  配置: {row.get('config_path', '-') or '-'} "
+                f"({row.get('change_hint_label', row.get('change_hint', '-')) or '-'}) "
+                f"source={row.get('source_signal_label', row.get('source_signal', '-')) or '-'} "
+                f"priority={row.get('priority_label', '-') or '-'}"
+            )
+            if row.get("source_note"):
+                lines.append(f"  建议: {row.get('source_note', '')}")
+
+    lines.append("")
+    lines.append("## Patch Governance Summary")
+    if not patch_governance_rows:
+        lines.append("- (no patch governance rows)")
+    else:
+        for row in patch_governance_rows:
+            avg_review_to_apply_weeks = row.get("avg_review_to_apply_weeks")
+            latency_basis = str(row.get("review_latency_basis", "review_to_apply") or "review_to_apply")
+            lines.append(
+                f"- **{row.get('market', '-') or '-'} / {row.get('patch_kind_label', '-') or '-'} / {row.get('field', '-') or '-'}** "
+                f"scope={row.get('scope_label', '-') or '-'} "
+                f"tracked={int(row.get('review_cycle_count', 0) or 0)} "
+                f"open={int(row.get('open_cycle_count', 0) or 0)} "
+                f"approved_pending={int(row.get('approved_not_applied_count', 0) or 0)} "
+                f"approval={float(row.get('approval_rate', 0.0) or 0.0):.0%} "
+                f"rejection={float(row.get('rejection_rate', 0.0) or 0.0):.0%} "
+                f"apply={float(row.get('apply_rate', 0.0) or 0.0):.0%}"
+            )
+            avg_weeks_text = f"{float(avg_review_to_apply_weeks or 0.0):.1f}" if avg_review_to_apply_weeks is not None else "-"
+            lines.append(
+                f"  最近状态: {row.get('latest_week_label', '-') or '-'} / "
+                f"{row.get('latest_status_label', '-') or '-'} "
+                f"avg_{latency_basis}_weeks={avg_weeks_text}"
+            )
+            if row.get("examples"):
+                lines.append(f"  示例: {row.get('examples', '')}")
 
     lines.append("")
     lines.append("## Weekly Risk Overlay Review")

@@ -23,6 +23,7 @@ class DashboardControlService:
         run_weekly_review: JsonHandler,
         apply_weekly_feedback: JsonHandler,
         review_market_profile_patch: JsonHandler,
+        review_calibration_patch: JsonHandler,
         refresh_dashboard: JsonHandler,
         toggle_flag: JsonHandler,
         set_execution_mode: JsonHandler,
@@ -35,6 +36,7 @@ class DashboardControlService:
         self._run_weekly_review = run_weekly_review
         self._apply_weekly_feedback = apply_weekly_feedback
         self._review_market_profile_patch = review_market_profile_patch
+        self._review_calibration_patch = review_calibration_patch
         self._refresh_dashboard = refresh_dashboard
         self._toggle_flag = toggle_flag
         self._set_execution_mode = set_execution_mode
@@ -120,6 +122,10 @@ class DashboardControlService:
                     return
                 if path == "/review_market_profile_patch":
                     result = dict(service._review_market_profile_patch(payload) or {})
+                    self._send_json(200 if bool(result.get("ok", False)) else 400, result)
+                    return
+                if path == "/review_calibration_patch":
+                    result = dict(service._review_calibration_patch(payload) or {})
                     self._send_json(200 if bool(result.get("ok", False)) else 400, result)
                     return
                 if path == "/refresh_dashboard":
