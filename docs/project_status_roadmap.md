@@ -207,6 +207,17 @@
   - 自动跑测试
 - `src.main` 收口为 CLI 入口，核心装配下沉到独立 bootstrap 模块
 
+### Dashboard freshness / health helper 对齐（进行中）
+
+- 已为 dashboard helper 补充 freshness / market-state / health-overview / market-data-health 的测试覆盖。
+- 正在把 helper 从旧的静态字符串映射升级为：
+  - freshness 支持 `market + report_date + latest_generated_at + as_of_date`
+  - market state 支持 `None -> 市场状态: 暂无数据`
+  - health overview 按 `degraded > warning > ready` 聚合，并合并摘要
+  - market data health overview 在空输入时给出 `warning + 明确兜底摘要`
+- 当前已把这些 helper 接到 dashboard card / JSON payload / simple mode / advanced mode 的统一字段上，避免“测试语义”和“页面文案”继续脱节。
+- 下一步会继续把这层 freshness / health 统一透到更多 dashboard control / ops 视图，并清理旧的同义字段。
+
 下一步建议：
 
 - 为 lint / static check 增加统一命令

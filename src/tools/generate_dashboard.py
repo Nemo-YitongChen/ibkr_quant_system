@@ -92,6 +92,9 @@ DASHBOARD_FRAGMENT_TRANSLATIONS_EN.update({
     "开市中": "Market Open",
     "已闭市": "Market Closed",
     "报告待刷新": "Report Needs Refresh",
+    "市场状态: 暂无数据": "Market State: No Data",
+    " 已更新": " Report Fresh",
+    " 待刷新": " Report Needs Refresh",
 })
 
 
@@ -100,12 +103,116 @@ def _dashboard_mode_display_label(mode: str) -> str:
     return DASHBOARD_MODE_DISPLAY_LABELS.get(raw, raw or "-")
 
 
-def _dashboard_market_state_label(is_open: bool) -> str:
+def _dashboard_market_state_label(is_open: Any) -> str:
+    if is_open is None:
+        return "市场状态: 暂无数据"
     return "开市中" if bool(is_open) else "已闭市"
 
 
-def _dashboard_report_freshness_label(report_fresh: str) -> str:
-    return "报告已更新" if str(report_fresh or "") == "fresh" else "报告待刷新"
+def _dashboard_report_freshness_label(
+    report_fresh: Any = None,
+    *,
+    market: str = "",
+    report_date: str = "",
+    latest_generated_at: str = "",
+    as_of_date: str = "",
+) -> str:
+    if report_fresh is not None and not any([market, report_date, latest_generated_at, as_of_date]):
+        return "报告已更新" if str(report_fresh or "") == "fresh" else "报告待刷新"
+
+    market_label = str(market or "").strip().upper() or "UNKNOWN"
+    raw_report_fresh = str(report_fresh or "").strip().lower()
+    is_stale = raw_report_fresh not in {"", "fresh", "ready", "updated"}
+
+    if str(report_date or "").strip() and str(as_of_date or "").strip():
+        try:
+            report_day = datetime.fromisoformat(str(report_date))
+            asof_day = datetime.fromisoformat(str(as_of_date))
+            if report_day.date() < asof_day.date():
+                is_stale = True
+        except Exception:
+            if str(report_date) < str(as_of_date):
+                is_stale = True
+
+    if str(latest_generated_at or "").strip() and str(as_of_date or "").strip():
+        try:
+            gen_dt = datetime.fromisoformat(str(latest_generated_at).replace("Z", "+00:00"))
+            asof_dt = datetime.fromisoformat(str(as_of_date))
+            if gen_dt.date() < asof_dt.date():
+                is_stale = True
+        except Exception:
+            pass
+
+    return f"{market_label} 待刷新" if is_stale else f"{market_label} 已更新"
+
+
+def _translate_market_status_label_en(label: str) -> str:
+    text = str(label or "").strip()
+    if text == "市场状态: 暂无数据":
+        return "Market State: No Data"
+    if text == "开市中":
+        return "Market Open"
+    if text == "已闭市":
+        return "Market Closed"
+    return text
+
+
+def _translate_report_freshness_label_en(label: str) -> str:
+    text = str(label or "").strip()
+    if not text:
+        return ""
+    if text.endswith("已更新"):
+        prefix = text[:-3].strip()
+        return f"{prefix} Report Fresh" if prefix else "Report Fresh"
+    if text.endswith("待刷新"):
+        prefix = text[:-3].strip()
+        return f"{prefix} Report Needs Refresh" if prefix else "Report Needs Refresh"
+    if text == "报告已更新":
+        return "Report Fresh"
+    if text == "报告待刷新":
+        return "Report Needs Refresh"
+    return text
+
+
+def _dashboard_health_bucket(status: Any) -> str:
+    raw = str(status or "").strip().lower()
+    if raw in {"degraded", "fail", "failed", "critical"}:
+        return "degraded"
+    if raw in {"limited", "warning", "warn", "stale", "mismatch"}:
+        return "warning"
+    return "ready"
+
+
+def _dashboard_health_bucket_label(status: Any) -> str:
+    bucket = _dashboard_health_bucket(status)
+    return {
+        "degraded": "有降级",
+        "warning": "有告警",
+        "ready": "已就绪",
+    }.get(bucket, "已就绪")
+
+
+def _dashboard_card_health_summary(health: Dict[str, Any]) -> str:
+    detail = str(health.get("status_detail", "") or "").strip()
+    counts = []
+    delayed = int(health.get("delayed_count", 0) or 0)
+    permission = int(health.get("permission_count", 0) or 0)
+    connectivity = int(health.get("connectivity_breaks", 0) or 0)
+    account_limit = int(health.get("account_limit_count", 0) or 0)
+    if delayed:
+        counts.append(f"延迟 {delayed}")
+    if permission:
+        counts.append(f"权限 {permission}")
+    if connectivity:
+        counts.append(f"中断 {connectivity}")
+    if account_limit:
+        counts.append(f"额度 {account_limit}")
+    parts = []
+    if detail and detail != "-":
+        parts.append(detail)
+    if counts:
+        parts.append("异常计数：" + " / ".join(counts))
+    return "；".join(parts) if parts else "整体正常"
 
 
 def _dashboard_account_mode_label(account_mode: str) -> str:
@@ -2838,6 +2945,7 @@ def _build_report_card(
         "account_profile_config_path": str(account_profile_cfg_path),
         "adaptive_strategy_config_path": str(adaptive_strategy_cfg_path),
         "dashboard_db_path": str(dashboard_db),
+        "exchange_open_raw": market_summary.get("exchange_open") if "exchange_open" in market_summary else None,
         "exchange_open": bool(market_summary.get("exchange_open", False)),
         "priority_order": int(market_summary.get("priority_order", 0) or 0),
         "priority_reason": str(market_summary.get("priority_reason", "") or ""),
@@ -2957,7 +3065,14 @@ def _build_overview(cards: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 "market": card["market"],
                 "watchlist": card["watchlist"],
                 "mode": card["mode"],
-                "exchange_open": bool(card.get("exchange_open", False)),
+                "exchange_open": card.get("exchange_open_raw") if "exchange_open_raw" in card else card.get("exchange_open"),
+                "market_state_label": str(card.get("market_state_label", "") or ""),
+                "report_freshness_label": str(card.get("report_freshness_label", "") or ""),
+                "report_status_label": str(card.get("report_status_label", "") or ""),
+                "health_status_label": str(dict(list(card.get("health_overview", []) or [{}])[0]).get("status_label", "") or ""),
+                "health_summary": str(dict(list(card.get("health_overview", []) or [{}])[0]).get("summary", "") or ""),
+                "market_data_status_label": str(dict(list(card.get("market_data_health_overview", []) or [{}])[0]).get("status_label", "") or ""),
+                "market_data_summary": str(dict(list(card.get("market_data_health_overview", []) or [{}])[0]).get("summary", "") or ""),
                 "priority_order": int(card.get("priority_order", 0) or 0),
                 "recommended_action": str(card.get("recommended_action", "") or ""),
                 "recommended_detail": str(card.get("recommended_detail", "") or ""),
@@ -4499,14 +4614,48 @@ def _build_execution_hotspot_overview(cards: List[Dict[str, Any]]) -> List[Dict[
 
 
 def _build_health_overview(cards: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if not cards:
+        return [{"status": "ready", "status_label": "已就绪", "summary": "暂无健康检查结果"}]
+    if all("health_summary" not in dict(row or {}) for row in list(cards or [])):
+        status_priority = {"degraded": 0, "warning": 1, "ready": 2}
+        normalized: List[Dict[str, str]] = []
+        for raw in list(cards or []):
+            row = dict(raw or {})
+            bucket = _dashboard_health_bucket(row.get("status"))
+            summary = str(row.get("summary", "") or "").strip()
+            normalized.append(
+                {
+                    "status": bucket,
+                    "status_label": _dashboard_health_bucket_label(bucket),
+                    "summary": summary,
+                }
+            )
+        worst = min(normalized, key=lambda row: status_priority.get(str(row.get("status") or "ready"), 99))
+        merged = [
+            str(row.get("summary") or "").strip()
+            for row in normalized
+            if str(row.get("status") or "") in {"degraded", "warning"} and str(row.get("summary") or "").strip()
+        ]
+        if not merged:
+            merged = [str(row.get("summary") or "").strip() for row in normalized if str(row.get("summary") or "").strip()]
+        return [
+            {
+                "status": str(worst.get("status") or "ready"),
+                "status_label": str(worst.get("status_label") or "已就绪"),
+                "summary": "；".join(merged) if merged else "整体正常",
+            }
+        ]
     rows: List[Dict[str, Any]] = []
     for card in cards:
         health = dict(card.get("health_summary", {}) or {})
+        status_bucket = _dashboard_health_bucket(health.get("status", "OK"))
         rows.append(
             {
                 "market": card["market"],
                 "watchlist": card["watchlist"],
                 "status": str(health.get("status", "OK") or "OK"),
+                "status_bucket": status_bucket,
+                "status_label": _dashboard_health_bucket_label(status_bucket),
                 "status_detail": str(health.get("status_detail", "") or "-"),
                 "delayed_count": int(health.get("delayed_count", 0) or 0),
                 "permission_count": int(health.get("permission_count", 0) or 0),
@@ -4514,9 +4663,16 @@ def _build_health_overview(cards: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 "account_limit_count": int(health.get("account_limit_count", 0) or 0),
                 "latest_event_label": str(health.get("latest_event_label", "") or "-"),
                 "latest_event_ts": str(health.get("latest_event_ts", "") or "-"),
+                "summary": _dashboard_card_health_summary(health),
             }
         )
-    rows.sort(key=lambda row: (0 if row["status"] == "DEGRADED" else 1 if row["status"] == "LIMITED" else 2, row["market"], row["watchlist"]))
+    rows.sort(
+        key=lambda row: (
+            0 if str(row.get("status_bucket", "") or "") == "degraded" else 1 if str(row.get("status_bucket", "") or "") == "warning" else 2,
+            row["market"],
+            row["watchlist"],
+        )
+    )
     return rows
 
 
@@ -4548,6 +4704,33 @@ def _market_data_health_status(
 
 
 def _build_market_data_health_overview(cards: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if not cards:
+        return [{
+            "status": "warning",
+            "status_label": "有告警",
+            "summary": "暂无市场数据健康检查结果",
+        }]
+    if all("data_quality_summary" not in dict(row or {}) for row in list(cards or [])):
+        status_priority = {"degraded": 0, "warning": 1, "ready": 2}
+        normalized: List[Dict[str, str]] = []
+        for raw in list(cards or []):
+            row = dict(raw or {})
+            bucket = _dashboard_health_bucket(row.get("status"))
+            summary = str(row.get("summary", "") or "").strip()
+            normalized.append(
+                {
+                    "status": bucket,
+                    "status_label": _dashboard_health_bucket_label(bucket),
+                    "summary": summary,
+                }
+            )
+        worst = min(normalized, key=lambda row: status_priority.get(str(row.get("status") or "warning"), 99))
+        merged = [str(row.get("summary") or "").strip() for row in normalized if str(row.get("summary") or "").strip()]
+        return [{
+            "status": str(worst.get("status") or "warning"),
+            "status_label": str(worst.get("status_label") or "有告警"),
+            "summary": "；".join(merged) if merged else "暂无市场数据健康检查结果",
+        }]
     grouped: Dict[str, Dict[str, Any]] = {}
     for card in cards:
         market = str(card.get("market", "") or "").strip().upper()
@@ -4602,11 +4785,17 @@ def _build_market_data_health_overview(cards: List[Dict[str, Any]]) -> List[Dict
             research_only_yfinance=bool(raw.get("research_only_yfinance", False)),
         )
         warning_summary = " | ".join(sorted(str(x) for x in raw.get("warning_lines", set()) if str(x).strip()))
+        status_bucket = (
+            "ready"
+            if status_label == "IBKR正常"
+            else "warning"
+        )
         rows.append(
             {
                 "market": market,
                 "portfolio_count": portfolio_count,
                 "watchlists": ",".join(sorted(x for x in raw.get("watchlists", set()) if x)),
+                "status": status_bucket,
                 "status_label": status_label,
                 "research_only_yfinance": bool(raw.get("research_only_yfinance", False)),
                 "avg_data_quality_score": avg_score,
@@ -4617,6 +4806,10 @@ def _build_market_data_health_overview(cards: List[Dict[str, Any]]) -> List[Dict
                 "missing_count": missing_count,
                 "diagnosis": diagnosis,
                 "warning_summary": warning_summary,
+                "summary": (
+                    f"{diagnosis}"
+                    + (f" | {warning_summary}" if warning_summary else "")
+                ),
             }
         )
 
@@ -4661,7 +4854,7 @@ def _build_focus_actions(cards: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             {
                 "market": row.get("market", ""),
                 "watchlist": row.get("watchlist", ""),
-                "exchange_open": bool(row.get("exchange_open", False)),
+                "exchange_open": row.get("exchange_open_raw") if "exchange_open_raw" in row else row.get("exchange_open"),
                 "mode": row.get("mode", ""),
                 "action": action,
                 "detail": governance_detail or str(row.get("recommended_detail", "") or "-"),
@@ -5166,6 +5359,16 @@ def _render_card(card: Dict[str, Any]) -> str:
     action_distribution = str(card.get("action_distribution", "") or "-")
     sector_theme_distribution = str(card.get("sector_theme_distribution", "") or "-")
     open_flag = bool(card.get("exchange_open", False))
+    market_state_label = str(card.get("market_state_label", "") or _dashboard_market_state_label(card.get("exchange_open_raw")))
+    report_freshness_label = str(card.get("report_freshness_label", "") or _dashboard_report_freshness_label(report_fresh))
+    card_health_overview = list(card.get("health_overview", []) or [])
+    card_health_row = dict(card_health_overview[0] if card_health_overview else {})
+    card_market_data_overview = list(card.get("market_data_health_overview", []) or [])
+    card_market_data_row = dict(card_market_data_overview[0] if card_market_data_overview else {})
+    health_status_label = str(card_health_row.get("status_label", "") or str(health.get("status", "OK") or "OK"))
+    health_status_summary = str(card_health_row.get("summary", "") or _dashboard_card_health_summary(health))
+    market_data_status_label = str(card_market_data_row.get("status_label", "") or "-")
+    market_data_status_summary = str(card_market_data_row.get("summary", "") or "-")
     actionable = bool(card.get("actionable", False))
     weekly_submitted = int(weekly.get("submitted_order_rows", 0) or 0)
     weekly_filled_status = int(weekly.get("filled_order_rows", 0) or 0)
@@ -6009,12 +6212,14 @@ def _render_card(card: Dict[str, Any]) -> str:
     market_structure_summary = dict(card.get("market_structure_summary", {}) or {})
     account_profile_summary = dict(card.get("account_profile_summary", {}) or {})
     simple_status_text = (
-        f"{_dashboard_market_state_label(open_flag)} | {execution_badge} | "
-        f"{_dashboard_report_freshness_label(report_fresh)}"
+        f"{market_state_label} | {report_freshness_label} | "
+        f"{health_status_label} | {market_data_status_label}"
     )
     simple_action_text = action_label or ("继续复盘" if is_dry_run_view else "继续观察")
     simple_reason_text = (
         action_detail
+        or health_status_summary
+        or market_data_status_summary
         or str(execution_mode_recommendation.get("reason", "") or "").strip()
         or str(report_data_warning or "").strip()
         or mode_detail
@@ -6053,12 +6258,15 @@ def _render_card(card: Dict[str, Any]) -> str:
       <div class="meta">mode={html.escape(mode)} | account_mode={html.escape(str(card.get('account_mode', '') or '-'))} | open={open_flag} | priority={card['priority_order']} | {html.escape(card['priority_reason'])}</div>
       </div>
       <div class="meta"><span class="badge badge-mode" data-i18n-zh="{html.escape(mode_display_label)}">{html.escape(mode_display_label)}</span> <span class="badge badge-exec" data-i18n-zh="{html.escape(execution_badge)}">{html.escape(execution_badge)}</span> <span data-i18n-zh="{html.escape(mode_detail)}">{html.escape(mode_detail)}</span></div>
+      <div class="meta"><span class="badge badge-state" data-i18n-zh="{html.escape(market_state_label)}">{html.escape(market_state_label)}</span> <span class="badge badge-state" data-i18n-zh="{html.escape(report_freshness_label)}">{html.escape(report_freshness_label)}</span> <span class="badge badge-state" data-i18n-zh="{html.escape(health_status_label)}">{html.escape(health_status_label)}</span></div>
       <div class="meta"><span class="badge badge-action">{html.escape(action_label or '观察')}</span> <span>{html.escape(action_detail or '-')}</span></div>
       {simple_summary_section}
       <div class="advanced-only">
       <div class="meta">portfolio_id={html.escape(str(card.get('portfolio_id', '') or '-'))}</div>
       <div class="meta">runtime_scope={html.escape(str(card.get('runtime_scope', '') or '-'))} | account_id={html.escape(str(card.get('account_id', '') or '-'))}</div>
-      <div class="meta">report_day={html.escape(str(report_day))} | slot={html.escape(str(report_slot))} | freshness={html.escape(str(report_fresh))}</div>
+      <div class="meta">report_day={html.escape(str(report_day))} | slot={html.escape(str(report_slot))} | freshness={html.escape(report_freshness_label)}</div>
+      <div class="meta"><strong>运维健康</strong> {html.escape(health_status_label)} | {html.escape(health_status_summary)}</div>
+      <div class="meta"><strong>市场数据健康</strong> {html.escape(market_data_status_label)} | {html.escape(market_data_status_summary)}</div>
       <div class="meta">report_schedule={html.escape(report_schedule or '-')} | dir={html.escape(card['report_dir'])}</div>
       <div class="meta"><strong>推荐 Top10 摘要</strong> {html.escape(candidate_summary or '-')}</div>
       <div class="meta"><strong>Shadow ML</strong> {html.escape(shadow_label)}</div>
@@ -6294,6 +6502,13 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
         weekly_labeling_skip_map.setdefault(portfolio_id, []).append(dict(row))
     dashboard_control = _load_dashboard_control_payload(summary_dir, cfg, cards)
     _attach_dashboard_control(cards, dashboard_control)
+    market_data_health_overview = _build_market_data_health_overview(cards)
+    market_data_health_map: Dict[str, Dict[str, Any]] = {
+        str(row.get("market", "") or "").strip().upper(): dict(row)
+        for row in market_data_health_overview
+        if str(row.get("market", "") or "").strip()
+    }
+    as_of_date = datetime.now().date().isoformat()
     for card in cards:
         card["weekly_shadow_review"] = dict(weekly_shadow_review_map.get(str(card.get("portfolio_id", "") or ""), {}))
         card["weekly_attribution"] = dict(weekly_attribution_map.get(str(card.get("portfolio_id", "") or ""), {}))
@@ -6308,6 +6523,34 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
         card["weekly_labeling_skips"] = list(weekly_labeling_skip_map.get(str(card.get("portfolio_id", "") or ""), []))
         card["paper_risk_feedback"] = _build_paper_risk_feedback(card, cfg)
         card["execution_feedback"] = _build_execution_feedback(card, cfg)
+        report_status = dict(card.get("report_status", {}) or {})
+        market_state_label = _dashboard_market_state_label(card.get("exchange_open_raw"))
+        report_fresh = "fresh" if report_status.get("fresh") else str(report_status.get("fresh_reason", "") or "-")
+        report_freshness_label = _dashboard_report_freshness_label(
+            report_fresh,
+            market=str(card.get("market", "") or ""),
+            report_date=str(report_status.get("report_day", "") or ""),
+            latest_generated_at=str(report_status.get("latest_generated_at") or report_status.get("generated_at") or ""),
+            as_of_date=as_of_date,
+        )
+        card_health_overview = _build_health_overview([card])
+        market_data_row = dict(market_data_health_map.get(str(card.get("market", "") or "").strip().upper(), {}) or {})
+        if not market_data_row:
+            market_data_row = {
+                "market": str(card.get("market", "") or ""),
+                "status": "warning",
+                "status_label": "有告警",
+                "summary": "暂无市场数据健康检查结果",
+            }
+        card["market_state_label"] = market_state_label
+        card["market_state_label_en"] = _translate_market_status_label_en(market_state_label)
+        card["report_freshness_label"] = report_freshness_label
+        card["report_freshness_label_en"] = _translate_report_freshness_label_en(report_freshness_label)
+        card["report_status_label"] = report_freshness_label
+        card["health_overview"] = list(card_health_overview)
+        card["ops_health_rows"] = list(card_health_overview)
+        card["market_data_health_overview"] = [market_data_row]
+        card["market_data_health_rows"] = [market_data_row]
     preflight_summary = _load_preflight_summary(preflight_dir)
     ibkr_history_probe_summary = _load_ibkr_history_probe_summary(preflight_dir)
     stock_list_groups = _build_stock_list_groups(cards)
@@ -6326,7 +6569,6 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
     feedback_maturity_alert_overview = _build_feedback_maturity_alert_overview(feedback_automation_overview)
     labeling_skip_overview = _build_labeling_skip_overview(cards)
     labeling_ready_overview = _build_labeling_ready_overview(labeling_skip_overview)
-    market_data_health_overview = _build_market_data_health_overview(cards)
     ops_overview = _build_ops_overview(
         trade_cards,
         preflight_summary=preflight_summary,
@@ -6366,6 +6608,7 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
         "labeling_skip_overview": labeling_skip_overview,
         "labeling_ready_overview": labeling_ready_overview,
         "market_data_health_overview": market_data_health_overview,
+        "market_data_health_rows": market_data_health_overview,
         "risk_review_overview": _build_risk_review_overview(cards),
         "trade_risk_history_overview": _build_risk_history_overview(trade_cards),
         "dry_run_risk_history_overview": _build_risk_history_overview(dry_run_cards),
@@ -6380,6 +6623,7 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
         "dry_run_attribution_overview": _build_weekly_attribution_overview(dry_run_cards),
         "execution_cost_overview": _build_execution_cost_overview(trade_cards),
         "health_overview": _build_health_overview(trade_cards),
+        "ops_health_rows": _build_health_overview(trade_cards),
         "stock_list_groups": stock_list_groups,
         "focus_actions": _build_focus_actions(trade_cards),
         "cards": cards,
@@ -6393,6 +6637,8 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
 def _simple_market_data_health_text(rows: List[Dict[str, Any]]) -> str:
     if not rows:
         return "当前没有可展示的市场数据健康摘要。"
+    if not str(rows[0].get("market", "") or "").strip() and str(rows[0].get("summary", "") or "").strip():
+        return str(rows[0].get("summary", "") or "").strip()
     ok_count = sum(1 for row in rows if str(row.get("status_label", "") or "") == "IBKR正常")
     research_fallback_count = sum(1 for row in rows if str(row.get("status_label", "") or "") == "研究Fallback")
     mixed_count = sum(1 for row in rows if str(row.get("status_label", "") or "") == "混合")
@@ -6417,6 +6663,8 @@ def _simple_market_data_health_text(rows: List[Dict[str, Any]]) -> str:
 def _simple_gateway_health_text(rows: List[Dict[str, Any]]) -> str:
     if not rows:
         return "当前还没有可展示的 IB Gateway 健康状态。"
+    if not str(rows[0].get("market", "") or "").strip() and str(rows[0].get("summary", "") or "").strip():
+        return str(rows[0].get("summary", "") or "").strip()
     ok_count = sum(1 for row in rows if str(row.get("status", "") or "") == "OK")
     degraded_count = sum(1 for row in rows if str(row.get("status", "") or "") == "DEGRADED")
     limited_count = sum(1 for row in rows if str(row.get("status", "") or "") == "LIMITED")
@@ -6821,7 +7069,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
             row.get("market", ""),
             row.get("watchlist", ""),
             _dashboard_mode_display_label(str(row.get("mode", "") or "")),
-            _dashboard_market_state_label(bool(row.get("exchange_open"))),
+            _dashboard_market_state_label(row.get("exchange_open")),
             row.get("priority_order", ""),
             row.get("recommended_action", ""),
             row.get("recommended_detail", ""),
@@ -6838,18 +7086,18 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
         [
             row.get("market", ""),
             row.get("watchlist", ""),
-            _dashboard_mode_display_label(str(row.get("mode", "") or "")),
-            row.get("recommended_action", "") or "-",
-            row.get("ibkr_health", "") or "-",
+            row.get("market_state_label", "") or _dashboard_market_state_label(row.get("exchange_open")),
+            row.get("report_freshness_label", "") or "-",
+            row.get("health_status_label", "") or row.get("ibkr_health", "") or "-",
+            row.get("market_data_status_label", "") or "-",
             _short_summary_text(
                 " | ".join(
                     part
                     for part in (
-                        row.get("recommended_detail", "") or "-",
-                        "OPEN" if row.get("exchange_open") else "CLOSED",
-                        f"可立即入场 {int(row.get('opp_entry_now', 0) or 0)}",
-                        f"继续等待 {int(row.get('opp_wait', 0) or 0)}",
-                        f"执行中 {int(row.get('execution_orders', 0) or 0)}",
+                        row.get("health_summary", "") or "-",
+                        row.get("market_data_summary", "") or "-",
+                        row.get("recommended_action", "") or "-",
+                        row.get("recommended_detail", "") or "",
                     )
                     if part
                 )
@@ -6967,7 +7215,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
         action = html.escape(str(row.get("action", "") or ""))
         detail = html.escape(str(row.get("detail", "") or "-"))
         mode = _dashboard_mode_display_label(str(row.get("mode", "") or ""))
-        state = _dashboard_market_state_label(bool(row.get("exchange_open", False)))
+        state = _dashboard_market_state_label(row.get("exchange_open"))
         simple_focus_rows.append(
             [
                 str(row.get("market", "") or ""),
@@ -8465,7 +8713,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     <section class="card overview">
       <h2>市场总览</h2>
       <div class="simple-only" data-simple-section="market-overview">
-      {_render_table(["市场", "股票池", "模式", "建议动作", "IB Gateway", "说明"], simple_overview_rows)}
+      {_render_table(["市场", "股票池", "市场状态", "报告状态", "运维状态", "数据状态", "说明"], simple_overview_rows)}
       </div>
       <div class="advanced-only">
       {_render_table(["市场", "股票池", "模式", "是否开市", "优先级", "建议动作", "说明", "账户权益", "账户现金", "Gateway", "可立即入场", "继续等待", "执行中订单"], overview_rows)}
