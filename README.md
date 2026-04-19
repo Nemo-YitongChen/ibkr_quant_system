@@ -204,12 +204,13 @@ ibkr-quant-reconcile --market US --db audit.db --portfolio_id US:watchlist --out
 
 如果是第一次接手这个项目，建议按下面顺序熟悉：
 
-1. 先看 [`docs/project_status_roadmap.md`](./docs/project_status_roadmap.md)，了解项目目标、当前进度和市场范围。
-2. 再看 [`docs/architecture_overview.md`](./docs/architecture_overview.md)，理解系统分层和主要运行链路。
-3. 如果要理解当前多市场策略框架，查看 [`docs/acm_rs_strategy_spec.md`](./docs/acm_rs_strategy_spec.md) 和 [`docs/multi_market_adaptive_framework.md`](./docs/multi_market_adaptive_framework.md)。
-4. 使用 `ibkr-quant-preflight` 检查本地环境。
-5. 使用 `ibkr-quant-supervisor --config config/supervisor.yaml --once` 跑一轮 paper。
-6. 打开 dashboard，先用简单模式查看当前运行状态，再根据需要切到专业模式。
+1. 先看 [`docs/current_status.md`](./docs/current_status.md)，快速了解项目定位、当前状态和最近推进方向。
+2. 再看 [`docs/project_status_roadmap.md`](./docs/project_status_roadmap.md)，了解项目目标、当前进度和市场范围。
+3. 再看 [`docs/architecture_overview.md`](./docs/architecture_overview.md)，理解系统分层和主要运行链路。
+4. 如果要理解当前多市场策略框架，查看 [`docs/acm_rs_strategy_spec.md`](./docs/acm_rs_strategy_spec.md) 和 [`docs/multi_market_adaptive_framework.md`](./docs/multi_market_adaptive_framework.md)。
+5. 使用 `ibkr-quant-preflight` 检查本地环境。
+6. 使用 `ibkr-quant-supervisor --config config/supervisor.yaml --once` 跑一轮 paper。
+7. 打开 dashboard，先用简单模式查看当前运行状态，再根据需要切到专业模式。
 
 ## 使用建议与安全边界
 
@@ -221,6 +222,8 @@ ibkr-quant-reconcile --market US --db audit.db --portfolio_id US:watchlist --out
 
 ## 相关文档
 
+- [`docs/current_status.md`](./docs/current_status.md)
+  - 当前状态快照、最近推进方向和建议阅读顺序
 - [`docs/runnable_code_summary.md`](./docs/runnable_code_summary.md)
   - 入口脚本总览和输出说明
 - [`docs/supervisor_runbook.md`](./docs/supervisor_runbook.md)
