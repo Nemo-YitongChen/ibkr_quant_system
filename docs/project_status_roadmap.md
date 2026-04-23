@@ -246,6 +246,8 @@ Q2 的主线不再是“继续堆功能”，而是把现有 `research -> paper 
 - `csv/json/markdown/cli summary` 这条输出装配链，现在也已开始统一到 `output bundle`，`main()` 尾部从“多段 payload/kwargs 手工拼装”继续收敛为“调 output builder -> 写产物 -> emit summary”。
 - `report-data warning / market-data gate` 这组 report + preflight 读取链现在也已并入 `review_weekly_feedback_support.py`，主文件只保留 thin wrapper，不再内嵌市场数据 gate 的文件读取与状态判断。
 - `feedback calibration / automation-threshold / weekly tuning / decision evidence` 这组低层 history-persist 与效果快照 helper 也已后撤到 support 模块，`review_investment_weekly.py` 进一步收敛到 orchestration + compatibility wrapper。
+- `shadow feedback / risk feedback` 这两条仍留在主文件里的核心 row builder 也已并入 support 模块，`review_investment_weekly.py` 这块从“剩余真逻辑”继续收敛成 thin wrapper + orchestration。
+- `labeling summary resolve / shadow review order parsing / sqlite table-column probes` 这组零散但仍属真实逻辑的 helper 也已并入 support 模块，主文件继续向“CLI 入口 + orchestration + compatibility wrapper”收口。
 - `strategy context / attribution / risk review / market-profile tuning` 这组 builder 现在也已真正迁到 `review_weekly_feedback_support.py`，主文件保留同名兼容 wrapper，对外接口不变，但实现已经后撤到 support 层。
 - `risk_overlay_from_history / latest_risk_overlay / risk_driver_and_diagnosis` 这组 risk 低层 helper 也已后撤到 support，`risk review` 这条支线现在从低层解析到高层 builder 都开始在同一 support 模块里聚拢。
 - `decision_evidence_history_overview / edge-slicing-risk calibration / market_profile patch readiness` 这组 history-calibration helper 现在也已后撤到 `review_weekly_feedback_support.py`，主文件只保留兼容 wrapper，不再内嵌这簇派生分析实现。

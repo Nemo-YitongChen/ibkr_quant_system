@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import re
+import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List
@@ -326,6 +328,16 @@ def _parse_json_list(value: Any) -> List[Any]:
         return []
 
 
+def _parse_shadow_metric(text: str, key: str, operator: str = "=") -> float | None:
+    match = re.search(rf"{re.escape(key)}\s*{re.escape(operator)}\s*([-+]?\d+(?:\.\d+)?)", str(text or ""))
+    if not match:
+        return None
+    try:
+        return float(match.group(1))
+    except Exception:
+        return None
+
+
 def _latest_report_dir(runs_by_portfolio: Dict[str, List[Dict[str, Any]]], portfolio_id: str) -> str:
     rows = list(runs_by_portfolio.get(portfolio_id) or [])
     if not rows:
@@ -467,6 +479,115 @@ def _build_market_data_gate_map(
             "history_missing_count": missing_count,
         }
     return out
+
+
+def _resolve_labeling_summary_dir(base_dir: Path, path_str: str, market_filter: str) -> Path | None:
+    raw_candidates = [str(path_str or "").strip()] if str(path_str or "").strip() else [
+        "reports_investment_labeling",
+        "reports_investment_labels",
+    ]
+    suffixes = []
+    if market_filter:
+        suffixes.append(market_filter.lower())
+    suffixes.extend(["all", ""])
+    for raw in raw_candidates:
+        base = resolve_repo_path(base_dir, raw)
+        for suffix in suffixes:
+            candidate = (base / suffix) if suffix else base
+            if (candidate / "investment_candidate_outcomes_summary.json").exists():
+                return candidate
+    return None
+
+
+def _build_shadow_review_order_rows(execution_orders: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    for raw in execution_orders:
+        details = _parse_json_dict(raw.get("details"))
+        reason_text = (
+            str(details.get("shadow_review_reason") or "").strip()
+            or str(details.get("manual_review_reason") or "").strip()
+            or str(raw.get("reason") or "").strip()
+        )
+        shadow_status = str(details.get("shadow_review_status") or "").strip().upper()
+        reason_blob = " ".join(
+            [
+                str(raw.get("reason") or ""),
+                str(details.get("manual_review_reason") or ""),
+                str(details.get("shadow_review_reason") or ""),
+            ]
+        ).lower()
+        if shadow_status != "REVIEW_REQUIRED" and "shadow" not in reason_blob:
+            continue
+        shadow_score = _parse_shadow_metric(reason_text, "score")
+        shadow_prob = _parse_shadow_metric(reason_text, "prob")
+        shadow_samples = _parse_shadow_metric(reason_text, "samples")
+        score_threshold = _parse_shadow_metric(reason_text, "shadow_score", "<")
+        prob_threshold = _parse_shadow_metric(reason_text, "shadow_prob", "<")
+        score_gap = None
+        prob_gap = None
+        if shadow_score is not None and score_threshold is not None:
+            score_gap = float(score_threshold) - float(shadow_score)
+        if shadow_prob is not None and prob_threshold is not None:
+            prob_gap = float(prob_threshold) - float(shadow_prob)
+        score_blocked = score_threshold is not None
+        prob_blocked = prob_threshold is not None
+        near_miss = False
+        far_below = False
+        if score_gap is not None and score_gap > 0:
+            near_miss = near_miss or score_gap <= 0.05
+            far_below = far_below or score_gap >= 0.12
+        if prob_gap is not None and prob_gap > 0:
+            near_miss = near_miss or prob_gap <= 0.08
+            far_below = far_below or prob_gap >= 0.18
+        rows.append(
+            {
+                "portfolio_id": str(raw.get("portfolio_id") or ""),
+                "market": str(raw.get("market") or ""),
+                "ts": str(raw.get("ts") or ""),
+                "symbol": str(raw.get("symbol") or "").upper(),
+                "action": str(raw.get("action") or ""),
+                "status": str(raw.get("status") or ""),
+                "order_value": float(raw.get("order_value") or 0.0),
+                "shadow_review_status": shadow_status or "REVIEW_REQUIRED",
+                "shadow_review_reason": reason_text,
+                "shadow_score": shadow_score,
+                "shadow_prob": shadow_prob,
+                "shadow_samples": int(shadow_samples) if shadow_samples is not None else 0,
+                "score_threshold": score_threshold,
+                "prob_threshold": prob_threshold,
+                "score_gap": score_gap,
+                "prob_gap": prob_gap,
+                "score_blocked": int(bool(score_blocked)),
+                "prob_blocked": int(bool(prob_blocked)),
+                "near_miss": int(bool(near_miss)),
+                "far_below": int(bool(far_below)),
+            }
+        )
+    rows.sort(
+        key=lambda row: (
+            str(row.get("portfolio_id") or ""),
+            str(row.get("ts") or ""),
+            str(row.get("symbol") or ""),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    row = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+        (str(table),),
+    ).fetchone()
+    return bool(row)
+
+
+def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    try:
+        rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    except Exception:
+        return False
+    return any(str(row[1] or "") == str(column) for row in rows)
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -2181,6 +2302,280 @@ def _build_shadow_signal_penalties(rows: List[Dict[str, Any]]) -> List[Dict[str,
             -int(row.get("repeat_count", 0) or 0),
             -float(row.get("score_penalty", 0.0) or 0.0),
             str(row.get("symbol") or ""),
+        )
+    )
+    return out
+
+
+def _build_shadow_feedback_rows(
+    shadow_rows: List[Dict[str, Any]],
+    shadow_summary_rows: List[Dict[str, Any]],
+    feedback_calibration_map: Dict[str, Dict[str, Any]] | None = None,
+) -> List[Dict[str, Any]]:
+    shadow_rows_by_portfolio: Dict[str, List[Dict[str, Any]]] = {}
+    for row in shadow_rows:
+        shadow_rows_by_portfolio.setdefault(str(row.get("portfolio_id") or ""), []).append(row)
+
+    out: List[Dict[str, Any]] = []
+    for summary_row in shadow_summary_rows:
+        portfolio_id = str(summary_row.get("portfolio_id") or "")
+        rows = list(shadow_rows_by_portfolio.get(portfolio_id) or [])
+        action = str(summary_row.get("shadow_review_action") or "").upper()
+        avg_score_gap = float(summary_row.get("avg_score_gap") or 0.0)
+        avg_prob_gap = float(summary_row.get("avg_prob_gap") or 0.0)
+        avg_shadow_samples = float(summary_row.get("avg_shadow_samples") or 0.0)
+        repeat_count = int(summary_row.get("repeated_symbol_count") or 0)
+        signal_penalties: List[Dict[str, Any]] = []
+        execution_shadow_score_delta = 0.0
+        execution_shadow_prob_delta = 0.0
+        scoring_accumulate_threshold_delta = 0.0
+        scoring_execution_ready_threshold_delta = 0.0
+        plan_review_window_days_delta = 0
+        feedback_reason = str(summary_row.get("shadow_review_reason") or "")
+
+        if action == "REVIEW_THRESHOLD":
+            if avg_score_gap > 0.0:
+                execution_shadow_score_delta = -_clamp(max(0.01, avg_score_gap * 0.50), 0.01, 0.03)
+            if avg_prob_gap > 0.0:
+                execution_shadow_prob_delta = -_clamp(max(0.01, avg_prob_gap * 0.50), 0.01, 0.04)
+        elif action == "WEAK_SIGNAL":
+            scoring_accumulate_threshold_delta = _clamp(max(0.01, avg_score_gap * 0.20), 0.01, 0.04)
+            scoring_execution_ready_threshold_delta = _clamp(max(0.01, avg_prob_gap * 0.20), 0.01, 0.04)
+            plan_review_window_days_delta = 7
+            signal_penalties = _build_shadow_signal_penalties(rows)
+
+        base_confidence = (
+            _feedback_confidence(
+                sample_ratio=float(len(rows) / 6.0),
+                magnitude_ratio=max(
+                    avg_score_gap / 0.12 if avg_score_gap > 0.0 else 0.0,
+                    avg_prob_gap / 0.18 if avg_prob_gap > 0.0 else 0.0,
+                ),
+                persistence_ratio=float(repeat_count / 3.0),
+                structure_ratio=float(avg_shadow_samples / 24.0),
+            )
+            if action
+            else 0.0
+        )
+        calibration_info = _feedback_calibration_support(
+            dict((feedback_calibration_map or {}).get(portfolio_id, {}) or {}),
+            feedback_kind="shadow",
+            action=action,
+        )
+        confidence = _apply_outcome_calibration(base_confidence, float(calibration_info.get("score", 0.5) or 0.5))
+
+        out.append(
+            {
+                "portfolio_id": portfolio_id,
+                "market": str(summary_row.get("market") or ""),
+                "shadow_review_action": action,
+                "feedback_scope": "paper_only",
+                "execution_shadow_score_delta": round(float(execution_shadow_score_delta), 6),
+                "execution_shadow_prob_delta": round(float(execution_shadow_prob_delta), 6),
+                "scoring_accumulate_threshold_delta": round(float(scoring_accumulate_threshold_delta), 6),
+                "scoring_execution_ready_threshold_delta": round(float(scoring_execution_ready_threshold_delta), 6),
+                "plan_review_window_days_delta": int(plan_review_window_days_delta),
+                "signal_penalty_symbol_count": int(len(signal_penalties)),
+                "signal_penalty_symbols": ",".join(str(row.get("symbol") or "") for row in signal_penalties[:12]),
+                "signal_penalties_json": json.dumps(signal_penalties, ensure_ascii=False),
+                "feedback_sample_count": int(len(rows)),
+                "feedback_base_confidence": float(base_confidence),
+                "feedback_base_confidence_label": _feedback_confidence_label(base_confidence),
+                "feedback_calibration_score": float(calibration_info.get("score", 0.5) or 0.5),
+                "feedback_calibration_label": str(calibration_info.get("label", "MEDIUM") or "MEDIUM"),
+                "feedback_calibration_sample_count": int(calibration_info.get("sample_count", 0) or 0),
+                "feedback_calibration_horizon_days": str(calibration_info.get("selected_horizon_days", "") or ""),
+                "feedback_calibration_scope": str(calibration_info.get("selection_scope_label", "") or "-"),
+                "feedback_calibration_reason": str(calibration_info.get("reason", "") or ""),
+                "feedback_confidence": float(confidence),
+                "feedback_confidence_label": _feedback_confidence_label(confidence),
+                "feedback_reason": feedback_reason,
+            }
+        )
+    out.sort(key=lambda row: (-int(row.get("signal_penalty_symbol_count", 0) or 0), str(row.get("portfolio_id") or "")))
+    return out
+
+
+def _build_risk_feedback_rows(
+    risk_review_rows: List[Dict[str, Any]],
+    attribution_rows: List[Dict[str, Any]] | None = None,
+    feedback_calibration_map: Dict[str, Dict[str, Any]] | None = None,
+) -> List[Dict[str, Any]]:
+    attribution_map = {
+        str(row.get("portfolio_id") or ""): dict(row)
+        for row in list(attribution_rows or [])
+        if str(row.get("portfolio_id") or "").strip()
+    }
+    out: List[Dict[str, Any]] = []
+    for row in risk_review_rows:
+        driver = str(row.get("dominant_risk_driver") or "").upper()
+        risk_overlay_runs = int(row.get("risk_overlay_runs") or 0)
+        latest_corr = float(row.get("latest_avg_pair_correlation", 0.0) or 0.0)
+        latest_stress = float(row.get("latest_stress_worst_loss", 0.0) or 0.0)
+        latest_top_sector = float(row.get("latest_top_sector_share", 0.0) or 0.0)
+        latest_dynamic_net = float(row.get("latest_dynamic_net_exposure", 0.0) or 0.0)
+        latest_dynamic_gross = float(row.get("latest_dynamic_gross_exposure", 0.0) or 0.0)
+        attribution = dict(attribution_map.get(str(row.get("portfolio_id") or ""), {}) or {})
+        control_context = _feedback_control_driver_context(
+            strategy_delta=float(attribution.get("strategy_control_weight_delta", 0.0) or 0.0),
+            risk_delta=float(attribution.get("risk_overlay_weight_delta", 0.0) or 0.0),
+            execution_gate_weight=float(attribution.get("execution_gate_blocked_weight", 0.0) or 0.0),
+            execution_gate_ratio=float(attribution.get("execution_gate_blocked_order_ratio", 0.0) or 0.0),
+            execution_gate_value=float(attribution.get("execution_gate_blocked_order_value", 0.0) or 0.0),
+        )
+        control_driver = str(control_context.get("feedback_control_driver", "") or "")
+        strategy_delta = float(control_context.get("strategy_control_weight_delta", 0.0) or 0.0)
+        risk_delta = float(control_context.get("risk_overlay_weight_delta", 0.0) or 0.0)
+        gate_weight = float(control_context.get("execution_gate_blocked_weight", 0.0) or 0.0)
+        control_driver_reason = ""
+
+        action = "HOLD"
+        feedback_reason = str(row.get("risk_diagnosis") or "")
+        max_single_delta = 0.0
+        max_sector_delta = 0.0
+        max_net_delta = 0.0
+        max_gross_delta = 0.0
+        max_short_delta = 0.0
+        correlation_soft_limit_delta = 0.0
+
+        if driver == "CORRELATION":
+            action = "TIGHTEN"
+            max_single_delta = -_clamp(0.01 + max(0.0, latest_corr - 0.62) * 0.10, 0.01, 0.04)
+            max_sector_delta = -_clamp(
+                0.02 + max(0.0, latest_top_sector - 0.40) * 0.18 + max(0.0, latest_corr - 0.62) * 0.08,
+                0.02,
+                0.10,
+            )
+            max_net_delta = -_clamp(0.02 + max(0.0, latest_corr - 0.62) * 0.12, 0.02, 0.08)
+            max_gross_delta = -_clamp(0.02 + max(0.0, latest_corr - 0.62) * 0.15, 0.02, 0.10)
+            max_short_delta = -_clamp(0.01 + max(0.0, latest_corr - 0.62) * 0.08, 0.01, 0.05)
+            correlation_soft_limit_delta = -0.03
+        elif driver == "STRESS":
+            action = "TIGHTEN"
+            max_net_delta = -_clamp(0.03 + max(0.0, latest_stress - 0.085) * 0.90, 0.03, 0.12)
+            max_gross_delta = -_clamp(0.04 + max(0.0, latest_stress - 0.085) * 1.10, 0.04, 0.14)
+            max_short_delta = -_clamp(0.02 + max(0.0, latest_stress - 0.085) * 0.50, 0.02, 0.08)
+            max_single_delta = -_clamp(0.01 + max(0.0, latest_stress - 0.085) * 0.18, 0.01, 0.04)
+        elif driver == "EXPOSURE_BUDGET" and latest_corr <= 0.45 and latest_stress <= 0.06:
+            action = "RELAX"
+            max_single_delta = _clamp(0.01 + max(0.0, 0.72 - latest_dynamic_net) * 0.06, 0.01, 0.03)
+            max_sector_delta = _clamp(0.02 + max(0.0, 0.76 - latest_dynamic_gross) * 0.08, 0.02, 0.05)
+            max_net_delta = _clamp(0.03 + max(0.0, 0.72 - latest_dynamic_net) * 0.16, 0.03, 0.08)
+            max_gross_delta = _clamp(0.03 + max(0.0, 0.78 - latest_dynamic_gross) * 0.18, 0.03, 0.10)
+            max_short_delta = _clamp(0.01, 0.01, 0.03)
+            correlation_soft_limit_delta = 0.02
+            feedback_reason = "组合风险预算偏紧，但相关性和 stress 仍在可接受范围，适度放宽预算以减少资金闲置。"
+
+        if (
+            action in {"TIGHTEN", "RELAX"}
+            and control_driver == "STRATEGY"
+            and strategy_delta >= max(0.05, risk_delta + 0.02)
+        ):
+            action = "HOLD"
+            max_single_delta = 0.0
+            max_sector_delta = 0.0
+            max_net_delta = 0.0
+            max_gross_delta = 0.0
+            max_short_delta = 0.0
+            correlation_soft_limit_delta = 0.0
+            control_driver_reason = (
+                "本周更明显的压仓来自策略主动控仓，先复核 regime/target invested weight，暂不直接改风险预算。"
+            )
+            feedback_reason = (
+                f"{feedback_reason.rstrip('。')}。{control_driver_reason}"
+                f"（{str(control_context.get('feedback_control_split_text') or '')}）"
+            )
+        elif (
+            action == "RELAX"
+            and control_driver == "EXECUTION"
+            and gate_weight >= max(0.02, risk_delta + 0.01)
+        ):
+            action = "HOLD"
+            max_single_delta = 0.0
+            max_sector_delta = 0.0
+            max_net_delta = 0.0
+            max_gross_delta = 0.0
+            max_short_delta = 0.0
+            correlation_soft_limit_delta = 0.0
+            control_driver_reason = "当前低仓位更像执行 gate 阻断，而不是风险预算过紧，先复核执行门槛。"
+            feedback_reason = (
+                f"{feedback_reason.rstrip('。')}。{control_driver_reason}"
+                f"（{str(control_context.get('feedback_control_split_text') or '')}）"
+            )
+        elif action in {"TIGHTEN", "RELAX"} and control_driver == "RISK" and risk_delta > 1e-9:
+            control_driver_reason = (
+                f"本周主要压缩来自风险 overlay（{str(control_context.get('feedback_control_split_text') or '')}），继续沿风险预算方向调整更一致。"
+            )
+            feedback_reason = f"{feedback_reason.rstrip('。')}。{control_driver_reason}"
+
+        severity_ratio = 0.0
+        if driver == "CORRELATION":
+            severity_ratio = max(0.0, latest_corr - 0.62) / 0.12
+        elif driver == "STRESS":
+            severity_ratio = max(0.0, latest_stress - 0.085) / 0.06
+        elif driver == "EXPOSURE_BUDGET":
+            severity_ratio = max(max(0.0, 0.72 - latest_dynamic_net), max(0.0, 0.78 - latest_dynamic_gross)) / 0.24
+        if action != "HOLD" and control_driver == "RISK":
+            severity_ratio = max(severity_ratio, min(1.0, risk_delta / 0.10))
+        base_confidence = (
+            _feedback_confidence(
+                sample_ratio=float(risk_overlay_runs / 4.0),
+                magnitude_ratio=severity_ratio,
+                persistence_ratio=float((1.0 - min(1.0, float(row.get("latest_dynamic_scale", 1.0) or 1.0))) / 0.30)
+                if driver in {"CORRELATION", "STRESS"}
+                else 0.0,
+                structure_ratio=1.0 if driver in {"CORRELATION", "STRESS", "EXPOSURE_BUDGET"} else 0.0,
+            )
+            if action != "HOLD"
+            else 0.0
+        )
+        calibration_info = _feedback_calibration_support(
+            dict((feedback_calibration_map or {}).get(str(row.get("portfolio_id") or ""), {}) or {}),
+            feedback_kind="risk",
+            action=action,
+        )
+        confidence = _apply_outcome_calibration(base_confidence, float(calibration_info.get("score", 0.5) or 0.5))
+
+        out.append(
+            {
+                "portfolio_id": str(row.get("portfolio_id") or ""),
+                "market": str(row.get("market") or ""),
+                "feedback_scope": "paper_only",
+                "risk_feedback_action": action,
+                "paper_max_single_weight_delta": round(float(max_single_delta), 6),
+                "paper_max_sector_weight_delta": round(float(max_sector_delta), 6),
+                "paper_max_net_exposure_delta": round(float(max_net_delta), 6),
+                "paper_max_gross_exposure_delta": round(float(max_gross_delta), 6),
+                "paper_max_short_exposure_delta": round(float(max_short_delta), 6),
+                "paper_correlation_soft_limit_delta": round(float(correlation_soft_limit_delta), 6),
+                "feedback_sample_count": int(risk_overlay_runs),
+                "feedback_base_confidence": float(base_confidence),
+                "feedback_base_confidence_label": _feedback_confidence_label(base_confidence),
+                "feedback_calibration_score": float(calibration_info.get("score", 0.5) or 0.5),
+                "feedback_calibration_label": str(calibration_info.get("label", "MEDIUM") or "MEDIUM"),
+                "feedback_calibration_sample_count": int(calibration_info.get("sample_count", 0) or 0),
+                "feedback_calibration_horizon_days": str(calibration_info.get("selected_horizon_days", "") or ""),
+                "feedback_calibration_scope": str(calibration_info.get("selection_scope_label", "") or "-"),
+                "feedback_calibration_reason": str(calibration_info.get("reason", "") or ""),
+                "feedback_confidence": float(confidence),
+                "feedback_confidence_label": _feedback_confidence_label(confidence),
+                "feedback_reason": feedback_reason,
+                "feedback_control_driver": str(control_context.get("feedback_control_driver", "") or ""),
+                "feedback_control_driver_label": str(control_context.get("feedback_control_driver_label", "") or ""),
+                "feedback_control_driver_weight": float(control_context.get("feedback_control_driver_weight", 0.0) or 0.0),
+                "feedback_control_split_text": str(control_context.get("feedback_control_split_text", "") or ""),
+                "feedback_control_driver_reason": control_driver_reason,
+                "strategy_control_weight_delta": float(strategy_delta),
+                "risk_overlay_weight_delta": float(risk_delta),
+                "execution_gate_blocked_weight": float(gate_weight),
+            }
+        )
+    out.sort(
+        key=lambda row: (
+            0
+            if str(row.get("risk_feedback_action", "") or "") == "TIGHTEN"
+            else 1 if str(row.get("risk_feedback_action", "") or "") == "RELAX" else 2,
+            str(row.get("portfolio_id", "") or ""),
         )
     )
     return out
