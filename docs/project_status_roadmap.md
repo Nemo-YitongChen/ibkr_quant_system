@@ -190,6 +190,103 @@
 
 这里的规划按“先稳住系统，再提升可维护性，再考虑扩展能力”的顺序来排。
 
+### 5.0 2026 Q2 总计划
+
+Q2 的主线不再是“继续堆功能”，而是把现有 `research -> paper -> execution -> weekly review -> dashboard -> supervisor` 这条链路做成更稳定、更可解释、更容易维护的运营系统。
+
+#### April：收口状态视图与工程基线
+
+- 继续统一 dashboard 的 `market state / report freshness / ops health / market-data health`
+- 把 card 级状态进一步推进到 `ops overview / dashboard control / simple mode`
+- 让 GitHub Actions 成为默认回归入口，分层跑 `compile / guardrail / integration / full`
+- 保持旧字段兼容一版，但新增统一字段和汇总 helper，逐步减少同义字段分叉
+
+验收口径：
+
+- dashboard 不再依赖零散字符串拼装判断 freshness/health
+- `push / PR / manual dispatch` 都能自动触发同一条 Python CI
+- simple mode、advanced mode、ops/control 至少共用一套状态语义
+
+#### May：开始降复杂度
+
+- 优先拆分 `src/app/supervisor.py`
+- 其次拆分 `src/tools/review_investment_weekly.py`
+- 继续把大函数中的“构建数据 / 聚合状态 / 渲染输出”拆成独立 helper
+- 收敛配置层，逐步转向“市场默认值 + override”
+
+当前进展：
+
+- 已开始从 `src/app/supervisor.py` 中抽离 patch governance helper，先把 `market profile / calibration patch` 的纯 helper 逻辑拆出主文件，降低后续 review/apply/evidence 路径继续膨胀的风险。
+- `dashboard_control_portfolios()` 中最臃肿的一段 patch review / weekly feedback 装配，也已开始改成独立 builder，而不是继续把所有字段直接堆在主循环里。
+- `dashboard control state / artifact payload` 这一层也已抽成 support helper，`service/actions/artifacts` payload、patch candidate row 和 artifact payload builder 不再继续堆在 `Supervisor` 主文件里。
+- `weekly feedback overlay` 的公共 patch metadata 也已开始从 `investment / execution / paper` 三条 YAML 装配链里收口，`market_profile / calibration_patch` 这一大段重复字段已统一走 support helper，后续可以继续拆更深的 feedback-specific 差异字段。
+- `investment / execution` overlay 里的 `shadow/execution confidence + reason + automation mode` 这组 feedback-specific metadata 也已开始统一到 support helper，主文件开始只保留 `signal_penalties / execution_hotspot_penalties / session-hotspot` 这类真正的差异项。
+- execution overlay 里的 `dominant session / hotspot json` 这层 metadata 也已并入 support helper，主文件进一步收敛到“execution 参数改写 + penalty merge”这类核心差异逻辑。
+- execution overlay 里最后那段 `adv/session` 参数改写与 `execution_hotspot_penalties` merge 也已抽成 support helper，`Supervisor` 这条链现在更接近“读配置 -> 组装 metadata -> 应用差异参数 -> 落盘”的薄 orchestrator 结构。
+- investment overlay 的 `scoring/plan + signal/execution penalties`，以及 paper overlay 的 `risk budget delta` 也已开始统一到 support helper；三条 weekly-feedback overlay 现在正收敛到一致的 `support builder + thin orchestrator` 结构。
+- `previous execution penalties` 的读取/legacy fallback、`feedback_reason` 拼装、以及 `DECAY action` 的回退规则也已开始统一到 support helper，overlay 分支判断正在从主文件里继续后撤。
+- `shadow_ml_*` 的 execution 参数改写和 `risk_feedback` metadata 也已并入 support helper；`Supervisor` 主文件里这三条 overlay 现在更多只剩 orchestration，而不是字段级组装。
+- 三条 overlay 共用的 `existing feedback / auto-apply mode / patch metadata` 也已开始收口到 shared context builder，`Supervisor` 里的 `investment / execution / paper` 路径正在转成更一致的 `load base -> derive context -> apply delta -> write overlay` 结构。
+- `row gating / should_write / weekly_feedback payload merge` 这层模板逻辑也已开始统一到 support helper，三条 `_effective_*_config_path()` 现在进一步靠近“只保留各自 delta builder”的薄函数形态。
+- `dashboard control portfolios` 里的 `patch governance / market profile review / calibration review` 三组字段簇也已开始抽成 support builder，主文件这段开始从“大字典拼装”后撤到“拿 bundle -> merge sections”。
+- `dashboard_control_portfolio_row()` 里的基础字段（identity / control flags / feedback status）也已开始统一到 support helper，`Supervisor` 这条 dashboard-control 支线正在从“整行手拼”转成“基础 row + patch sections”的组合结构。
+- `dashboard control` 相关的 investment-report 遍历也已开始统一成 walker，并复用到 `portfolios / overrides / toggle execution mode` 路径，主文件里这条支线的市场/组合筛选逻辑开始集中而不是分散复制。
+- `_apply_dashboard_control_overrides()` 里那组 `weekly_feedback_*` state 回填字段也已开始统一到 override-applier helper，dashboard-control 这条支线已经逐步形成 `walker + row builder + state applier` 的完整结构。
+- `dashboard control` 的 `review/apply` handler 也已开始改成“定位组合 -> 组装 patch bundle -> 写回 review state / history / artifact”的分层结构，减少审批入口里重复的市场遍历、状态写回和返回值拼装。
+- patch review 的 `state/history` 这组重复逻辑也已参数化，开始统一到 support helper，而不是继续分别维护 `market profile` 和 `calibration` 两套近似实现。
+- `src/tools/review_investment_weekly.py` 也已开始第一轮收口，先把 `weekly_tuning_dataset` 拆成 `lookup map + row builder`，避免一个函数同时承担数据索引、上下文拼接和最终输出拼装。
+- `weekly_tuning_dataset` 这整簇 helper 现在也已并入 `review_weekly_feedback_support.py`，主文件进一步从“内嵌 lookup/context join/summary”收敛为 orchestration 调用。
+- `weekly_tuning_history / patch_governance / control_timeseries` 这组 history-overview builder 也已并入同一 support 模块，主文件继续从“分析聚合实现”收敛为 orchestration 与 persistence 调用。
+- `broker summary / broker-local diff / CLI summary payload` 这条尾部支线也已开始并入 output support，`review_investment_weekly.py` 进一步减少对 artifact 包装与 broker 展示拼装的内嵌实现。
+- `summary_rows` 的组合收益摘要构建，以及 `market_profile tuning/readiness` 对 `summary_rows + strategy_context_rows` 的回填，也已开始抽成 support builder，`main()` 正在从长循环收敛为“准备输入 -> 调 builder -> 串主流程”。
+- `filtered fill/commission` 的 execution 过滤，以及 `broker_summary` 的 effect/planned/realized augment，也已开始统一到 support helper，`main()` 里 execution-analysis 前置编排继续从手工拼接收敛为 builder 调用。
+- `execution_effect / planned_cost / gate / parent / outcome / edge / hotspot / session` 这整段 execution-analysis 前置编排，现在也已开始收成 bundle builder；同时 `calibration patch / runtime config` 这簇纯 helper 也已并入 support 模块，主文件只保留 orchestration 调用和兼容导入面。
+- `strategy_context / attribution / decision evidence / risk-execution feedback / market-profile tuning` 这段主流程，现在也已开始收成 `strategy-feedback bundle`；`feedback automation / threshold history` 这条后续治理链也同步收成 `automation bundle`，`main()` 继续向“少量 orchestration + 少量 persistence”收缩。
+- `weekly_tuning_history / decision_history / calibration / patch governance / control timeseries` 这段 persistence 与派生输出，现在也已开始收成 `history-calibration bundle`，主流程里这组连续的 `persist + build + patch suggest` 调用已经后撤成一次 bundle 调用。
+- `csv/json/markdown/cli summary` 这条输出装配链，现在也已开始统一到 `output bundle`，`main()` 尾部从“多段 payload/kwargs 手工拼装”继续收敛为“调 output builder -> 写产物 -> emit summary”。
+- `report-data warning / market-data gate` 这组 report + preflight 读取链现在也已并入 `review_weekly_feedback_support.py`，主文件只保留 thin wrapper，不再内嵌市场数据 gate 的文件读取与状态判断。
+- `feedback calibration / automation-threshold / weekly tuning / decision evidence` 这组低层 history-persist 与效果快照 helper 也已后撤到 support 模块，`review_investment_weekly.py` 进一步收敛到 orchestration + compatibility wrapper。
+- `strategy context / attribution / risk review / market-profile tuning` 这组 builder 现在也已真正迁到 `review_weekly_feedback_support.py`，主文件保留同名兼容 wrapper，对外接口不变，但实现已经后撤到 support 层。
+- `risk_overlay_from_history / latest_risk_overlay / risk_driver_and_diagnosis` 这组 risk 低层 helper 也已后撤到 support，`risk review` 这条支线现在从低层解析到高层 builder 都开始在同一 support 模块里聚拢。
+- `decision_evidence_history_overview / edge-slicing-risk calibration / market_profile patch readiness` 这组 history-calibration helper 现在也已后撤到 `review_weekly_feedback_support.py`，主文件只保留兼容 wrapper，不再内嵌这簇派生分析实现。
+- `latest_report_dir / market_sentiment / report_json` 这组三方 report loader helper 也已后撤到 support；`broker summary / broker-local diff / cli summary payload` 则继续维持 thin wrapper + output support 的结构，`review_investment_weekly.py` 正在更明确地收敛到 orchestration + compatibility surface。
+- `position snapshots / latest run positions / sector rows / holdings change / execution summary` 这组 weekly summary/output builder 现在也已并入 `review_weekly_output_support.py`，主文件保留兼容 wrapper 与 orchestration 调用，不再继续维护第二份实现。
+- `summarize_changes / top_holdings / top_sector / market_from_portfolio_or_symbol` 这组面向 weekly summary 的小型 helper 也已统一到 output support，`review_investment_weekly.py` 里这条输出链正在收敛为“thin wrapper + shared builder”而不是散落的本地工具函数。
+- `decision evidence / calibration` 这条支线也已开始复用同一层 helper，先把 `decision evidence row/summary`、按周 decision summary、以及 `risk calibration` 的入口做成共用构件，避免后续继续在同一文件里复制 weighted avg / bucket / weekly grouping 逻辑。
+- `edge / slicing / risk calibration` 目前也已进入第二轮收口，开始统一成 `market/portfolio key extraction + per-portfolio builder + sorter` 的模式，后续继续拆其他周报聚合段时可以沿用同一套结构。
+- `feedback threshold` 的 `history / effect / cohort` 这组 overview 也已开始共享统一的 threshold-history context，减少每个 overview 都重复做 market/kind 去重、历史读取、排序、current action 和 action chain 拼装。
+- `feedback automation effect` 这条链也已开始共享 `market/portfolio/kind` history context，并把 market summary 的累计逻辑抽成单独 builder，后续可以继续把 threshold suggestion 和 automation alert 一并并入同一层聚合模式。
+- `src/tools/review_weekly_thresholds.py` 这条已独立出来的阈值支线模块也开始按同一标准收口，`tuning summary / suggestion rows` 已改成单行 builder，避免主循环继续直接拼装长字典。
+- `feedback automation` 主决策也已开始拆成 `maturity info / apply decision / market-data gate` 三层 helper，减少一个函数同时承担样本成熟度判断、自动化门槛决策和数据健康降级的复杂度。
+- `feedback threshold / cohort / automation effect` 这簇周报逻辑也已从 `review_investment_weekly.py` 真正拆到独立 support 模块，主文件开始只保留 orchestration，而不是继续内嵌整段 history/effect/trial 逻辑。
+- `feedback automation rows` 的构建也已并入同一 support 层，主文件不再内嵌 maturity map、自动化门槛决策和 market-data gate 降级逻辑，开始形成真正的 `orchestration + support module` 分层。
+- `shadow review summary / shadow signal penalties / execution hotspot penalties` 这组稳定 builder 也已并入同一 support 模块，`review_investment_weekly.py` 继续减少内嵌聚合与惩罚逻辑。
+- `execution effect rows / execution session rows / execution hotspot rows` 这簇 execution-feedback builder 也已并入同一 support 模块，连同共享的 session/cost helper 一起从主文件移出，`review_investment_weekly.py` 继续收敛为 orchestration 层。
+- `execution_feedback_rows` 及其依赖的 `feedback confidence / calibration support / control-driver split` 这组共用决策 helper 也已并入 support 模块，execution-feedback 支线开始从“只拆行构建”推进到“连调参判断一起模块化”。
+- `planned execution cost rows / execution gate rows` 这层 execution glue 也已并入同一 support 模块，主文件只保留更靠近 candidate linking / decision evidence 的编排逻辑，后续可以更干净地继续拆 decision-evidence 支线。
+- `decision evidence row / summary / weekly map` 这组证据汇总 helper 也已并入同一 support 模块，`review_investment_weekly.py` 进一步收敛为 orchestration + history overview，开始为后续拆 candidate-linking 支线腾出边界。
+- `candidate-linking / execution parent / outcome spread / edge realization / blocked edge attribution` 这条更靠前的 execution-analysis 支线也已并入同一 support 模块，`review_investment_weekly.py` 在 execution-feedback 之外继续减少对 candidate snapshot / order-edge / microstructure 细节的内嵌实现。
+- `weekly review` 尾部的 `CSV/JSON artifact 写出 + weekly_tuning_dataset / weekly_review_summary payload + markdown kwargs` 这层输出装配也已抽到独立 support 模块，主文件开始把“分析/反馈编排”和“报告落盘”明确分层。
+
+验收口径：
+
+- 超大文件开始出现更清晰的逻辑分层
+- 新增一个状态字段时，不再需要同时改多处拼装代码
+- market/config 的差异能够通过 override 表达，而不是重复复制整份 YAML
+
+#### June：强化生产化治理
+
+- 补强 observability
+- 把 live / paper 决策和 weekly feedback、patch governance 进一步打通
+- 增加更真实的运行证据与审计闭环
+- 为风险闸门和自动降级准备更明确的触发规则
+
+验收口径：
+
+- 能直接回答“为什么本周没有执行 / 为什么切到 REVIEW_ONLY / 为什么某个 patch 一直卡住”
+- dashboard、weekly review、supervisor 三者对同一件事的解释保持一致
+- live 侧关键动作具备更完整的 evidence 与 governance history
+
 ### 5.1 近 30 天：补工程基础
 
 优先级最高的不是再加新策略，而是把现有系统的工程边界先稳住。
@@ -216,7 +313,8 @@
   - health overview 按 `degraded > warning > ready` 聚合，并合并摘要
   - market data health overview 在空输入时给出 `warning + 明确兜底摘要`
 - 当前已把这些 helper 接到 dashboard card / JSON payload / simple mode / advanced mode 的统一字段上，避免“测试语义”和“页面文案”继续脱节。
-- 下一步会继续把这层 freshness / health 统一透到更多 dashboard control / ops 视图，并清理旧的同义字段。
+- 当前还新增了 dashboard status rollout summary，开始把这层状态统一推进到 `ops overview / dashboard control`。
+- 下一步会继续清理旧的同义字段，并把 status rollout summary 继续透到更多运维视图。
 
 下一步建议：
 

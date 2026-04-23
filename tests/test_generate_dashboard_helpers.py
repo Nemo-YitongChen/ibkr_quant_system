@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from src.tools.generate_dashboard import (
+    _build_dashboard_status_rollout_summary,
     _build_health_overview,
     _build_market_data_health_overview,
     _build_overview,
+    _simple_ops_overview_rows,
     _dashboard_market_state_label,
     _dashboard_report_freshness_label,
     _translate_market_status_label_en,
@@ -94,3 +96,62 @@ def test_build_overview_includes_freshness_and_health_fields() -> None:
     assert rows[0]["report_freshness_label"] == "US 待刷新"
     assert rows[0]["health_status_label"] == "有降级"
     assert rows[0]["market_data_status_label"] == "待排查"
+
+
+def test_build_dashboard_status_rollout_summary_tracks_rollout_gaps() -> None:
+    summary = _build_dashboard_status_rollout_summary(
+        [
+            {
+                "market": "US",
+                "exchange_open_raw": None,
+                "report_freshness_label": "US 待刷新",
+                "report_status": {"fresh": False},
+                "health_overview": [{"status": "degraded", "status_label": "有降级", "summary": "连接短时降级"}],
+                "market_data_health_overview": [{"status": "warning", "status_label": "待排查", "summary": "IBKR 历史覆盖不足"}],
+            },
+            {
+                "market": "US",
+                "exchange_open_raw": True,
+                "report_freshness_label": "US 已更新",
+                "report_status": {"fresh": True},
+                "health_overview": [{"status": "ready", "status_label": "已就绪", "summary": "整体正常"}],
+                "market_data_health_overview": [{"status": "ready", "status_label": "IBKR正常", "summary": "覆盖稳定"}],
+            },
+            {
+                "market": "HK",
+                "exchange_open_raw": False,
+                "report_freshness_label": "HK 已更新",
+                "report_status": {"fresh": True},
+                "health_overview": [{"status": "warning", "status_label": "有告警", "summary": "权限有波动"}],
+                "market_data_health_overview": [{"status": "warning", "status_label": "研究Fallback", "summary": "research-only fallback"}],
+            },
+        ]
+    )
+    assert summary["portfolio_count"] == 3
+    assert summary["market_state_missing_count"] == 1
+    assert summary["report_stale_count"] == 1
+    assert summary["ops_degraded_count"] == 1
+    assert summary["ops_warning_count"] == 1
+    assert summary["data_attention_count"] == 1
+    assert summary["data_research_fallback_count"] == 1
+    assert summary["market_rows"][0]["market"] == "US"
+
+
+def test_simple_ops_overview_rows_include_status_rollout_counts() -> None:
+    rows = _simple_ops_overview_rows(
+        {
+            "preflight_pass_count": 3,
+            "preflight_warn_count": 1,
+            "preflight_fail_count": 0,
+            "ibkr_port_warning_count": 1,
+            "market_state_missing_count": 2,
+            "stale_report_count": 1,
+            "degraded_health_count": 1,
+            "data_attention_count": 0,
+            "data_research_fallback_count": 1,
+            "execution_mode_mismatch_count": 0,
+            "control_service_status": "configured",
+        }
+    )
+    assert any(row[0] == "市场状态缺口" and "2" in row[1] for row in rows)
+    assert any(row[0] == "市场数据健康" and "研究Fallback" in row[1] for row in rows)

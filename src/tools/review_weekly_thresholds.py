@@ -157,63 +157,65 @@ def feedback_threshold_effect_bucket(text: Any) -> str:
     return "观察中"
 
 
+def _build_feedback_threshold_tuning_row(raw: Dict[str, Any]) -> Dict[str, Any]:
+    row = dict(raw)
+    latest_bucket = feedback_threshold_effect_bucket(row.get("latest_effect"))
+    w1_bucket = feedback_threshold_effect_bucket(row.get("effect_w1"))
+    w2_bucket = feedback_threshold_effect_bucket(row.get("effect_w2"))
+    w4_bucket = feedback_threshold_effect_bucket(row.get("effect_w4"))
+    buckets = {latest_bucket, w1_bucket, w2_bucket, w4_bucket}
+    cohort_action = str(row.get("cohort_action") or "").strip().upper()
+    cohort_weeks = int(row.get("cohort_weeks", 0) or 0)
+
+    suggestion_action = "WATCH_COHORT"
+    suggestion_label = "继续观察"
+    reason = "当前 cohort 还在积累样本，先继续观察。"
+
+    if cohort_action == "RELAX_AUTO_APPLY":
+        if "恶化" in buckets:
+            suggestion_action = "REVERT_RELAX"
+            suggestion_label = "收回放宽"
+            reason = "放宽后的 cohort 已出现恶化，优先考虑收回这轮放宽。"
+        elif cohort_weeks >= 2 and "改善" in buckets and "恶化" not in buckets:
+            suggestion_action = "KEEP_RELAX"
+            suggestion_label = "继续放宽试运行"
+            reason = "放宽后的 cohort 已连续出现改善，可继续保留当前放宽。"
+        elif cohort_weeks >= 2 and "稳定" in buckets and "恶化" not in buckets:
+            suggestion_action = "SOFT_RELAX"
+            suggestion_label = "温和保留放宽"
+            reason = "放宽后总体稳定，但改善力度一般，建议先温和保留。"
+    elif cohort_action == "TIGHTEN_AUTO_APPLY":
+        if "恶化" in buckets:
+            suggestion_action = "REVIEW_TIGHTEN"
+            suggestion_label = "继续复核收紧"
+            reason = "收紧后仍有恶化信号，需要继续复核这组阈值。"
+        elif cohort_weeks >= 2 and ("稳定" in buckets or "改善" in buckets):
+            suggestion_action = "KEEP_TIGHTEN"
+            suggestion_label = "保持收紧"
+            reason = "收紧后的 cohort 已趋稳，建议继续保持当前保守阈值。"
+
+    return {
+        "market": str(row.get("market") or ""),
+        "feedback_kind": str(row.get("feedback_kind") or ""),
+        "feedback_kind_label": str(row.get("feedback_kind_label") or "-"),
+        "cohort_label": str(row.get("cohort_label") or "-"),
+        "baseline_week": str(row.get("baseline_week") or "-"),
+        "cohort_weeks": cohort_weeks,
+        "latest_effect": str(row.get("latest_effect") or "-"),
+        "effect_w1": str(row.get("effect_w1") or "-"),
+        "effect_w2": str(row.get("effect_w2") or "-"),
+        "effect_w4": str(row.get("effect_w4") or "-"),
+        "suggestion_action": suggestion_action,
+        "suggestion_label": suggestion_label,
+        "diagnosis": str(row.get("diagnosis") or "-"),
+        "reason": reason,
+    }
+
+
 def build_feedback_threshold_tuning_summary(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     for raw in list(rows or []):
-        row = dict(raw)
-        latest_bucket = feedback_threshold_effect_bucket(row.get("latest_effect"))
-        w1_bucket = feedback_threshold_effect_bucket(row.get("effect_w1"))
-        w2_bucket = feedback_threshold_effect_bucket(row.get("effect_w2"))
-        w4_bucket = feedback_threshold_effect_bucket(row.get("effect_w4"))
-        buckets = {latest_bucket, w1_bucket, w2_bucket, w4_bucket}
-        cohort_action = str(row.get("cohort_action") or "").strip().upper()
-        cohort_weeks = int(row.get("cohort_weeks", 0) or 0)
-
-        suggestion_action = "WATCH_COHORT"
-        suggestion_label = "继续观察"
-        reason = "当前 cohort 还在积累样本，先继续观察。"
-
-        if cohort_action == "RELAX_AUTO_APPLY":
-            if "恶化" in buckets:
-                suggestion_action = "REVERT_RELAX"
-                suggestion_label = "收回放宽"
-                reason = "放宽后的 cohort 已出现恶化，优先考虑收回这轮放宽。"
-            elif cohort_weeks >= 2 and "改善" in buckets and "恶化" not in buckets:
-                suggestion_action = "KEEP_RELAX"
-                suggestion_label = "继续放宽试运行"
-                reason = "放宽后的 cohort 已连续出现改善，可继续保留当前放宽。"
-            elif cohort_weeks >= 2 and "稳定" in buckets and "恶化" not in buckets:
-                suggestion_action = "SOFT_RELAX"
-                suggestion_label = "温和保留放宽"
-                reason = "放宽后总体稳定，但改善力度一般，建议先温和保留。"
-        elif cohort_action == "TIGHTEN_AUTO_APPLY":
-            if "恶化" in buckets:
-                suggestion_action = "REVIEW_TIGHTEN"
-                suggestion_label = "继续复核收紧"
-                reason = "收紧后仍有恶化信号，需要继续复核这组阈值。"
-            elif cohort_weeks >= 2 and ("稳定" in buckets or "改善" in buckets):
-                suggestion_action = "KEEP_TIGHTEN"
-                suggestion_label = "保持收紧"
-                reason = "收紧后的 cohort 已趋稳，建议继续保持当前保守阈值。"
-
-        out.append(
-            {
-                "market": str(row.get("market") or ""),
-                "feedback_kind": str(row.get("feedback_kind") or ""),
-                "feedback_kind_label": str(row.get("feedback_kind_label") or "-"),
-                "cohort_label": str(row.get("cohort_label") or "-"),
-                "baseline_week": str(row.get("baseline_week") or "-"),
-                "cohort_weeks": cohort_weeks,
-                "latest_effect": str(row.get("latest_effect") or "-"),
-                "effect_w1": str(row.get("effect_w1") or "-"),
-                "effect_w2": str(row.get("effect_w2") or "-"),
-                "effect_w4": str(row.get("effect_w4") or "-"),
-                "suggestion_action": suggestion_action,
-                "suggestion_label": suggestion_label,
-                "diagnosis": str(row.get("diagnosis") or "-"),
-                "reason": reason,
-            }
-        )
+        out.append(_build_feedback_threshold_tuning_row(dict(raw)))
     out.sort(
         key=lambda row: (
             0 if str(row.get("suggestion_action") or "") in {"REVERT_RELAX", "REVIEW_TIGHTEN"} else 1 if str(row.get("suggestion_action") or "") in {"KEEP_RELAX", "KEEP_TIGHTEN"} else 2,
@@ -223,6 +225,127 @@ def build_feedback_threshold_tuning_summary(rows: List[Dict[str, Any]]) -> List[
         )
     )
     return out
+
+
+def _feedback_threshold_suggestion_decision(
+    row: Dict[str, Any],
+) -> Dict[str, Any]:
+    tracked_count = int(row.get("tracked_count", 0) or 0)
+    avg_active_weeks = float(row.get("avg_active_weeks", 0.0) or 0.0)
+    latest_up = int(row.get("latest_improved_count", 0) or 0)
+    latest_down = int(row.get("latest_deteriorated_count", 0) or 0)
+    milestone_up = int(row.get("w1_improved_count", 0) or 0) + int(row.get("w2_improved_count", 0) or 0) + int(
+        row.get("w4_improved_count", 0) or 0
+    )
+    milestone_down = int(row.get("w1_deteriorated_count", 0) or 0) + int(
+        row.get("w2_deteriorated_count", 0) or 0
+    ) + int(row.get("w4_deteriorated_count", 0) or 0)
+
+    action = "KEEP_BASE"
+    suggestion_label = "维持基线"
+    confidence_delta = 0.0
+    base_confidence_delta = 0.0
+    calibration_delta = 0.0
+    maturity_delta = 0.0
+    reason = "自动应用样本还不足以支持调阈值。"
+
+    if latest_down > 0 or milestone_down > 0:
+        action = "TIGHTEN_AUTO_APPLY"
+        suggestion_label = "继续保守"
+        confidence_delta = 0.04
+        base_confidence_delta = 0.04
+        calibration_delta = 0.03
+        maturity_delta = 0.05
+        reason = "自动应用后已出现恶化样本，建议抬高 AUTO_APPLY 门槛。"
+    elif latest_up > 0 and milestone_up > 0 and tracked_count >= 1 and avg_active_weeks >= 2.0:
+        action = "RELAX_AUTO_APPLY"
+        suggestion_label = "可适度放宽"
+        confidence_delta = -0.03
+        base_confidence_delta = -0.03
+        calibration_delta = -0.02
+        maturity_delta = -0.05
+        reason = "自动应用后已出现连续改善，可适度放宽 AUTO_APPLY 门槛。"
+    elif str(row.get("summary_signal", "") or "") == "稳定跟踪":
+        action = "KEEP_BASE"
+        suggestion_label = "继续跟踪"
+        reason = "自动应用后整体稳定，但改善力度还不足以放宽阈值。"
+    elif str(row.get("summary_signal", "") or "") == "观察中":
+        action = "KEEP_CONSERVATIVE"
+        suggestion_label = "继续观察"
+        reason = "自动应用样本仍偏少，先保持保守阈值。"
+
+    return {
+        "tracked_count": tracked_count,
+        "avg_active_weeks": avg_active_weeks,
+        "action": action,
+        "suggestion_label": suggestion_label,
+        "confidence_delta": confidence_delta,
+        "base_confidence_delta": base_confidence_delta,
+        "calibration_delta": calibration_delta,
+        "maturity_delta": maturity_delta,
+        "reason": reason,
+    }
+
+
+def _build_feedback_threshold_suggestion_row(
+    raw: Dict[str, Any],
+    threshold_overrides: Dict[str, Dict[str, Dict[str, float]]] | None = None,
+) -> Dict[str, Any]:
+    row = dict(raw)
+    feedback_kind = str(row.get("feedback_kind", "") or "").strip().lower()
+    base = feedback_automation_thresholds(
+        feedback_kind,
+        market=str(row.get("market") or ""),
+        threshold_overrides=threshold_overrides,
+    )
+    decision = _feedback_threshold_suggestion_decision(row)
+    return {
+        "market": str(row.get("market", "") or "-"),
+        "feedback_kind": feedback_kind,
+        "feedback_kind_label": str(row.get("feedback_kind_label", "") or feedback_kind),
+        "summary_signal": str(row.get("summary_signal", "") or "-"),
+        "suggestion_action": str(decision.get("action") or ""),
+        "suggestion_label": str(decision.get("suggestion_label") or ""),
+        "tracked_count": int(decision.get("tracked_count", 0) or 0),
+        "avg_active_weeks": float(decision.get("avg_active_weeks", 0.0) or 0.0),
+        "base_auto_confidence": float(base.get("auto_confidence", 0.0) or 0.0),
+        "suggested_auto_confidence": round(
+            _clamp(float(base.get("auto_confidence", 0.0) or 0.0) + float(decision.get("confidence_delta", 0.0) or 0.0), 0.0, 1.0),
+            6,
+        ),
+        "base_auto_base_confidence": float(base.get("auto_base_confidence", 0.0) or 0.0),
+        "suggested_auto_base_confidence": round(
+            _clamp(
+                float(base.get("auto_base_confidence", 0.0) or 0.0)
+                + float(decision.get("base_confidence_delta", 0.0) or 0.0),
+                0.0,
+                1.0,
+            ),
+            6,
+        ),
+        "base_auto_calibration_score": float(base.get("auto_calibration_score", 0.0) or 0.0),
+        "suggested_auto_calibration_score": round(
+            _clamp(
+                float(base.get("auto_calibration_score", 0.0) or 0.0)
+                + float(decision.get("calibration_delta", 0.0) or 0.0),
+                0.0,
+                1.0,
+            ),
+            6,
+        ),
+        "base_auto_maturity_ratio": float(base.get("auto_maturity_ratio", 0.0) or 0.0),
+        "suggested_auto_maturity_ratio": round(
+            _clamp(
+                float(base.get("auto_maturity_ratio", 0.0) or 0.0)
+                + float(decision.get("maturity_delta", 0.0) or 0.0),
+                0.0,
+                1.0,
+            ),
+            6,
+        ),
+        "reason": str(decision.get("reason") or ""),
+        "examples": str(row.get("top_portfolios_text", "") or "-"),
+    }
 
 
 def build_feedback_threshold_suggestion_rows(
@@ -235,86 +358,7 @@ def build_feedback_threshold_suggestion_rows(
         feedback_kind = str(row.get("feedback_kind", "") or "").strip().lower()
         if not feedback_kind:
             continue
-        base = feedback_automation_thresholds(
-            feedback_kind,
-            market=str(row.get("market") or ""),
-            threshold_overrides=threshold_overrides,
-        )
-        tracked_count = int(row.get("tracked_count", 0) or 0)
-        avg_active_weeks = float(row.get("avg_active_weeks", 0.0) or 0.0)
-        latest_up = int(row.get("latest_improved_count", 0) or 0)
-        latest_down = int(row.get("latest_deteriorated_count", 0) or 0)
-        milestone_up = int(row.get("w1_improved_count", 0) or 0) + int(row.get("w2_improved_count", 0) or 0) + int(
-            row.get("w4_improved_count", 0) or 0
-        )
-        milestone_down = int(row.get("w1_deteriorated_count", 0) or 0) + int(
-            row.get("w2_deteriorated_count", 0) or 0
-        ) + int(row.get("w4_deteriorated_count", 0) or 0)
-
-        action = "KEEP_BASE"
-        suggestion_label = "维持基线"
-        confidence_delta = 0.0
-        base_confidence_delta = 0.0
-        calibration_delta = 0.0
-        maturity_delta = 0.0
-        reason = "自动应用样本还不足以支持调阈值。"
-
-        if latest_down > 0 or milestone_down > 0:
-            action = "TIGHTEN_AUTO_APPLY"
-            suggestion_label = "继续保守"
-            confidence_delta = 0.04
-            base_confidence_delta = 0.04
-            calibration_delta = 0.03
-            maturity_delta = 0.05
-            reason = "自动应用后已出现恶化样本，建议抬高 AUTO_APPLY 门槛。"
-        elif latest_up > 0 and milestone_up > 0 and tracked_count >= 1 and avg_active_weeks >= 2.0:
-            action = "RELAX_AUTO_APPLY"
-            suggestion_label = "可适度放宽"
-            confidence_delta = -0.03
-            base_confidence_delta = -0.03
-            calibration_delta = -0.02
-            maturity_delta = -0.05
-            reason = "自动应用后已出现连续改善，可适度放宽 AUTO_APPLY 门槛。"
-        elif str(row.get("summary_signal", "") or "") == "稳定跟踪":
-            action = "KEEP_BASE"
-            suggestion_label = "继续跟踪"
-            reason = "自动应用后整体稳定，但改善力度还不足以放宽阈值。"
-        elif str(row.get("summary_signal", "") or "") == "观察中":
-            action = "KEEP_CONSERVATIVE"
-            suggestion_label = "继续观察"
-            reason = "自动应用样本仍偏少，先保持保守阈值。"
-
-        out.append(
-            {
-                "market": str(row.get("market", "") or "-"),
-                "feedback_kind": feedback_kind,
-                "feedback_kind_label": str(row.get("feedback_kind_label", "") or feedback_kind),
-                "summary_signal": str(row.get("summary_signal", "") or "-"),
-                "suggestion_action": action,
-                "suggestion_label": suggestion_label,
-                "tracked_count": tracked_count,
-                "avg_active_weeks": avg_active_weeks,
-                "base_auto_confidence": float(base.get("auto_confidence", 0.0) or 0.0),
-                "suggested_auto_confidence": round(_clamp(float(base.get("auto_confidence", 0.0) or 0.0) + confidence_delta, 0.0, 1.0), 6),
-                "base_auto_base_confidence": float(base.get("auto_base_confidence", 0.0) or 0.0),
-                "suggested_auto_base_confidence": round(
-                    _clamp(float(base.get("auto_base_confidence", 0.0) or 0.0) + base_confidence_delta, 0.0, 1.0),
-                    6,
-                ),
-                "base_auto_calibration_score": float(base.get("auto_calibration_score", 0.0) or 0.0),
-                "suggested_auto_calibration_score": round(
-                    _clamp(float(base.get("auto_calibration_score", 0.0) or 0.0) + calibration_delta, 0.0, 1.0),
-                    6,
-                ),
-                "base_auto_maturity_ratio": float(base.get("auto_maturity_ratio", 0.0) or 0.0),
-                "suggested_auto_maturity_ratio": round(
-                    _clamp(float(base.get("auto_maturity_ratio", 0.0) or 0.0) + maturity_delta, 0.0, 1.0),
-                    6,
-                ),
-                "reason": reason,
-                "examples": str(row.get("top_portfolios_text", "") or "-"),
-            }
-        )
+        out.append(_build_feedback_threshold_suggestion_row(row, threshold_overrides))
     out.sort(
         key=lambda row: (
             0 if str(row.get("suggestion_action") or "") == "TIGHTEN_AUTO_APPLY" else 1 if str(row.get("suggestion_action") or "") == "RELAX_AUTO_APPLY" else 2,

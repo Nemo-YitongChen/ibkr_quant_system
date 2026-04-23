@@ -56,6 +56,13 @@ DASHBOARD_MODE_DISPLAY_LABELS: Dict[str, str] = {
 DASHBOARD_TRANSLATIONS_EN.update({
     "开市中": "Market Open",
     "已闭市": "Market Closed",
+    "状态汇总": "Status Rollout",
+    "市场状态缺口": "Market State Gaps",
+    "市场数据健康": "Market Data Health",
+    "有缺口": "Gaps",
+    "有关注": "Needs Attention",
+    "研究Fallback": "Research Fallback",
+    "组合健康": "Portfolio Health",
     "人工审批": "Manual Review",
     "批准草案": "Approve Draft",
     "驳回草案": "Reject Draft",
@@ -4919,12 +4926,147 @@ def _build_runtime_status(cards: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+def _dashboard_market_data_rollout_bucket(row: Dict[str, Any]) -> str:
+    status_label = str(row.get("status_label", "") or "").strip()
+    status_bucket = _dashboard_health_bucket(row.get("status"))
+    if status_label in {"待排查", "混合", "有缺失", "无数据"}:
+        return "attention"
+    if status_label == "研究Fallback":
+        return "research_fallback"
+    if status_bucket in {"warning", "degraded"}:
+        return "attention"
+    return "ready"
+
+
+def _build_dashboard_status_rollout_summary(cards: List[Dict[str, Any]]) -> Dict[str, Any]:
+    rows_by_market: Dict[str, Dict[str, Any]] = {}
+    for card in list(cards or []):
+        market = str(card.get("market", "") or "").strip().upper() or "UNKNOWN"
+        row = rows_by_market.setdefault(
+            market,
+            {
+                "market": market,
+                "portfolio_count": 0,
+                "market_state_missing_count": 0,
+                "report_fresh_count": 0,
+                "report_stale_count": 0,
+                "ops_ready_count": 0,
+                "ops_warning_count": 0,
+                "ops_degraded_count": 0,
+                "data_ready_count": 0,
+                "data_attention_count": 0,
+                "data_research_fallback_count": 0,
+            },
+        )
+        row["portfolio_count"] += 1
+
+        exchange_open = card.get("exchange_open_raw") if "exchange_open_raw" in card else card.get("exchange_open")
+        if exchange_open is None:
+            row["market_state_missing_count"] += 1
+
+        report_freshness_label = str(card.get("report_freshness_label", "") or "")
+        report_status = dict(card.get("report_status", {}) or {})
+        report_is_stale = (
+            (report_freshness_label.endswith("待刷新"))
+            or (not bool(report_status.get("fresh", False)))
+        )
+        if report_is_stale:
+            row["report_stale_count"] += 1
+        else:
+            row["report_fresh_count"] += 1
+
+        health_overview = list(card.get("health_overview", []) or [])
+        health_row = dict(health_overview[0] if health_overview else {})
+        ops_bucket = _dashboard_health_bucket(
+            health_row.get("status")
+            if "status" in health_row
+            else dict(card.get("health_summary", {}) or {}).get("status")
+        )
+        if ops_bucket == "degraded":
+            row["ops_degraded_count"] += 1
+        elif ops_bucket == "warning":
+            row["ops_warning_count"] += 1
+        else:
+            row["ops_ready_count"] += 1
+
+        market_data_overview = list(card.get("market_data_health_overview", []) or [])
+        market_data_row = dict(market_data_overview[0] if market_data_overview else {})
+        data_bucket = _dashboard_market_data_rollout_bucket(market_data_row)
+        if data_bucket == "attention":
+            row["data_attention_count"] += 1
+        elif data_bucket == "research_fallback":
+            row["data_research_fallback_count"] += 1
+        else:
+            row["data_ready_count"] += 1
+
+    rows: List[Dict[str, Any]] = []
+    for market, row in rows_by_market.items():
+        summary_bits = []
+        if int(row.get("market_state_missing_count", 0) or 0) > 0:
+            summary_bits.append(f"状态缺口 {int(row.get('market_state_missing_count', 0) or 0)}")
+        if int(row.get("report_stale_count", 0) or 0) > 0:
+            summary_bits.append(f"待刷新 {int(row.get('report_stale_count', 0) or 0)}")
+        if int(row.get("ops_degraded_count", 0) or 0) > 0:
+            summary_bits.append(f"降级 {int(row.get('ops_degraded_count', 0) or 0)}")
+        if int(row.get("ops_warning_count", 0) or 0) > 0:
+            summary_bits.append(f"告警 {int(row.get('ops_warning_count', 0) or 0)}")
+        if int(row.get("data_attention_count", 0) or 0) > 0:
+            summary_bits.append(f"数据待排查 {int(row.get('data_attention_count', 0) or 0)}")
+        if int(row.get("data_research_fallback_count", 0) or 0) > 0:
+            summary_bits.append(f"研究Fallback {int(row.get('data_research_fallback_count', 0) or 0)}")
+        row["summary"] = " | ".join(summary_bits) if summary_bits else "状态已对齐"
+        rows.append(row)
+
+    rows.sort(
+        key=lambda row: (
+            -(
+                int(row.get("market_state_missing_count", 0) or 0)
+                + int(row.get("report_stale_count", 0) or 0)
+                + int(row.get("ops_degraded_count", 0) or 0)
+                + int(row.get("ops_warning_count", 0) or 0)
+                + int(row.get("data_attention_count", 0) or 0)
+            ),
+            row.get("market", ""),
+        )
+    )
+
+    total_portfolios = sum(int(row.get("portfolio_count", 0) or 0) for row in rows)
+    market_state_missing_count = sum(int(row.get("market_state_missing_count", 0) or 0) for row in rows)
+    report_stale_count = sum(int(row.get("report_stale_count", 0) or 0) for row in rows)
+    ops_warning_count = sum(int(row.get("ops_warning_count", 0) or 0) for row in rows)
+    ops_degraded_count = sum(int(row.get("ops_degraded_count", 0) or 0) for row in rows)
+    data_attention_count = sum(int(row.get("data_attention_count", 0) or 0) for row in rows)
+    data_research_fallback_count = sum(int(row.get("data_research_fallback_count", 0) or 0) for row in rows)
+    summary_text = (
+        f"组合 {total_portfolios} | 状态缺口 {market_state_missing_count} | "
+        f"待刷新 {report_stale_count} | 运维告警 {ops_warning_count + ops_degraded_count} | "
+        f"数据关注 {data_attention_count}"
+    )
+    if data_research_fallback_count > 0:
+        summary_text += f" | 研究Fallback {data_research_fallback_count}"
+    top_row = next((row for row in rows if str(row.get("summary", "") or "").strip() != "状态已对齐"), None)
+    if top_row:
+        summary_text += f" | 优先看 {str(top_row.get('market', '-') or '-')}"
+    return {
+        "portfolio_count": total_portfolios,
+        "market_state_missing_count": market_state_missing_count,
+        "report_stale_count": report_stale_count,
+        "ops_warning_count": ops_warning_count,
+        "ops_degraded_count": ops_degraded_count,
+        "data_attention_count": data_attention_count,
+        "data_research_fallback_count": data_research_fallback_count,
+        "summary_text": summary_text,
+        "market_rows": rows,
+    }
+
+
 def _build_ops_overview(
     cards: List[Dict[str, Any]],
     *,
     preflight_summary: Dict[str, Any],
     control_payload: Dict[str, Any],
     execution_mode_summary: Dict[str, Any],
+    status_rollout_summary: Dict[str, Any],
 ) -> Dict[str, Any]:
     # 运维总览只聚合“现在最值得先处理”的信号：preflight、报告新鲜度、组合健康度和执行模式偏差。
     checks = [dict(row) for row in list(preflight_summary.get("checks", []) or []) if isinstance(row, dict)]
@@ -4941,6 +5083,10 @@ def _build_ops_overview(
     action_state = dict(control_payload.get("actions", {}) or {})
     service_state = dict(control_payload.get("service", {}) or {})
     execution_mismatch_count = int(execution_mode_summary.get("mismatch_count", 0) or 0)
+    status_rollout_rows = list(status_rollout_summary.get("market_rows", []) or [])
+    market_state_missing_count = int(status_rollout_summary.get("market_state_missing_count", 0) or 0)
+    data_attention_count = int(status_rollout_summary.get("data_attention_count", 0) or 0)
+    data_research_fallback_count = int(status_rollout_summary.get("data_research_fallback_count", 0) or 0)
     alert_rows: List[Dict[str, Any]] = []
     for row in warning_rows[:8]:
         alert_rows.append(
@@ -4971,6 +5117,25 @@ def _build_ops_overview(
                 "detail": str(health.get("status_detail", "") or "-"),
             }
         )
+    for row in status_rollout_rows[:4]:
+        if int(row.get("market_state_missing_count", 0) or 0) > 0:
+            alert_rows.append(
+                {
+                    "category": "MARKET_STATE",
+                    "name": str(row.get("market", "") or "-"),
+                    "status": "WARN",
+                    "detail": f"market_state_missing={int(row.get('market_state_missing_count', 0) or 0)}",
+                }
+            )
+        if int(row.get("data_attention_count", 0) or 0) > 0:
+            alert_rows.append(
+                {
+                    "category": "DATA",
+                    "name": str(row.get("market", "") or "-"),
+                    "status": "WARN",
+                    "detail": str(row.get("summary", "") or "-"),
+                }
+            )
     preflight_banner_level = ""
     preflight_banner_title = ""
     preflight_banner_reason = ""
@@ -5001,8 +5166,10 @@ def _build_ops_overview(
         preflight_banner_reason = " | ".join(bit for bit in reason_bits if bit) or f"warn={warn_count} fail={fail_count}"
     summary_text = (
         f"preflight fail={int(preflight_summary.get('fail_count', 0) or 0)} warn={int(preflight_summary.get('warn_count', 0) or 0)} | "
+        f"market_state_gap={market_state_missing_count} | "
         f"stale_reports={len(stale_rows)} | "
         f"degraded_health={len(degraded_rows)} | "
+        f"data_attention={data_attention_count} | "
         f"mode_mismatch={execution_mismatch_count} | "
         f"service={str(service_state.get('status', 'disabled') or 'disabled')}"
     )
@@ -5012,14 +5179,19 @@ def _build_ops_overview(
         "preflight_warn_count": int(preflight_summary.get("warn_count", 0) or 0),
         "preflight_fail_count": int(preflight_summary.get("fail_count", 0) or 0),
         "ibkr_port_warning_count": int(len(port_warning_rows)),
+        "market_state_missing_count": market_state_missing_count,
         "stale_report_count": int(len(stale_rows)),
         "degraded_health_count": int(len(degraded_rows)),
+        "data_attention_count": data_attention_count,
+        "data_research_fallback_count": data_research_fallback_count,
         "execution_mode_mismatch_count": execution_mismatch_count,
         "control_service_status": str(service_state.get("status", "disabled") or "disabled"),
         "run_once_in_progress": bool(action_state.get("run_once_in_progress", False)),
         "preflight_in_progress": bool(action_state.get("preflight_in_progress", False)),
         "weekly_review_in_progress": bool(action_state.get("weekly_review_in_progress", False)),
         "summary_text": summary_text,
+        "status_rollout_summary_text": str(status_rollout_summary.get("summary_text", "") or ""),
+        "status_rollout_rows": status_rollout_rows,
         "preflight_banner_level": preflight_banner_level,
         "preflight_banner_title": preflight_banner_title,
         "preflight_banner_reason": preflight_banner_reason,
@@ -6556,6 +6728,7 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
     stock_list_groups = _build_stock_list_groups(cards)
     trade_cards = _expand_display_cards(cards, dashboard_view="trade")
     dry_run_cards = _expand_display_cards(cards, dashboard_view="dry-run")
+    dashboard_status_rollout_summary = _build_dashboard_status_rollout_summary(trade_cards)
     trade_execution_mode_recommendation_overview = _build_execution_mode_recommendation_overview(trade_cards)
     trade_execution_mode_recommendation_summary = _build_execution_mode_recommendation_summary(trade_execution_mode_recommendation_overview)
     execution_feedback_overview = _build_execution_feedback_overview(trade_cards)
@@ -6574,6 +6747,7 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
         preflight_summary=preflight_summary,
         control_payload=dashboard_control,
         execution_mode_summary=trade_execution_mode_recommendation_summary,
+        status_rollout_summary=dashboard_status_rollout_summary,
     )
     payload = {
         "generated_at": datetime.now().isoformat(),
@@ -6609,6 +6783,7 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
         "labeling_ready_overview": labeling_ready_overview,
         "market_data_health_overview": market_data_health_overview,
         "market_data_health_rows": market_data_health_overview,
+        "dashboard_status_rollout_summary": dashboard_status_rollout_summary,
         "risk_review_overview": _build_risk_review_overview(cards),
         "trade_risk_history_overview": _build_risk_history_overview(trade_cards),
         "dry_run_risk_history_overview": _build_risk_history_overview(dry_run_cards),
@@ -6702,6 +6877,15 @@ def _simple_ops_overview_rows(ops_overview: Dict[str, Any]) -> List[List[str]]:
     def _count_status(count: int, label: str) -> str:
         return f"{label} | {count}" if int(count or 0) > 0 else "已就绪 | 0"
 
+    data_attention_count = int(ops_overview.get("data_attention_count", 0) or 0)
+    data_research_fallback_count = int(ops_overview.get("data_research_fallback_count", 0) or 0)
+    if data_attention_count > 0:
+        data_health_label = _count_status(data_attention_count, "有关注")
+    elif data_research_fallback_count > 0:
+        data_health_label = f"研究Fallback | {data_research_fallback_count}"
+    else:
+        data_health_label = "已就绪 | 0"
+
     return [
         [
             "Preflight",
@@ -6714,12 +6898,20 @@ def _simple_ops_overview_rows(ops_overview: Dict[str, Any]) -> List[List[str]]:
             _count_status(int(ops_overview.get("ibkr_port_warning_count", 0) or 0), "有告警"),
         ],
         [
+            "市场状态缺口",
+            _count_status(int(ops_overview.get("market_state_missing_count", 0) or 0), "有缺口"),
+        ],
+        [
             "报告待刷新",
             _count_status(int(ops_overview.get("stale_report_count", 0) or 0), "有滞后"),
         ],
         [
             "组合健康",
             _count_status(int(ops_overview.get("degraded_health_count", 0) or 0), "有降级"),
+        ],
+        [
+            "市场数据健康",
+            data_health_label,
         ],
         [
             "执行模式偏差",
@@ -7260,6 +7452,20 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
         ]
         for row in list(ops_overview.get("alert_rows", []) or [])
     ]
+    status_rollout_rows = [
+        [
+            row.get("market", ""),
+            str(int(row.get("portfolio_count", 0) or 0)),
+            str(int(row.get("market_state_missing_count", 0) or 0)),
+            str(int(row.get("report_stale_count", 0) or 0)),
+            str(int(row.get("ops_warning_count", 0) or 0)),
+            str(int(row.get("ops_degraded_count", 0) or 0)),
+            str(int(row.get("data_attention_count", 0) or 0)),
+            str(int(row.get("data_research_fallback_count", 0) or 0)),
+            str(row.get("summary", "") or "-"),
+        ]
+        for row in list(ops_overview.get("status_rollout_rows", []) or [])
+    ]
     preflight_banner_rows = [
         [
             str(row.get("status", "") or ""),
@@ -7293,15 +7499,19 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
       </div>
       <div class="advanced-only">
       <div class="meta">{html.escape(str(ops_overview.get('summary_text', '尚无运维摘要') or '尚无运维摘要'))}</div>
+      <div class="meta">{html.escape(str(ops_overview.get('status_rollout_summary_text', '') or ''))}</div>
       <div class="stats">
         <div><strong>Preflight</strong><span>P{int(ops_overview.get('preflight_pass_count', 0) or 0)} / W{int(ops_overview.get('preflight_warn_count', 0) or 0)} / F{int(ops_overview.get('preflight_fail_count', 0) or 0)}</span></div>
         <div><strong>Gateway Ports</strong><span>{int(ops_overview.get('ibkr_port_warning_count', 0) or 0)} warnings</span></div>
+        <div><strong>Market State Gaps</strong><span>{int(ops_overview.get('market_state_missing_count', 0) or 0)}</span></div>
         <div><strong>Stale Reports</strong><span>{int(ops_overview.get('stale_report_count', 0) or 0)}</span></div>
         <div><strong>Degraded Health</strong><span>{int(ops_overview.get('degraded_health_count', 0) or 0)}</span></div>
+        <div><strong>Data Attention</strong><span>{int(ops_overview.get('data_attention_count', 0) or 0)}</span></div>
         <div><strong>Mode Mismatch</strong><span>{int(ops_overview.get('execution_mode_mismatch_count', 0) or 0)}</span></div>
         <div><strong>Control</strong><span>{html.escape(str(ops_overview.get('control_service_status', '-') or '-'))}</span></div>
       </div>
       <div class="meta">preflight_generated_at={html.escape(str(ops_overview.get('preflight_generated_at', '-') or '-'))}</div>
+      {_render_table(["market", "portfolios", "state_gap", "stale_reports", "ops_warn", "ops_degraded", "data_attention", "research_fallback", "summary"], status_rollout_rows) if status_rollout_rows else ""}
       {_render_table(["category", "name", "status", "detail"], ops_alert_rows) if ops_alert_rows else '<div class="empty">当前没有需要优先处理的运维告警。</div>'}
       </div>
     </section>
@@ -7316,6 +7526,13 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
         <button type="button" class="control-action" data-api-action="run_preflight" data-i18n-zh="立即跑 Preflight">立即跑 Preflight</button>
         <button type="button" class="control-action" data-api-action="run_weekly_review" data-i18n-zh="立即跑 Weekly Review">立即跑 Weekly Review</button>
         <button type="button" class="control-action" data-api-action="refresh_dashboard" data-i18n-zh="刷新 Dashboard">刷新 Dashboard</button>
+      </div>
+      <div class="meta">
+        <span data-i18n-zh="状态汇总">状态汇总</span>：
+        <span data-i18n-zh="市场状态缺口">市场状态缺口</span> {int(ops_overview.get('market_state_missing_count', 0) or 0)} |
+        <span data-i18n-zh="报告待刷新">报告待刷新</span> {int(ops_overview.get('stale_report_count', 0) or 0)} |
+        <span data-i18n-zh="组合健康">组合健康</span> {int(ops_overview.get('degraded_health_count', 0) or 0)} |
+        <span data-i18n-zh="市场数据健康">市场数据健康</span> {int(ops_overview.get('data_attention_count', 0) or 0)}
       </div>
       <div class="meta simple-only" data-i18n-zh="这些按钮会直接触发本机控制服务。">这些按钮会直接触发本机控制服务。</div>
       <div class="meta advanced-only" data-i18n-zh="这些按钮调用本机 supervisor control service；组合级开关会写入当前 summary 目录的 `dashboard_control_state.json`，并在下次启动 `python -m src.app.supervisor` 时自动恢复。">这些按钮调用本机 supervisor control service；组合级开关会写入当前 summary 目录的 `dashboard_control_state.json`，并在下次启动 `python -m src.app.supervisor` 时自动恢复。</div>
