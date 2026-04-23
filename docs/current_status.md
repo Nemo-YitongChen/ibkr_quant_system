@@ -181,6 +181,10 @@
 - execution audit persistence
 - fill/risk-event audit chain
 - dashboard helper regression tests
+- artifact contract / health / governance health
+- degraded-input dashboard fallback
+- broker / reconcile artifact contract registry
+- weekly review support 模块按 execution / governance / strategy / decision 领域继续拆分
 
 ### P1：降低大文件复杂度
 

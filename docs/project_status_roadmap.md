@@ -269,6 +269,8 @@ Q2 的主线不再是“继续堆功能”，而是把现有 `research -> paper 
 - `decision evidence row / summary / weekly map` 这组证据汇总 helper 也已并入同一 support 模块，`review_investment_weekly.py` 进一步收敛为 orchestration + history overview，开始为后续拆 candidate-linking 支线腾出边界。
 - `candidate-linking / execution parent / outcome spread / edge realization / blocked edge attribution` 这条更靠前的 execution-analysis 支线也已并入同一 support 模块，`review_investment_weekly.py` 在 execution-feedback 之外继续减少对 candidate snapshot / order-edge / microstructure 细节的内嵌实现。
 - `weekly review` 尾部的 `CSV/JSON artifact 写出 + weekly_tuning_dataset / weekly_review_summary payload + markdown kwargs` 这层输出装配也已抽到独立 support 模块，主文件开始把“分析/反馈编排”和“报告落盘”明确分层。
+- `review_weekly_feedback_support.py` 已继续按领域拆成 `review_weekly_execution_support.py`、`review_weekly_governance_support.py`、`review_weekly_strategy_support.py`、`review_weekly_decision_support.py`，原模块保留 compatibility facade，避免 `review_investment_weekly.py` 和旧测试入口立即断裂。
+- `decision evidence / edge-slicing-risk calibration / market-profile patch readiness / tuning dataset / risk overlay parsing` 已归入 decision support，修复拆分后 supervisor 周报任务的导入缺口，并保持原有 wrapper 接口不变。
 
 验收口径：
 
@@ -309,6 +311,24 @@ Q2 的主线不再是“继续堆功能”，而是把现有 `research -> paper 
 ### Dashboard freshness / health helper 对齐（进行中）
 
 - 已为 dashboard helper 补充 freshness / market-state / health-overview / market-data-health 的测试覆盖。
+- 已落下 `artifact contract / loader / health / governance health` 公共层：
+  - `src/common/artifact_contracts.py`
+  - `src/common/artifact_loader.py`
+  - `src/common/artifact_health.py`
+  - `src/common/governance_health.py`
+- dashboard 现已统一输出：
+  - `artifact_health_overview`
+  - `governance_health_summary`
+  - degraded / legacy / fallback / consistency drift 的显式可见状态
+- broker / reconcile artifact 已纳入同一 contract registry：
+  - `weekly_broker_positions`
+  - `weekly_broker_comparison`
+  - `broker_reconciliation_summary`
+- weekly review summary 现在提供 broker fallback sections：
+  - `broker_summary_rows`
+  - `broker_local_diff_rows`
+  - `broker_snapshot_rows`
+- dashboard 在配置 `dashboard_reconcile_dir` 或默认 reconcile 目录存在时，会把 broker reconciliation health 纳入 `artifact_health_overview`，并显示 `Broker / Reconcile` 卡片。
 - 正在把 helper 从旧的静态字符串映射升级为：
   - freshness 支持 `market + report_date + latest_generated_at + as_of_date`
   - market state 支持 `None -> 市场状态: 暂无数据`
@@ -316,7 +336,7 @@ Q2 的主线不再是“继续堆功能”，而是把现有 `research -> paper 
   - market data health overview 在空输入时给出 `warning + 明确兜底摘要`
 - 当前已把这些 helper 接到 dashboard card / JSON payload / simple mode / advanced mode 的统一字段上，避免“测试语义”和“页面文案”继续脱节。
 - 当前还新增了 dashboard status rollout summary，开始把这层状态统一推进到 `ops overview / dashboard control`。
-- 下一步会继续清理旧的同义字段，并把 status rollout summary 继续透到更多运维视图。
+- 下一步会继续把 artifact health 透到更多真实 fallback section，并把 dashboard v2 / execution quality evidence 建在统一 contract health 之上。
 
 下一步建议：
 

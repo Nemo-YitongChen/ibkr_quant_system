@@ -119,6 +119,7 @@ from .review_weekly_feedback_support import (
     _select_feedback_calibration_rows as _select_feedback_calibration_rows_support,
     _table_exists as _table_exists_support,
     _column_exists as _column_exists_support,
+    _weekly_strategy_note as _weekly_strategy_note_support,
     _weekly_tuning_history_trend_label,
     _apply_market_profile_tuning_context,
     _apply_execution_broker_summary_context,
@@ -523,6 +524,27 @@ def _build_shadow_feedback_rows(
         shadow_rows,
         shadow_summary_rows,
         feedback_calibration_map=feedback_calibration_map,
+    )
+
+
+def _weekly_strategy_note(
+    *,
+    market_rules: Dict[str, Any],
+    account_profile: Dict[str, Any],
+    adaptive_strategy: Dict[str, Any],
+    opportunity_summary: Dict[str, Any],
+    market_sentiment: Dict[str, Any],
+    strategy_effective_controls_note: str = "",
+    execution_gate_summary: str = "",
+) -> str:
+    return _weekly_strategy_note_support(
+        market_rules=market_rules,
+        account_profile=account_profile,
+        adaptive_strategy=adaptive_strategy,
+        opportunity_summary=opportunity_summary,
+        market_sentiment=market_sentiment,
+        strategy_effective_controls_note=strategy_effective_controls_note,
+        execution_gate_summary=execution_gate_summary,
     )
 
 

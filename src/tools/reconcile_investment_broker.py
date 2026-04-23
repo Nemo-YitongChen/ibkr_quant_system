@@ -13,6 +13,7 @@ from ..common.adaptive_strategy import (
     adaptive_strategy_summary_fields,
     load_report_adaptive_strategy_payload,
 )
+from ..common.artifact_contracts import ARTIFACT_SCHEMA_VERSION
 from ..common.cli import build_cli_parser, emit_cli_summary
 from ..common.cli_contracts import ArtifactBundle, ReconciliationSummary
 from ..common.logger import get_logger
@@ -271,8 +272,11 @@ def main(argv: List[str] | None = None) -> None:
     execution_summary = _load_report_json(report_dir, "investment_execution_summary.json")
     strategy_controls_note = _strategy_effective_controls_note(execution_summary, paper_summary)
     execution_gate_summary = _execution_gate_summary(execution_summary)
+    generated_at = datetime.now(timezone.utc).isoformat()
     summary = {
-        "ts": datetime.now(timezone.utc).isoformat(),
+        "ts": generated_at,
+        "generated_at": generated_at,
+        "schema_version": ARTIFACT_SCHEMA_VERSION,
         "market": market,
         "portfolio_id": portfolio_id,
         "account_id": str(broker_run["account_id"]) if broker_run is not None else "",

@@ -10,6 +10,7 @@ from typing import Any, Dict, List
 
 import yaml
 
+from ..common.artifact_contracts import ARTIFACT_SCHEMA_VERSION
 from ..common.cli import build_cli_parser, emit_cli_summary
 from ..common.logger import get_logger
 from ..common.markets import market_config_path, resolve_market_code
@@ -301,6 +302,7 @@ def run_preflight(config_path: str, runtime_root: str = "", out_dir: str = "repo
     fail_count = sum(1 for row in checks if str(row.get("status") or "") == "FAIL")
     summary = {
         "generated_at": datetime.now().isoformat(),
+        "schema_version": ARTIFACT_SCHEMA_VERSION,
         "config_path": str(resolved_config),
         "runtime_root": str(resolved_runtime_root) if resolved_runtime_root is not None else "",
         "pass_count": int(pass_count),

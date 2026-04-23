@@ -21,6 +21,7 @@ from ..common.adaptive_strategy import (
     apply_adaptive_strategy_execution_controls,
     load_report_adaptive_strategy_payload,
 )
+from ..common.artifact_contracts import ARTIFACT_SCHEMA_VERSION
 from ..common.market_structure import MarketStructureConfig
 from ..common.markets import market_timezone_name, symbol_matches_market
 from ..common.logger import get_logger
@@ -2235,6 +2236,8 @@ class InvestmentExecutionEngine:
 
             summary = {
                 "ts": datetime.now(timezone.utc).isoformat(),
+                "generated_at": "",
+                "schema_version": ARTIFACT_SCHEMA_VERSION,
                 "run_id": run_id,
                 "market": self.market,
                 "portfolio_id": self.portfolio_id,
@@ -2362,6 +2365,7 @@ class InvestmentExecutionEngine:
                 "gap_symbols": int(gap_symbols),
                 "gap_notional": float(gap_notional),
             }
+            summary["generated_at"] = str(summary["ts"])
             summary.update(strategy_fields)
             summary.update(strategy_control_fields)
             self.storage.update_investment_execution_run(

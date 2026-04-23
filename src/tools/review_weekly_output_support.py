@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List
 
 from ..analysis.report import write_csv, write_json
+from ..common.artifact_contracts import ARTIFACT_SCHEMA_VERSION
 from ..common.cli_contracts import ArtifactBundle, WeeklyReviewSummary
 from ..common.markets import resolve_market_code
 from .review_weekly_io import read_csv_rows as _read_csv
@@ -623,6 +625,7 @@ def build_weekly_csv_artifacts(
 
 def build_weekly_tuning_dataset_payload(
     *,
+    generated_at: str,
     week_label: str,
     window_start: str,
     window_end: str,
@@ -639,6 +642,8 @@ def build_weekly_tuning_dataset_payload(
     weekly_tuning_dataset_rows: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
     return {
+        "generated_at": str(generated_at or ""),
+        "schema_version": ARTIFACT_SCHEMA_VERSION,
         "week_label": week_label,
         "window_start": window_start,
         "window_end": window_end,
@@ -658,6 +663,7 @@ def build_weekly_tuning_dataset_payload(
 
 def build_weekly_review_summary_payload(
     *,
+    generated_at: str,
     window_start: str,
     window_end: str,
     market_filter: str,
@@ -708,6 +714,8 @@ def build_weekly_review_summary_payload(
     weekly_control_timeseries_rows: List[Dict[str, Any]],
     weekly_tuning_dataset_rows: List[Dict[str, Any]],
     broker_latest_rows_by_portfolio: Dict[str, List[Dict[str, Any]]],
+    broker_summary_rows: List[Dict[str, Any]],
+    broker_diff_rows: List[Dict[str, Any]],
     avg_weekly_return: float,
     avg_max_drawdown: float,
     buy_value_total: float,
@@ -717,6 +725,8 @@ def build_weekly_review_summary_payload(
     strategy_context_rows: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
     return {
+        "generated_at": str(generated_at or ""),
+        "schema_version": ARTIFACT_SCHEMA_VERSION,
         "window_start": window_start,
         "window_end": window_end,
         "market_filter": market_filter or "ALL",
@@ -768,6 +778,9 @@ def build_weekly_review_summary_payload(
         "weekly_control_timeseries": weekly_control_timeseries_rows,
         "weekly_tuning_dataset": weekly_tuning_dataset_rows,
         "broker_snapshot_portfolio_count": len(broker_latest_rows_by_portfolio),
+        "broker_summary_rows": broker_summary_rows,
+        "broker_local_diff_rows": broker_diff_rows,
+        "broker_snapshot_rows": _flatten_broker_positions(broker_latest_rows_by_portfolio),
         "avg_weekly_return": float(avg_weekly_return),
         "avg_max_drawdown": float(avg_max_drawdown),
         "gross_buy_value_total": float(buy_value_total),
@@ -921,6 +934,7 @@ def build_weekly_output_bundle(
     strategy_context_rows: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
     rollup = _weekly_summary_rollup(summary_rows)
+    generated_at = datetime.now(timezone.utc).isoformat()
     csv_artifacts = build_weekly_csv_artifacts(
         summary_rows=summary_rows,
         trade_rows=trade_rows,
@@ -972,6 +986,7 @@ def build_weekly_output_bundle(
         broker_diff_rows=broker_diff_rows,
     )
     weekly_tuning_dataset_payload = build_weekly_tuning_dataset_payload(
+        generated_at=generated_at,
         week_label=week_label,
         window_start=window_start,
         window_end=window_end,
@@ -988,6 +1003,7 @@ def build_weekly_output_bundle(
         weekly_tuning_dataset_rows=weekly_tuning_dataset_rows,
     )
     summary_payload = build_weekly_review_summary_payload(
+        generated_at=generated_at,
         window_start=window_start,
         window_end=window_end,
         market_filter=market_filter or "ALL",
@@ -1038,6 +1054,8 @@ def build_weekly_output_bundle(
         weekly_control_timeseries_rows=weekly_control_timeseries_rows,
         weekly_tuning_dataset_rows=weekly_tuning_dataset_rows,
         broker_latest_rows_by_portfolio=broker_latest_rows_by_portfolio,
+        broker_summary_rows=broker_summary_rows,
+        broker_diff_rows=broker_diff_rows,
         avg_weekly_return=float(rollup.get("avg_weekly_return") or 0.0),
         avg_max_drawdown=float(rollup.get("avg_max_drawdown") or 0.0),
         buy_value_total=float(rollup.get("buy_value_total") or 0.0),

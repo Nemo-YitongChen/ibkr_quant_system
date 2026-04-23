@@ -14,8 +14,16 @@ import yaml
 from ..analysis.tracking import STATUS_LABELS
 from ..common.account_profile import load_account_profiles, resolved_account_profile_summary
 from ..common.adaptive_strategy import load_report_adaptive_strategy_payload
+from ..common.artifact_contracts import dashboard_artifact_contracts, report_artifact_contracts
+from ..common.artifact_health import (
+    build_artifact_consistency_rows,
+    build_artifact_health_overview,
+    evaluate_artifact_health,
+)
+from ..common.artifact_loader import load_artifact, load_artifact_set
 from ..common.cli import build_cli_parser, emit_cli_summary
 from ..common.cli_contracts import ArtifactBundle, DashboardSummary
+from ..common.governance_health import build_governance_health_summary
 from ..common.market_structure import load_market_structure, market_structure_summary
 from ..common.markets import market_config_path, resolve_market_code, symbol_matches_market
 from ..common.runtime_paths import resolve_repo_path, resolve_scoped_runtime_path, scope_from_ibkr_config
@@ -31,6 +39,8 @@ CONTROL_BUTTON_LABELS: Dict[str, str] = {
     "submit_investment_guard": "自动提交 Guard",
     "run_investment_opportunity": "跑 Opportunity",
 }
+DASHBOARD_ARTIFACT_CONTRACTS = dashboard_artifact_contracts()
+REPORT_ARTIFACT_CONTRACTS = report_artifact_contracts()
 EXECUTION_MODE_LABELS: Dict[str, str] = {
     "AUTO": "自动执行",
     "REVIEW_ONLY": "只保留人工审核",
@@ -92,6 +102,8 @@ DASHBOARD_TRANSLATIONS_EN.update({
     "live 只读模式，仅显示真实账户数据与分析": "Live read-only mode; show real-account data and analysis only.",
     "本地模拟账本 + 快照回标，用于无下单闭环、阈值复盘与策略升级。": "Local simulated ledger plus snapshot labeling for closed-loop review without order submission, threshold review, and strategy upgrades.",
     "补丁治理概览": "Patch Governance Overview",
+    "Artifact 健康": "Artifact Health",
+    "治理健康": "Governance Health",
     "当前还没有可展示的补丁审批历史。": "No patch review history is available yet.",
 })
 
@@ -1818,6 +1830,110 @@ def _load_health_summary(db_path: Path, *, portfolio_id: str, hours: int = 24) -
     }
 
 
+def _build_review_artifact_health_rows(review_dir: Path) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    contracts = {
+        key: DASHBOARD_ARTIFACT_CONTRACTS[key]
+        for key in (
+            "weekly_review_summary",
+            "weekly_execution_summary",
+            "weekly_broker_positions",
+            "weekly_broker_comparison",
+            "weekly_risk_review_summary",
+            "weekly_patch_governance_summary",
+        )
+    }
+    loaded = load_artifact_set(review_dir, contracts)
+    rows = [
+        evaluate_artifact_health(contract, loaded[key], scope_label="GLOBAL")
+        for key, contract in contracts.items()
+    ]
+    return rows, build_artifact_consistency_rows(rows)
+
+
+def _build_preflight_artifact_health_row(preflight_dir: Path) -> Dict[str, Any]:
+    contract = DASHBOARD_ARTIFACT_CONTRACTS["supervisor_preflight_summary"]
+    loaded = load_artifact(preflight_dir, contract)
+    return evaluate_artifact_health(contract, loaded, scope_label="GLOBAL")
+
+
+def _build_reconcile_artifact_health_row(reconcile_dir: Path) -> Dict[str, Any]:
+    contract = DASHBOARD_ARTIFACT_CONTRACTS["broker_reconciliation_summary"]
+    loaded = load_artifact(reconcile_dir, contract)
+    return evaluate_artifact_health(contract, loaded, scope_label="GLOBAL")
+
+
+def _build_reconcile_overview(reconcile_dir: Path) -> Dict[str, Any]:
+    health_row = _build_reconcile_artifact_health_row(reconcile_dir)
+    payload = _load_json(reconcile_dir / "broker_reconciliation_summary.json")
+    if not payload:
+        return {
+            "configured": True,
+            "available": False,
+            "status": str(health_row.get("status") or "warning"),
+            "status_label": str(health_row.get("status_label") or "有告警"),
+            "summary_text": str(health_row.get("summary") or "缺少 broker reconciliation artifact"),
+            "market": "",
+            "portfolio_id": "",
+            "match_rows": 0,
+            "only_local_rows": 0,
+            "only_broker_rows": 0,
+            "qty_mismatch_rows": 0,
+            "execution_blocked_order_count": 0,
+            "strategy_effective_controls_note": "",
+            "source": str(health_row.get("source") or ""),
+        }
+    match_rows = int(payload.get("match_rows", 0) or 0)
+    only_local_rows = int(payload.get("only_local_rows", 0) or 0)
+    only_broker_rows = int(payload.get("only_broker_rows", 0) or 0)
+    qty_mismatch_rows = int(payload.get("qty_mismatch_rows", 0) or 0)
+    summary_parts = [
+        f"match={match_rows}",
+        f"only_local={only_local_rows}",
+        f"only_broker={only_broker_rows}",
+        f"qty_mismatch={qty_mismatch_rows}",
+    ]
+    blocked_orders = int(payload.get("execution_blocked_order_count", 0) or 0)
+    if blocked_orders > 0:
+        summary_parts.append(f"blocked={blocked_orders}")
+    return {
+        "configured": True,
+        "available": True,
+        "status": str(health_row.get("status") or "ready"),
+        "status_label": str(health_row.get("status_label") or "已就绪"),
+        "summary_text": " | ".join(summary_parts),
+        "market": str(payload.get("market") or ""),
+        "portfolio_id": str(payload.get("portfolio_id") or ""),
+        "match_rows": match_rows,
+        "only_local_rows": only_local_rows,
+        "only_broker_rows": only_broker_rows,
+        "qty_mismatch_rows": qty_mismatch_rows,
+        "execution_blocked_order_count": blocked_orders,
+        "strategy_effective_controls_note": str(payload.get("strategy_effective_controls_note") or ""),
+        "source": str(health_row.get("source") or "file"),
+        "generated_at": str(payload.get("generated_at") or payload.get("ts") or ""),
+        "schema_version": str(payload.get("schema_version") or ""),
+    }
+
+
+def _build_report_artifact_health_row(
+    report_dir: Path,
+    *,
+    market: str,
+    watchlist: str,
+    portfolio_id: str,
+) -> Dict[str, Any]:
+    contract = REPORT_ARTIFACT_CONTRACTS["investment_execution_summary"]
+    loaded = load_artifact(report_dir, contract)
+    return evaluate_artifact_health(
+        contract,
+        loaded,
+        scope_label="PORTFOLIO",
+        market=market,
+        watchlist=watchlist,
+        portfolio_id=portfolio_id,
+    )
+
+
 def _load_candidate_outcome_summary_rows(
     db_path: Path,
     *,
@@ -2863,6 +2979,12 @@ def _build_report_card(
     data_quality_summary = _load_json(report_dir / "investment_data_quality_summary.json")
     cost_summary = _load_json(report_dir / "investment_cost_summary.json")
     shadow_model_summary = _load_json(report_dir / "investment_shadow_model_summary.json")
+    execution_artifact_health = _build_report_artifact_health_row(
+        report_dir,
+        market=market_code,
+        watchlist=watchlist,
+        portfolio_id=portfolio_id,
+    )
     candidates = _read_csv_rows(report_dir / "investment_candidates.csv", limit=10)
     plan_rows = _read_csv_rows(report_dir / "investment_plan.csv", limit=8)
     holdings = _read_csv_rows(report_dir / "investment_portfolio.csv", limit=10)
@@ -2974,6 +3096,7 @@ def _build_report_card(
         "cost_summary": cost_summary,
         "shadow_model_summary": shadow_model_summary,
         "health_summary": health_summary,
+        "artifact_health_summary": execution_artifact_health,
         "analysis_states": analysis_states,
         "analysis_events": analysis_events,
         "shadow_review_recent_rows": shadow_review_recent_rows[:8],
@@ -5067,6 +5190,8 @@ def _build_ops_overview(
     control_payload: Dict[str, Any],
     execution_mode_summary: Dict[str, Any],
     status_rollout_summary: Dict[str, Any],
+    artifact_health_summary: Dict[str, Any],
+    governance_health_summary: Dict[str, Any],
 ) -> Dict[str, Any]:
     # 运维总览只聚合“现在最值得先处理”的信号：preflight、报告新鲜度、组合健康度和执行模式偏差。
     checks = [dict(row) for row in list(preflight_summary.get("checks", []) or []) if isinstance(row, dict)]
@@ -5087,6 +5212,9 @@ def _build_ops_overview(
     market_state_missing_count = int(status_rollout_summary.get("market_state_missing_count", 0) or 0)
     data_attention_count = int(status_rollout_summary.get("data_attention_count", 0) or 0)
     data_research_fallback_count = int(status_rollout_summary.get("data_research_fallback_count", 0) or 0)
+    artifact_warning_count = int(artifact_health_summary.get("warning_count", 0) or 0)
+    artifact_degraded_count = int(artifact_health_summary.get("degraded_count", 0) or 0)
+    governance_status = str(governance_health_summary.get("status", "ready") or "ready")
     alert_rows: List[Dict[str, Any]] = []
     for row in warning_rows[:8]:
         alert_rows.append(
@@ -5169,8 +5297,11 @@ def _build_ops_overview(
         f"market_state_gap={market_state_missing_count} | "
         f"stale_reports={len(stale_rows)} | "
         f"degraded_health={len(degraded_rows)} | "
+        f"artifact_warning={artifact_warning_count} | "
+        f"artifact_degraded={artifact_degraded_count} | "
         f"data_attention={data_attention_count} | "
         f"mode_mismatch={execution_mismatch_count} | "
+        f"governance={governance_status} | "
         f"service={str(service_state.get('status', 'disabled') or 'disabled')}"
     )
     return {
@@ -5184,7 +5315,14 @@ def _build_ops_overview(
         "degraded_health_count": int(len(degraded_rows)),
         "data_attention_count": data_attention_count,
         "data_research_fallback_count": data_research_fallback_count,
+        "artifact_warning_count": artifact_warning_count,
+        "artifact_degraded_count": artifact_degraded_count,
+        "artifact_status_label": str(artifact_health_summary.get("status_label", "") or "已就绪"),
+        "artifact_summary_text": str(artifact_health_summary.get("summary_text", "") or "-"),
         "execution_mode_mismatch_count": execution_mismatch_count,
+        "governance_status": governance_status,
+        "governance_status_label": str(governance_health_summary.get("status_label", "") or "已就绪"),
+        "governance_summary_text": str(governance_health_summary.get("summary_text", "") or "-"),
         "control_service_status": str(service_state.get("status", "disabled") or "disabled"),
         "run_once_in_progress": bool(action_state.get("run_once_in_progress", False)),
         "preflight_in_progress": bool(action_state.get("preflight_in_progress", False)),
@@ -6555,6 +6693,9 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
     weekly_review_dir_raw = cfg.get("dashboard_weekly_review_dir")
     weekly_review_dir = _resolve_path(str(weekly_review_dir_raw or "reports_investment_weekly"))
     preflight_dir = _resolve_path(str(cfg.get("dashboard_preflight_dir", "reports_preflight") or "reports_preflight"))
+    reconcile_dir_raw = str(cfg.get("dashboard_reconcile_dir", "") or "").strip()
+    reconcile_dir = _resolve_path(reconcile_dir_raw or "reports_investment_reconcile")
+    reconcile_enabled = bool(reconcile_dir_raw) or reconcile_dir.exists()
     default_week_label, default_week_start = _current_iso_week_label(datetime.now())
     weekly_execution_summary_csv = weekly_review_dir / "weekly_execution_summary.csv"
     execution_weekly_source = (
@@ -6672,6 +6813,29 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
         if not portfolio_id:
             continue
         weekly_labeling_skip_map.setdefault(portfolio_id, []).append(dict(row))
+    review_artifact_health_rows, artifact_consistency_rows = _build_review_artifact_health_rows(weekly_review_dir)
+    preflight_artifact_health_row = _build_preflight_artifact_health_row(preflight_dir)
+    reconcile_artifact_health_row = _build_reconcile_artifact_health_row(reconcile_dir) if reconcile_enabled else {}
+    reconcile_overview = (
+        _build_reconcile_overview(reconcile_dir)
+        if reconcile_enabled
+        else {
+            "configured": False,
+            "available": False,
+            "status": "warning",
+            "status_label": "未配置",
+            "summary_text": "未配置 dashboard_reconcile_dir",
+            "market": "",
+            "portfolio_id": "",
+            "match_rows": 0,
+            "only_local_rows": 0,
+            "only_broker_rows": 0,
+            "qty_mismatch_rows": 0,
+            "execution_blocked_order_count": 0,
+            "strategy_effective_controls_note": "",
+            "source": "",
+        }
+    )
     dashboard_control = _load_dashboard_control_payload(summary_dir, cfg, cards)
     _attach_dashboard_control(cards, dashboard_control)
     market_data_health_overview = _build_market_data_health_overview(cards)
@@ -6736,6 +6900,19 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
     feedback_automation_overview = _build_feedback_automation_overview(cards)
     feedback_automation_history_overview = _build_feedback_automation_history_overview(cards)
     patch_review_governance_overview = _build_patch_review_governance_overview(cards)
+    artifact_health_rows = list(review_artifact_health_rows) + [dict(preflight_artifact_health_row)]
+    if dict(reconcile_artifact_health_row):
+        artifact_health_rows.append(dict(reconcile_artifact_health_row))
+    artifact_health_rows.extend(
+        dict(card.get("artifact_health_summary", {}) or {})
+        for card in cards
+        if dict(card.get("artifact_health_summary", {}) or {})
+    )
+    artifact_health_overview = build_artifact_health_overview(
+        artifact_health_rows,
+        consistency_rows=artifact_consistency_rows,
+    )
+    governance_health_summary = build_governance_health_summary(cards, patch_review_governance_overview)
     feedback_automation_stuck_overview = _build_feedback_automation_stuck_overview(cards)
     feedback_automation_effect_overview = _build_feedback_automation_effect_overview(cards)
     feedback_automation_effect_summary = _build_feedback_automation_effect_summary(feedback_automation_effect_overview)
@@ -6748,6 +6925,8 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
         control_payload=dashboard_control,
         execution_mode_summary=trade_execution_mode_recommendation_summary,
         status_rollout_summary=dashboard_status_rollout_summary,
+        artifact_health_summary=artifact_health_overview,
+        governance_health_summary=governance_health_summary,
     )
     payload = {
         "generated_at": datetime.now().isoformat(),
@@ -6767,6 +6946,10 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
         "feedback_automation_overview": feedback_automation_overview,
         "feedback_automation_history_overview": feedback_automation_history_overview,
         "patch_review_governance_overview": patch_review_governance_overview,
+        "artifact_health_overview": artifact_health_overview,
+        "artifact_health_rows": artifact_health_overview.get("rows", []),
+        "reconcile_overview": reconcile_overview,
+        "governance_health_summary": governance_health_summary,
         "feedback_automation_stuck_overview": feedback_automation_stuck_overview,
         "feedback_automation_effect_overview": feedback_automation_effect_overview,
         "feedback_automation_effect_summary": feedback_automation_effect_summary,
@@ -6912,6 +7095,18 @@ def _simple_ops_overview_rows(ops_overview: Dict[str, Any]) -> List[List[str]]:
         [
             "市场数据健康",
             data_health_label,
+        ],
+        [
+            "Artifact 健康",
+            (
+                f"{str(ops_overview.get('artifact_status_label', '') or '已就绪')} | "
+                f"W{int(ops_overview.get('artifact_warning_count', 0) or 0)} / "
+                f"D{int(ops_overview.get('artifact_degraded_count', 0) or 0)}"
+            ),
+        ],
+        [
+            "治理健康",
+            str(ops_overview.get("governance_status_label", "") or "已就绪"),
         ],
         [
             "执行模式偏差",
@@ -7313,6 +7508,52 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
             row.get("latest_event_ts", ""),
         ]
         for row in health_overview
+    ]
+    artifact_health_overview = dict(payload.get("artifact_health_overview", {}) or {})
+    artifact_health_summary_text = str(artifact_health_overview.get("summary_text", "") or "-")
+    artifact_health_rows = [
+        [
+            row.get("scope_label", ""),
+            row.get("market", "") or row.get("portfolio_id", "") or "-",
+            row.get("artifact_label", "") or row.get("artifact_key", ""),
+            row.get("status_label", "") or row.get("status", ""),
+            _short_summary_text(str(row.get("summary", "") or "-"), max_len=72),
+            row.get("source", "") or "-",
+            row.get("generated_at", "") or "-",
+            row.get("schema_version", "") or "-",
+        ]
+        for row in list(artifact_health_overview.get("rows", []) or [])[:16]
+    ]
+    reconcile_overview = dict(payload.get("reconcile_overview", {}) or {})
+    reconcile_rows = [
+        ["状态", str(reconcile_overview.get("status_label", "") or "未配置")],
+        ["摘要", str(reconcile_overview.get("summary_text", "") or "-")],
+        ["市场", str(reconcile_overview.get("market", "") or "-")],
+        ["组合", str(reconcile_overview.get("portfolio_id", "") or "-")],
+        ["match", str(int(reconcile_overview.get("match_rows", 0) or 0))],
+        ["only_local", str(int(reconcile_overview.get("only_local_rows", 0) or 0))],
+        ["only_broker", str(int(reconcile_overview.get("only_broker_rows", 0) or 0))],
+        ["qty_mismatch", str(int(reconcile_overview.get("qty_mismatch_rows", 0) or 0))],
+        ["blocked", str(int(reconcile_overview.get("execution_blocked_order_count", 0) or 0))],
+        ["控制说明", str(reconcile_overview.get("strategy_effective_controls_note", "") or "-")],
+    ]
+    governance_health_summary = dict(payload.get("governance_health_summary", {}) or {})
+    governance_health_rows = [
+        ["状态", str(governance_health_summary.get("status_label", "") or "已就绪")],
+        ["摘要", str(governance_health_summary.get("summary_text", "") or "-")],
+        ["待处理动作", str(int(governance_health_summary.get("pending_action_count", 0) or 0))],
+        ["已批未用", str(int(governance_health_summary.get("approved_not_applied_count", 0) or 0))],
+        ["首改就绪", str(int(governance_health_summary.get("ready_for_manual_apply_count", 0) or 0))],
+        ["拒绝热点", str(int(governance_health_summary.get("rejection_hotspot_count", 0) or 0))],
+        ["凭证不一致", str(int(governance_health_summary.get("evidence_mismatch_count", 0) or 0))],
+        [
+            "最久待处理(天)",
+            str(governance_health_summary.get("oldest_pending_days", "-") or "-"),
+        ],
+        [
+            "重点",
+            " / ".join(list(governance_health_summary.get("focus_items", []) or [])[:3]) or "-",
+        ],
     ]
     dry_run_overview_rows = []
     simple_dry_run_overview_rows = []
@@ -8973,6 +9214,29 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
       <div class="meta simple-only">{html.escape(health_summary_text)}</div>
       <div class="advanced-only">
       {_render_table(["market", "watchlist", "status", "detail", "delayed", "perm", "breaks", "acct_limit", "latest_event", "latest_ts"], health_rows)}
+      </div>
+    </section>
+    <section class="card overview">
+      <h2>Artifact 健康</h2>
+      <div class="meta simple-only">{html.escape(artifact_health_summary_text)}</div>
+      <div class="advanced-only">
+      {_render_table(["scope", "market/portfolio", "artifact", "status", "summary", "source", "generated_at", "schema"], artifact_health_rows)}
+      </div>
+    </section>
+    {(
+      '<section class="card overview">'
+      '<h2>Broker / Reconcile</h2>'
+      f'<div class="meta simple-only">{html.escape(str(reconcile_overview.get("summary_text", "") or "-"))}</div>'
+      '<div class="advanced-only">'
+      f'{_render_table(["项目", "摘要"], reconcile_rows)}'
+      '</div>'
+      '</section>'
+    ) if reconcile_overview.get("configured") or reconcile_overview.get("available") else ''}
+    <section class="card overview">
+      <h2>治理健康</h2>
+      <div class="meta simple-only">{html.escape(str(governance_health_summary.get("summary_text", "") or "-"))}</div>
+      <div class="advanced-only">
+      {_render_table(["项目", "摘要"], governance_health_rows)}
       </div>
     </section>
     </div>
