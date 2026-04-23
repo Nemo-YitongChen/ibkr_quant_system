@@ -40,6 +40,7 @@ class DashboardControlService:
         self._refresh_dashboard = refresh_dashboard
         self._toggle_flag = toggle_flag
         self._set_execution_mode = set_execution_mode
+        self._post_routes = self._build_post_routes()
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
 
@@ -49,6 +50,19 @@ class DashboardControlService:
             host, port = self._server.server_address[:2]
             return f"http://{host}:{port}"
         return f"http://{self.host}:{self.port}"
+
+    def _build_post_routes(self) -> Dict[str, tuple[JsonHandler, int, int]]:
+        return {
+            "/run_once": (self._run_once, 202, 409),
+            "/run_preflight": (self._run_preflight, 202, 409),
+            "/run_weekly_review": (self._run_weekly_review, 202, 409),
+            "/apply_weekly_feedback": (self._apply_weekly_feedback, 200, 400),
+            "/review_market_profile_patch": (self._review_market_profile_patch, 200, 400),
+            "/review_calibration_patch": (self._review_calibration_patch, 200, 400),
+            "/refresh_dashboard": (self._refresh_dashboard, 200, 500),
+            "/toggle_flag": (self._toggle_flag, 200, 400),
+            "/set_execution_mode": (self._set_execution_mode, 200, 400),
+        }
 
     def _make_handler(self):
         service = self
@@ -104,43 +118,13 @@ class DashboardControlService:
             def do_POST(self) -> None:
                 path = urlparse(self.path).path
                 payload = self._read_payload()
-                if path == "/run_once":
-                    result = dict(service._run_once(payload) or {})
-                    self._send_json(202 if bool(result.get("ok", False)) else 409, result)
+                route = service._post_routes.get(path)
+                if route is None:
+                    self._send_json(404, {"ok": False, "error": "not_found", "path": path})
                     return
-                if path == "/run_preflight":
-                    result = dict(service._run_preflight(payload) or {})
-                    self._send_json(202 if bool(result.get("ok", False)) else 409, result)
-                    return
-                if path == "/run_weekly_review":
-                    result = dict(service._run_weekly_review(payload) or {})
-                    self._send_json(202 if bool(result.get("ok", False)) else 409, result)
-                    return
-                if path == "/apply_weekly_feedback":
-                    result = dict(service._apply_weekly_feedback(payload) or {})
-                    self._send_json(200 if bool(result.get("ok", False)) else 400, result)
-                    return
-                if path == "/review_market_profile_patch":
-                    result = dict(service._review_market_profile_patch(payload) or {})
-                    self._send_json(200 if bool(result.get("ok", False)) else 400, result)
-                    return
-                if path == "/review_calibration_patch":
-                    result = dict(service._review_calibration_patch(payload) or {})
-                    self._send_json(200 if bool(result.get("ok", False)) else 400, result)
-                    return
-                if path == "/refresh_dashboard":
-                    result = dict(service._refresh_dashboard(payload) or {})
-                    self._send_json(200 if bool(result.get("ok", False)) else 500, result)
-                    return
-                if path == "/toggle_flag":
-                    result = dict(service._toggle_flag(payload) or {})
-                    self._send_json(200 if bool(result.get("ok", False)) else 400, result)
-                    return
-                if path == "/set_execution_mode":
-                    result = dict(service._set_execution_mode(payload) or {})
-                    self._send_json(200 if bool(result.get("ok", False)) else 400, result)
-                    return
-                self._send_json(404, {"ok": False, "error": "not_found", "path": path})
+                handler, ok_status, error_status = route
+                result = dict(handler(payload) or {})
+                self._send_json(ok_status if bool(result.get("ok", False)) else error_status, result)
 
         return Handler
 
