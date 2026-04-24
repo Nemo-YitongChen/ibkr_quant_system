@@ -1,7 +1,13 @@
 __pycache__/
+**/__pycache__/
 *.pyc
+*.pyo
+*.pyd
 .DS_Store
 .venv/
+.venv*/
+venv/
+ENV/
 .env
 .env.local
 .env.*
@@ -16,6 +22,8 @@ dist/
 *.egg-info/
 .mypy_cache/
 .ruff_cache/
+.tox/
+.nox/
 runtime_data/
 
 reports/
@@ -41,4 +49,8 @@ audit.db
 audit.db-shm
 audit.db-wal
 symbol_master.db
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
 *.sqlite3

@@ -30,8 +30,14 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
 
+      - name: Validate environment
+        run: python -m pip check
+
       - name: Compile source
         run: python -m compileall .
+
+      - name: Import and bootstrap smoke
+        run: pytest -q -p no:cacheprovider tests/test_imports.py
 
   core-guardrails:
     runs-on: ubuntu-latest

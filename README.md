@@ -207,10 +207,23 @@ ibkr-quant-reconcile --market US --db audit.db --portfolio_id US:watchlist --out
 1. 先看 [`docs/current_status.md`](./docs/current_status.md)，快速了解项目定位、当前状态和最近推进方向。
 2. 再看 [`docs/project_status_roadmap.md`](./docs/project_status_roadmap.md)，了解项目目标、当前进度和市场范围。
 3. 再看 [`docs/architecture_overview.md`](./docs/architecture_overview.md)，理解系统分层和主要运行链路。
-4. 如果要理解当前多市场策略框架，查看 [`docs/acm_rs_strategy_spec.md`](./docs/acm_rs_strategy_spec.md) 和 [`docs/multi_market_adaptive_framework.md`](./docs/multi_market_adaptive_framework.md)。
-5. 使用 `ibkr-quant-preflight` 检查本地环境。
-6. 使用 `ibkr-quant-supervisor --config config/supervisor.yaml --once` 跑一轮 paper。
-7. 打开 dashboard，先用简单模式查看当前运行状态，再根据需要切到专业模式。
+4. 如果需要一页式正式说明，可看 [`README_FORMAL.md`](./README_FORMAL.md)。
+5. 如果要理解当前多市场策略框架，查看 [`docs/acm_rs_strategy_spec.md`](./docs/acm_rs_strategy_spec.md) 和 [`docs/multi_market_adaptive_framework.md`](./docs/multi_market_adaptive_framework.md)。
+6. 使用 `ibkr-quant-preflight` 检查本地环境。
+7. 使用 `ibkr-quant-supervisor --config config/supervisor.yaml --once` 跑一轮 paper。
+8. 打开 dashboard，先用简单模式查看当前运行状态，再根据需要切到专业模式。
+
+## Paper Trading 风险提示
+
+`paper` 结果只能用于验证流程、数据质量、风控约束和执行规则，不等同于真实成交表现。IBKR paper 的成交、滑点、排队、流动性和借券反馈都可能与 live 不一致。
+
+进入 `live` 前，至少要满足：
+
+- `preflight` 无关键失败项
+- dashboard 顶部健康汇总无 `degraded`
+- broker reconciliation 没有未解释的持仓或现金差异
+- weekly review 有足够的 post-cost evidence
+- live 变更具备证据、审批、回滚计划和效果追踪窗口
 
 ## 使用建议与安全边界
 
