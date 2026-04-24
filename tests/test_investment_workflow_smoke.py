@@ -425,6 +425,8 @@ def test_investment_workflow_cli_smoke_generates_contract_artifacts(tmp_path, mo
         weekly_dir / "weekly_outcome_spread_summary.csv",
         weekly_dir / "weekly_edge_realization_summary.csv",
         weekly_dir / "weekly_blocked_edge_attribution.csv",
+        weekly_dir / "weekly_unified_evidence.csv",
+        weekly_dir / "weekly_blocked_vs_allowed_expost.csv",
         weekly_dir / "weekly_trading_quality_evidence.csv",
         weekly_dir / "weekly_tuning_dataset.csv",
         weekly_dir / "weekly_tuning_dataset.json",
@@ -491,6 +493,8 @@ def test_investment_workflow_cli_smoke_generates_contract_artifacts(tmp_path, mo
     assert weekly_summary["weekly_tuning_history_overview"][0]["portfolio_id"] == portfolio_id
     assert weekly_summary["decision_evidence_history_overview"][0]["portfolio_id"] == portfolio_id
     assert weekly_summary["trading_quality_evidence"][0]["portfolio_id"] == portfolio_id
+    assert weekly_summary["unified_evidence_rows"][0]["portfolio_id"] == portfolio_id
+    assert "blocked_vs_allowed_expost_review" in weekly_summary
     assert weekly_summary["edge_calibration_summary"][0]["portfolio_id"] == portfolio_id
     assert weekly_summary["slicing_calibration_summary"][0]["portfolio_id"] == portfolio_id
     assert weekly_summary["risk_calibration_summary"][0]["portfolio_id"] == portfolio_id
@@ -537,4 +541,7 @@ def test_investment_workflow_cli_smoke_generates_contract_artifacts(tmp_path, mo
     assert dashboard_payload["cards"][0]["execution_weekly_row"]["portfolio_id"] == portfolio_id
     assert dashboard_payload["execution_weekly"]["portfolio_id"] == portfolio_id
     assert "control_split_text" in dashboard_payload["cards"][0]["weekly_attribution"]
+    assert len(dashboard_payload["dashboard_v2_blocks"]) == 4
+    assert "US" in dashboard_payload["market_views"]
+    assert "unified_evidence_overview" in dashboard_payload
     assert "策略主动转入防守" in dashboard_payload["cards"][0]["weekly_strategy_context"]["strategy_effective_controls_note"]

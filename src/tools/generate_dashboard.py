@@ -28,6 +28,7 @@ from ..common.market_structure import load_market_structure, market_structure_su
 from ..common.markets import market_config_path, resolve_market_code, symbol_matches_market
 from ..common.runtime_paths import resolve_repo_path, resolve_scoped_runtime_path, scope_from_ibkr_config
 from ..common.storage import Storage
+from .dashboard_blocks import build_dashboard_v2_blocks
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 CONTROL_BUTTON_LABELS: Dict[str, str] = {
@@ -662,6 +663,22 @@ def _load_weekly_attribution_rows(review_dir: Path) -> List[Dict[str, Any]]:
     return _read_all_csv_rows(review_dir / "weekly_attribution_summary.csv")
 
 
+def _load_weekly_unified_evidence_rows(review_dir: Path) -> List[Dict[str, Any]]:
+    summary_json = _load_json(review_dir / "weekly_review_summary.json")
+    summary_rows = summary_json.get("unified_evidence_rows")
+    if isinstance(summary_rows, list) and summary_rows:
+        return [dict(row) for row in summary_rows if isinstance(row, dict)]
+    return _read_all_csv_rows(review_dir / "weekly_unified_evidence.csv")
+
+
+def _load_weekly_blocked_vs_allowed_expost_rows(review_dir: Path) -> List[Dict[str, Any]]:
+    summary_json = _load_json(review_dir / "weekly_review_summary.json")
+    summary_rows = summary_json.get("blocked_vs_allowed_expost_review")
+    if isinstance(summary_rows, list) and summary_rows:
+        return [dict(row) for row in summary_rows if isinstance(row, dict)]
+    return _read_all_csv_rows(review_dir / "weekly_blocked_vs_allowed_expost.csv")
+
+
 def _load_weekly_risk_review_rows(review_dir: Path) -> List[Dict[str, Any]]:
     summary_json = _load_json(review_dir / "weekly_review_summary.json")
     summary_rows = summary_json.get("risk_review_summary")
@@ -928,6 +945,7 @@ def _dashboard_control_fallback(cfg: Dict[str, Any], cards: List[Dict[str, Any]]
             "last_action": "",
             "last_action_ts": "",
             "last_error": "",
+            "action_history": [],
         },
         "portfolios": portfolios,
     }
@@ -4539,6 +4557,189 @@ def _build_weekly_attribution_overview(cards: List[Dict[str, Any]]) -> List[Dict
     return rows
 
 
+def _build_weekly_attribution_waterfall(cards: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    for card in list(cards or []):
+        attribution = dict(card.get("weekly_attribution", {}) or {})
+        if not attribution:
+            continue
+        market = str(card.get("market", "") or "")
+        portfolio_id = str(card.get("portfolio_id", "") or "")
+        watchlist = str(card.get("watchlist", "") or "")
+        components = [
+            ("selection_contribution", "selection", "return_component"),
+            ("sizing_contribution", "sizing", "return_component"),
+            ("sector_contribution", "sector", "return_component"),
+            ("market_contribution", "market", "return_component"),
+            ("execution_contribution", "execution", "return_component"),
+            ("strategy_control_weight_delta", "strategy_control", "control_delta"),
+            ("risk_overlay_weight_delta", "risk_overlay", "control_delta"),
+            ("execution_gate_blocked_weight", "execution_gate", "control_delta"),
+        ]
+        running = 0.0
+        for idx, (source_key, layer, component_role) in enumerate(components, start=1):
+            value = _safe_float(attribution.get(source_key), 0.0)
+            start_value = running
+            running += value
+            rows.append(
+                {
+                    "market": market,
+                    "watchlist": watchlist,
+                    "portfolio_id": portfolio_id,
+                    "component_order": idx,
+                    "component": layer,
+                    "source_key": source_key,
+                    "component_role": component_role,
+                    "contribution": value,
+                    "running_start": start_value,
+                    "running_end": running,
+                }
+            )
+        reported_return = _safe_float(attribution.get("weekly_return"), 0.0)
+        rows.append(
+            {
+                "market": market,
+                "watchlist": watchlist,
+                "portfolio_id": portfolio_id,
+                "component_order": 98,
+                "component": "residual_to_reported_return",
+                "source_key": "weekly_return",
+                "component_role": "residual",
+                "contribution": reported_return - running,
+                "running_start": running,
+                "running_end": reported_return,
+            }
+        )
+        rows.append(
+            {
+                "market": market,
+                "watchlist": watchlist,
+                "portfolio_id": portfolio_id,
+                "component_order": 99,
+                "component": "reported_weekly_return",
+                "source_key": "weekly_return",
+                "component_role": "total",
+                "contribution": reported_return,
+                "running_start": 0.0,
+                "running_end": reported_return,
+            }
+        )
+    rows.sort(
+        key=lambda row: (
+            str(row.get("market") or ""),
+            str(row.get("portfolio_id") or ""),
+            int(row.get("component_order", 0) or 0),
+        )
+    )
+    return rows
+
+
+def _build_market_views(cards: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    target_markets = ("US", "HK", "CN")
+    out: Dict[str, Dict[str, Any]] = {}
+    for market in target_markets:
+        market_cards = [
+            dict(card)
+            for card in list(cards or [])
+            if str(card.get("market", "") or "").strip().upper() == market
+        ]
+        portfolios: List[Dict[str, Any]] = []
+        open_count = 0
+        fresh_count = 0
+        stale_count = 0
+        degraded_count = 0
+        data_attention_count = 0
+        auto_submit_count = 0
+        review_only_count = 0
+        paused_count = 0
+        for card in market_cards:
+            report_status = dict(card.get("report_status", {}) or {})
+            health_rows = list(card.get("ops_health_rows", []) or [])
+            market_data_rows = list(card.get("market_data_health_rows", []) or [])
+            control = dict(card.get("dashboard_control", {}).get("portfolio", {}) or {})
+            execution_mode = str(control.get("execution_control_mode") or "AUTO").strip().upper()
+            if bool(card.get("exchange_open_raw", False)):
+                open_count += 1
+            if bool(report_status.get("fresh")):
+                fresh_count += 1
+            else:
+                stale_count += 1
+            if any(str(row.get("status") or "").strip().lower() not in {"ok", "pass"} for row in health_rows if isinstance(row, dict)):
+                degraded_count += 1
+            if any(
+                str(row.get("status_label") or row.get("status") or "").strip()
+                in {"待排查", "有缺失", "无数据", "混合", "研究Fallback", "warning", "fail"}
+                for row in market_data_rows
+                if isinstance(row, dict)
+            ):
+                data_attention_count += 1
+            if execution_mode == "REVIEW_ONLY":
+                review_only_count += 1
+            elif execution_mode == "PAUSED":
+                paused_count += 1
+            if bool(control.get("submit_investment_execution")) or bool(
+                dict(card.get("execution_summary", {}) or {}).get("submit_orders")
+            ):
+                auto_submit_count += 1
+            portfolios.append(
+                {
+                    "portfolio_id": str(card.get("portfolio_id", "") or ""),
+                    "watchlist": str(card.get("watchlist", "") or ""),
+                    "mode": str(card.get("mode", "") or ""),
+                    "execution_control_mode": execution_mode or "AUTO",
+                    "market_state": str(card.get("market_state_label", "") or ""),
+                    "report_status": str(card.get("report_status_label", "") or ""),
+                    "action": str(card.get("action_label", "") or card.get("priority_reason", "") or ""),
+                    "detail": str(card.get("action_detail", "") or ""),
+                }
+            )
+        out[market] = {
+            "market": market,
+            "portfolio_count": len(market_cards),
+            "open_count": open_count,
+            "fresh_report_count": fresh_count,
+            "stale_report_count": stale_count,
+            "degraded_health_count": degraded_count,
+            "data_attention_count": data_attention_count,
+            "auto_submit_count": auto_submit_count,
+            "review_only_count": review_only_count,
+            "paused_count": paused_count,
+            "portfolios": portfolios[:12],
+        }
+    return out
+
+
+def _build_unified_evidence_overview(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    by_market: Dict[str, Dict[str, Any]] = {}
+    blocked = 0
+    allowed = 0
+    for raw in list(rows or []):
+        row = dict(raw or {})
+        market = str(row.get("market") or "").strip().upper() or "UNKNOWN"
+        market_row = by_market.setdefault(
+            market,
+            {
+                "market": market,
+                "row_count": 0,
+                "blocked_row_count": 0,
+                "allowed_row_count": 0,
+            },
+        )
+        market_row["row_count"] = int(market_row.get("row_count", 0) or 0) + 1
+        if str(row.get("blocked_flag") or "").strip() in {"1", "True", "true"} or bool(row.get("blocked_flag")):
+            blocked += 1
+            market_row["blocked_row_count"] = int(market_row.get("blocked_row_count", 0) or 0) + 1
+        if str(row.get("allowed_flag") or "").strip() in {"1", "True", "true"} or bool(row.get("allowed_flag")):
+            allowed += 1
+            market_row["allowed_row_count"] = int(market_row.get("allowed_row_count", 0) or 0) + 1
+    return {
+        "row_count": len(rows),
+        "blocked_row_count": blocked,
+        "allowed_row_count": allowed,
+        "market_rows": sorted(by_market.values(), key=lambda row: str(row.get("market") or "")),
+    }
+
+
 def _weekly_attribution_control_split_text(attribution: Dict[str, Any]) -> str:
     return str(dict(attribution or {}).get("control_split_text", "") or "").strip()
 
@@ -6775,6 +6976,8 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
         for row in weekly_attribution_rows
         if str(row.get("portfolio_id", "") or "").strip()
     }
+    weekly_unified_evidence_rows = _load_weekly_unified_evidence_rows(weekly_review_dir)
+    weekly_blocked_vs_allowed_expost_rows = _load_weekly_blocked_vs_allowed_expost_rows(weekly_review_dir)
     weekly_risk_review_rows = _load_weekly_risk_review_rows(weekly_review_dir)
     weekly_risk_review_map: Dict[str, Dict[str, Any]] = {
         str(row.get("portfolio_id", "") or ""): dict(row)
@@ -6921,6 +7124,9 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
     stock_list_groups = _build_stock_list_groups(cards)
     trade_cards = _expand_display_cards(cards, dashboard_view="trade")
     dry_run_cards = _expand_display_cards(cards, dashboard_view="dry-run")
+    market_views = _build_market_views(trade_cards)
+    weekly_attribution_waterfall = _build_weekly_attribution_waterfall(trade_cards)
+    unified_evidence_overview = _build_unified_evidence_overview(weekly_unified_evidence_rows)
     dashboard_status_rollout_summary = _build_dashboard_status_rollout_summary(trade_cards)
     trade_execution_mode_recommendation_overview = _build_execution_mode_recommendation_overview(trade_cards)
     trade_execution_mode_recommendation_summary = _build_execution_mode_recommendation_summary(trade_execution_mode_recommendation_overview)
@@ -7008,16 +7214,22 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
         "execution_feedback_summary": execution_feedback_summary,
         "execution_hotspot_overview": _build_execution_hotspot_overview(trade_cards),
         "dry_run_attribution_overview": _build_weekly_attribution_overview(dry_run_cards),
+        "weekly_attribution_waterfall": weekly_attribution_waterfall,
+        "unified_evidence_overview": unified_evidence_overview,
+        "unified_evidence_rows": weekly_unified_evidence_rows[:200],
+        "blocked_vs_allowed_expost_review": weekly_blocked_vs_allowed_expost_rows,
         "execution_cost_overview": _build_execution_cost_overview(trade_cards),
         "health_overview": _build_health_overview(trade_cards),
         "ops_health_rows": _build_health_overview(trade_cards),
         "stock_list_groups": stock_list_groups,
         "focus_actions": _build_focus_actions(trade_cards),
+        "market_views": market_views,
         "cards": cards,
         "trade_cards": trade_cards,
         "dry_run_cards": dry_run_cards,
         "dashboard_control": dashboard_control,
     }
+    payload["dashboard_v2_blocks"] = build_dashboard_v2_blocks(payload)
     return payload
 
 
@@ -7718,6 +7930,81 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
         str(control_actions.get('last_action', '-') or '-'),
         str(control_actions.get('last_error', '-') or '-'),
     )
+    control_action_history_rows = [
+        [
+            str(row.get("ts", "") or ""),
+            _dashboard_control_action_label(str(row.get("action", "") or "")),
+            str(row.get("status", "") or ""),
+            str(row.get("portfolio_id", "") or "-"),
+            str(row.get("detail", "") or "-"),
+            str(row.get("error", "") or "-"),
+        ]
+        for row in reversed(list(control_actions.get("action_history", []) or [])[-20:])
+        if isinstance(row, dict)
+    ]
+    dashboard_v2_block_rows = [
+        [
+            str(row.get("id", "") or ""),
+            str(row.get("status", "") or ""),
+            _short_summary_text(str(row.get("summary", "") or "-"), max_len=120),
+        ]
+        for row in list(payload.get("dashboard_v2_blocks", []) or [])
+        if isinstance(row, dict)
+    ]
+    market_view_rows = [
+        [
+            str(row.get("market", "") or ""),
+            str(int(row.get("portfolio_count", 0) or 0)),
+            str(int(row.get("open_count", 0) or 0)),
+            str(int(row.get("fresh_report_count", 0) or 0)),
+            str(int(row.get("stale_report_count", 0) or 0)),
+            str(int(row.get("degraded_health_count", 0) or 0)),
+            str(int(row.get("data_attention_count", 0) or 0)),
+            str(int(row.get("auto_submit_count", 0) or 0)),
+            str(int(row.get("review_only_count", 0) or 0)),
+            str(int(row.get("paused_count", 0) or 0)),
+        ]
+        for _, row in sorted(dict(payload.get("market_views", {}) or {}).items(), key=lambda part: str(part[0]))
+        if isinstance(row, dict)
+    ]
+    waterfall_rows = [
+        [
+            str(row.get("market", "") or ""),
+            str(row.get("portfolio_id", "") or ""),
+            str(row.get("component", "") or ""),
+            str(row.get("component_role", "") or ""),
+            _fmt_pct(row.get("contribution")),
+            _fmt_pct(row.get("running_start")),
+            _fmt_pct(row.get("running_end")),
+        ]
+        for row in list(payload.get("weekly_attribution_waterfall", []) or [])[:80]
+        if isinstance(row, dict)
+    ]
+    unified_evidence_market_rows = [
+        [
+            str(row.get("market", "") or ""),
+            str(int(row.get("row_count", 0) or 0)),
+            str(int(row.get("allowed_row_count", 0) or 0)),
+            str(int(row.get("blocked_row_count", 0) or 0)),
+        ]
+        for row in list(dict(payload.get("unified_evidence_overview", {}) or {}).get("market_rows", []) or [])
+        if isinstance(row, dict)
+    ]
+    blocked_expost_rows = [
+        [
+            str(row.get("market", "") or ""),
+            str(row.get("portfolio_id", "") or ""),
+            str(row.get("block_reason", "") or ""),
+            str(int(row.get("allowed_count", 0) or 0)),
+            str(int(row.get("blocked_count", 0) or 0)),
+            f"{_safe_float(row.get('allowed_avg_outcome_20d_bps'), 0.0):.2f}",
+            f"{_safe_float(row.get('blocked_avg_outcome_20d_bps'), 0.0):.2f}",
+            f"{_safe_float(row.get('allowed_minus_blocked_outcome_20d_bps'), 0.0):.2f}",
+            str(row.get("review_label", "") or "-"),
+        ]
+        for row in list(payload.get("blocked_vs_allowed_expost_review", []) or [])[:50]
+        if isinstance(row, dict)
+    ]
     ops_alert_rows = [
         [
             row.get("category", ""),
@@ -7811,6 +8098,10 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
       </div>
       <div class="meta simple-only" data-i18n-zh="这些按钮会直接触发本机控制服务。">这些按钮会直接触发本机控制服务。</div>
       <div class="meta advanced-only" data-i18n-zh="这些按钮调用本机 supervisor control service；组合级开关会写入当前 summary 目录的 `dashboard_control_state.json`，并在下次启动 `python -m src.app.supervisor` 时自动恢复。">这些按钮调用本机 supervisor control service；组合级开关会写入当前 summary 目录的 `dashboard_control_state.json`，并在下次启动 `python -m src.app.supervisor` 时自动恢复。</div>
+      <div class="advanced-only">
+      <h3>控制操作审计</h3>
+      {_render_table(["ts", "action", "status", "portfolio", "detail", "error"], control_action_history_rows) if control_action_history_rows else '<div class="empty">暂无控制操作审计记录。</div>'}
+      </div>
     </section>
     """
         if control_enabled
@@ -9086,6 +9377,35 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
       <div class="empty">当前没有可展示的计划/实际执行成本对比数据。</div>
     </section>
     """
+    dashboard_v2_blocks_card = f"""
+    <section class="card overview">
+      <h2>Dashboard v2 Blocks</h2>
+      <div class="meta">这四块是后续 dashboard v2 的稳定 JSON builder 输出，先在专业模式里暴露结构和健康摘要。</div>
+      {_render_table(["block", "status", "summary"], dashboard_v2_block_rows)}
+    </section>
+    """ if dashboard_v2_block_rows else ""
+    market_views_card = f"""
+    <section class="card overview">
+      <h2>US/HK/CN 市场视图</h2>
+      <div class="meta">按市场聚合开市、报告新鲜度、健康退化、数据关注和执行模式，避免只看全局平均。</div>
+      {_render_table(["market", "portfolios", "open", "fresh", "stale", "degraded", "data_attention", "auto", "review_only", "paused"], market_view_rows)}
+    </section>
+    """ if market_view_rows else ""
+    weekly_waterfall_card = f"""
+    <section class="card overview">
+      <h2>周度归因瀑布</h2>
+      <div class="meta">把 selection/sizing/sector/market/execution 与 strategy/risk/execution gate 控制层拆成同一条周度序列，便于定位收益拖累。</div>
+      {_render_table(["market", "portfolio", "component", "role", "contribution", "start", "end"], waterfall_rows)}
+    </section>
+    """ if waterfall_rows else ""
+    evidence_review_card = f"""
+    <section class="card overview">
+      <h2>Unified Evidence / Blocked vs Allowed</h2>
+      <div class="meta">这里消费 weekly review 生成的统一证据表，检查被挡订单事后是否真的弱于被允许订单。</div>
+      {_render_table(["market", "rows", "allowed", "blocked"], unified_evidence_market_rows) if unified_evidence_market_rows else '<div class="empty">当前还没有统一证据表市场汇总。</div>'}
+      {_render_table(["market", "portfolio", "block_reason", "allowed", "blocked", "allowed_20d_bps", "blocked_20d_bps", "delta_bps", "review"], blocked_expost_rows) if blocked_expost_rows else '<div class="empty">当前还没有 blocked vs allowed 事后复盘样本。</div>'}
+    </section>
+    """
     html_text = f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -9243,6 +9563,10 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     {execution_feedback_overview_card}
     {execution_hotspot_overview_card}
     {execution_cost_overview_card}
+    {dashboard_v2_blocks_card}
+    {market_views_card}
+    {weekly_waterfall_card}
+    {evidence_review_card}
     <section class="card overview">
       <h2>IB Gateway 健康状态</h2>
       <div class="meta simple-only">{html.escape(health_summary_text)}</div>

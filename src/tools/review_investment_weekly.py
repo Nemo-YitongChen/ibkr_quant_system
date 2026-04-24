@@ -49,6 +49,7 @@ from .review_weekly_feedback_support import (
     _augment_summary_rows_with_strategy_context as _augment_summary_rows_with_strategy_context_support,
     _build_attribution_rows as _build_attribution_rows_support,
     _build_market_profile_patch_readiness as _build_market_profile_patch_readiness_support,
+    _build_blocked_vs_allowed_expost_rows,
     _build_execution_parent_rows,
     _build_feedback_automation_rows,
     _build_feedback_automation_effect_overview,
@@ -57,6 +58,7 @@ from .review_weekly_feedback_support import (
     _build_weekly_blocked_edge_attribution_rows,
     _build_feedback_calibration_rows as _build_feedback_calibration_rows_support,
     _build_trading_quality_evidence_rows,
+    _build_unified_evidence_rows,
     _build_weekly_decision_evidence_history_overview as _build_weekly_decision_evidence_history_overview_support,
     _build_weekly_decision_evidence_rows,
     _build_weekly_decision_evidence_summary_rows,
@@ -861,6 +863,8 @@ def _build_weekly_strategy_feedback_bundle(
         attribution_rows=attribution_rows,
     )
     decision_evidence_summary_rows = _build_weekly_decision_evidence_summary_rows(decision_evidence_rows)
+    unified_evidence_rows = _build_unified_evidence_rows(decision_evidence_rows)
+    blocked_vs_allowed_expost_rows = _build_blocked_vs_allowed_expost_rows(decision_evidence_rows)
     risk_feedback_rows = _build_risk_feedback_rows(
         risk_review_rows,
         attribution_rows=attribution_rows,
@@ -902,6 +906,8 @@ def _build_weekly_strategy_feedback_bundle(
         "attribution_rows": attribution_rows,
         "decision_evidence_rows": decision_evidence_rows,
         "decision_evidence_summary_rows": decision_evidence_summary_rows,
+        "unified_evidence_rows": unified_evidence_rows,
+        "blocked_vs_allowed_expost_rows": blocked_vs_allowed_expost_rows,
         "risk_feedback_rows": risk_feedback_rows,
         "execution_feedback_rows": execution_feedback_rows,
         "market_profile_tuning_rows": market_profile_tuning_rows,
@@ -1367,6 +1373,8 @@ def main(argv: List[str] | None = None) -> None:
     attribution_rows = list(strategy_feedback_bundle.get("attribution_rows") or [])
     decision_evidence_rows = list(strategy_feedback_bundle.get("decision_evidence_rows") or [])
     decision_evidence_summary_rows = list(strategy_feedback_bundle.get("decision_evidence_summary_rows") or [])
+    unified_evidence_rows = list(strategy_feedback_bundle.get("unified_evidence_rows") or [])
+    blocked_vs_allowed_expost_rows = list(strategy_feedback_bundle.get("blocked_vs_allowed_expost_rows") or [])
     risk_feedback_rows = list(strategy_feedback_bundle.get("risk_feedback_rows") or [])
     execution_feedback_rows = list(strategy_feedback_bundle.get("execution_feedback_rows") or [])
     market_profile_tuning_rows = list(strategy_feedback_bundle.get("market_profile_tuning_rows") or [])
@@ -1512,6 +1520,8 @@ def main(argv: List[str] | None = None) -> None:
         blocked_edge_attribution_rows=blocked_edge_attribution_rows,
         decision_evidence_rows=decision_evidence_rows,
         decision_evidence_summary_rows=decision_evidence_summary_rows,
+        unified_evidence_rows=unified_evidence_rows,
+        blocked_vs_allowed_expost_rows=blocked_vs_allowed_expost_rows,
         weekly_decision_evidence_history_overview_rows=weekly_decision_evidence_history_overview_rows,
         trading_quality_evidence_rows=trading_quality_evidence_rows,
         execution_effect_rows=execution_effect_rows,

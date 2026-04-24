@@ -30,6 +30,8 @@ from src.tools.review_investment_weekly import (
     _build_weekly_decision_evidence_summary_rows,
     _build_weekly_decision_evidence_history_overview,
     _build_trading_quality_evidence_rows,
+    _build_unified_evidence_rows,
+    _build_blocked_vs_allowed_expost_rows,
     _build_weekly_calibration_patch_suggestion_rows,
     _build_weekly_edge_calibration_rows,
     _build_weekly_edge_realization_rows,
@@ -1714,6 +1716,70 @@ class ReviewInvestmentWeeklyTests(unittest.TestCase):
             stored_edge = next(row for row in stored if row["evidence_layer"] == "EDGE_GATE")
             self.assertEqual(stored_edge["details_json"]["filled_symbols"], ["AAA"])
             self.assertEqual(stored_edge["details_json"]["blocked_symbols"], ["BBB"])
+
+    def test_unified_evidence_and_blocked_expost_review(self):
+        filled = {
+            "portfolio_id": "US:watchlist",
+            "market": "US",
+            "run_id": "EX1",
+            "parent_order_key": "AAA-parent",
+            "symbol": "AAA",
+            "decision_status": "FILLED",
+            "fill_notional": 5000.0,
+            "signal_score": 0.82,
+            "expected_edge_bps": 90.0,
+            "expected_cost_bps": 20.0,
+            "edge_gate_threshold_bps": 45.0,
+            "blocked_edge_order_count": 0,
+            "blocked_market_rule_order_count": 0,
+            "dynamic_liquidity_bucket": "CORE",
+            "dynamic_order_adv_pct": 0.01,
+            "slice_count": 2,
+            "realized_slippage_bps": 16.0,
+            "realized_edge_bps": 78.0,
+            "outcome_5d_bps": 35.0,
+            "outcome_20d_bps": 120.0,
+            "outcome_60d_bps": 180.0,
+        }
+        blocked = {
+            "portfolio_id": "US:watchlist",
+            "market": "US",
+            "run_id": "EX1",
+            "parent_order_key": "BBB-parent",
+            "symbol": "BBB",
+            "decision_status": "BLOCKED_EDGE",
+            "fill_notional": 0.0,
+            "signal_score": 0.31,
+            "expected_edge_bps": 25.0,
+            "expected_cost_bps": 20.0,
+            "edge_gate_threshold_bps": 45.0,
+            "blocked_edge_order_count": 1,
+            "blocked_market_rule_order_count": 0,
+            "dynamic_liquidity_bucket": "TAIL",
+            "dynamic_order_adv_pct": 0.003,
+            "slice_count": 5,
+            "outcome_5d_bps": -12.0,
+            "outcome_20d_bps": -20.0,
+            "outcome_60d_bps": -55.0,
+        }
+
+        unified_rows = _build_unified_evidence_rows([filled, blocked])
+        self.assertEqual(len(unified_rows), 2)
+        allowed_row = next(row for row in unified_rows if row["symbol"] == "AAA")
+        blocked_row = next(row for row in unified_rows if row["symbol"] == "BBB")
+        self.assertEqual(allowed_row["allowed_flag"], 1)
+        self.assertEqual(blocked_row["blocked_flag"], 1)
+        self.assertEqual(blocked_row["block_reason"], "EDGE_GATE")
+        self.assertAlmostEqual(float(allowed_row["realized_edge_delta_bps"]), 8.0, places=6)
+
+        review_rows = _build_blocked_vs_allowed_expost_rows([filled, blocked])
+        self.assertEqual(len(review_rows), 1)
+        review_row = review_rows[0]
+        self.assertEqual(review_row["block_reason"], "EDGE_GATE")
+        self.assertEqual(review_row["allowed_count"], 1)
+        self.assertEqual(review_row["blocked_count"], 1)
+        self.assertAlmostEqual(float(review_row["allowed_minus_blocked_outcome_20d_bps"]), 140.0, places=6)
+        self.assertEqual(review_row["review_label"], "BLOCKING_HELPED")
 
     def test_weekly_edge_slicing_and_risk_calibration_rows(self):
         with tempfile.TemporaryDirectory() as tmp:

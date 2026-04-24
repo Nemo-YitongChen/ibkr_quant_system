@@ -2334,6 +2334,10 @@ class SupervisorCliTests(unittest.TestCase):
             self.assertTrue((preflight_dir / "supervisor_preflight_summary.json").exists())
             self.assertTrue((preflight_dir / "supervisor_preflight_report.md").exists())
             mock_refresh.assert_called()
+            control_payload = json.loads((summary_dir / "dashboard_control_state.json").read_text(encoding="utf-8"))
+            action_history = list(dict(control_payload.get("actions") or {}).get("action_history") or [])
+            self.assertIn("run_preflight", {str(row.get("action") or "") for row in action_history})
+            self.assertIn("completed", {str(row.get("status") or "") for row in action_history})
 
     def test_dashboard_control_execution_mode_switch_restores_base_flags(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -479,6 +479,7 @@ def dashboard_control_actions_payload(
     last_action_ts: str,
     last_error: str,
     preflight_summary_path: str,
+    action_history: List[Dict[str, Any]] | None = None,
 ) -> Dict[str, Any]:
     return {
         "run_once_in_progress": bool(run_once_in_progress),
@@ -488,6 +489,7 @@ def dashboard_control_actions_payload(
         "last_action_ts": str(last_action_ts or ""),
         "last_error": str(last_error or ""),
         "preflight_summary_path": str(preflight_summary_path or ""),
+        "action_history": [dict(row) for row in list(action_history or [])],
     }
 
 

@@ -99,6 +99,7 @@ EXECUTION_CONTROL_FIELDS = {
     "submit_investment_guard",
 }
 EXECUTION_CONTROL_MODE_VALUES = {"AUTO", "REVIEW_ONLY", "PAUSED"}
+DASHBOARD_CONTROL_ACTION_HISTORY_LIMIT = 50
 MARKET_PROFILE_PATCH_REVIEW_VALUES = {"APPROVED", "REJECTED", "APPLIED", "CLEAR"}
 MARKET_PROFILE_PATCH_REVIEW_ACTIVE_VALUES = {"APPROVED", "REJECTED", "APPLIED"}
 MARKET_PROFILE_PATCH_REVIEW_HISTORY_LIMIT = 20
@@ -261,6 +262,7 @@ class Supervisor:
         self._dashboard_control_last_action = ""
         self._dashboard_control_last_action_ts = ""
         self._dashboard_control_last_error = ""
+        self._dashboard_control_action_history: List[Dict[str, Any]] = []
         self._capture_dashboard_control_baselines()
         self._apply_dashboard_control_overrides()
 
@@ -1206,12 +1208,38 @@ class Supervisor:
         action_ts: str,
         refresh_dashboard: bool = True,
     ) -> None:
-        self._dashboard_control_last_action = str(action or "")
-        self._dashboard_control_last_action_ts = str(action_ts or "")
-        self._dashboard_control_last_error = ""
+        self._record_dashboard_control_action(action=action, action_ts=action_ts, status="completed")
         self._write_dashboard_control_state()
         if refresh_dashboard:
             self._refresh_dashboard()
+
+    def _record_dashboard_control_action(
+        self,
+        *,
+        action: str,
+        action_ts: str = "",
+        status: str = "accepted",
+        portfolio_id: str = "",
+        detail: str = "",
+        error: str = "",
+    ) -> None:
+        ts = str(action_ts or datetime.now(self.tz).isoformat())
+        self._dashboard_control_last_action = str(action or "")
+        self._dashboard_control_last_action_ts = ts
+        self._dashboard_control_last_error = str(error or "")
+        self._dashboard_control_action_history.append(
+            {
+                "ts": ts,
+                "action": str(action or ""),
+                "status": str(status or ""),
+                "portfolio_id": str(portfolio_id or ""),
+                "detail": str(detail or ""),
+                "error": str(error or ""),
+            }
+        )
+        self._dashboard_control_action_history = self._dashboard_control_action_history[
+            -DASHBOARD_CONTROL_ACTION_HISTORY_LIMIT:
+        ]
 
     def _dashboard_control_patch_review_bundle_for_item(
         self,
@@ -1335,6 +1363,7 @@ class Supervisor:
             last_action_ts=self._dashboard_control_last_action_ts,
             last_error=self._dashboard_control_last_error,
             preflight_summary_path=str(self._preflight_output_dir() / "supervisor_preflight_summary.json"),
+            action_history=self._dashboard_control_action_history,
         )
 
     def _dashboard_control_artifacts_payload(self) -> Dict[str, Any]:
@@ -1482,6 +1511,17 @@ class Supervisor:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
             return
+        actions = dict(payload.get("actions") or {})
+        self._dashboard_control_last_action = str(actions.get("last_action") or self._dashboard_control_last_action)
+        self._dashboard_control_last_action_ts = str(
+            actions.get("last_action_ts") or self._dashboard_control_last_action_ts
+        )
+        self._dashboard_control_last_error = str(actions.get("last_error") or self._dashboard_control_last_error)
+        self._dashboard_control_action_history = [
+            dict(row)
+            for row in list(actions.get("action_history") or [])
+            if isinstance(row, dict)
+        ][-DASHBOARD_CONTROL_ACTION_HISTORY_LIMIT:]
         portfolios = dict(payload.get("portfolios") or {})
         for context in self._iter_dashboard_control_investment_items():
             item = context["item"]
@@ -1507,9 +1547,12 @@ class Supervisor:
             if item_portfolio_id != target_portfolio:
                 continue
             item[target_field] = bool(value)
-            self._dashboard_control_last_action = f"toggle:{target_portfolio}:{target_field}={int(bool(value))}"
-            self._dashboard_control_last_action_ts = datetime.now(self.tz).isoformat()
-            self._dashboard_control_last_error = ""
+            self._record_dashboard_control_action(
+                action=f"toggle:{target_portfolio}:{target_field}={int(bool(value))}",
+                status="completed",
+                portfolio_id=target_portfolio,
+                detail=f"{target_field}={int(bool(value))}",
+            )
             self._write_dashboard_control_state()
             return {
                 "ok": True,
@@ -1532,9 +1575,12 @@ class Supervisor:
             if item_portfolio_id != target_portfolio:
                 continue
             self._apply_execution_control_mode_to_item(item, target_mode)
-            self._dashboard_control_last_action = f"execution_mode:{target_portfolio}:{target_mode}"
-            self._dashboard_control_last_action_ts = datetime.now(self.tz).isoformat()
-            self._dashboard_control_last_error = ""
+            self._record_dashboard_control_action(
+                action=f"execution_mode:{target_portfolio}:{target_mode}",
+                status="completed",
+                portfolio_id=target_portfolio,
+                detail=f"mode={target_mode}",
+            )
             self._write_dashboard_control_state()
             return {
                 "ok": True,
@@ -1553,9 +1599,7 @@ class Supervisor:
             ):
                 return {"ok": False, "status": "busy"}
             self._dashboard_control_run_once_in_progress = True
-            self._dashboard_control_last_action = "run_once"
-            self._dashboard_control_last_action_ts = datetime.now(self.tz).isoformat()
-            self._dashboard_control_last_error = ""
+            self._record_dashboard_control_action(action="run_once", status="accepted")
             self._write_dashboard_control_state()
 
         def _worker() -> None:
@@ -1563,7 +1607,13 @@ class Supervisor:
                 self.run_cycle()
                 self._refresh_dashboard()
             except Exception as e:
-                self._dashboard_control_last_error = f"{type(e).__name__}: {e}"
+                self._record_dashboard_control_action(
+                    action="run_once",
+                    status="failed",
+                    error=f"{type(e).__name__}: {e}",
+                )
+            else:
+                self._record_dashboard_control_action(action="run_once", status="completed")
             finally:
                 with self._dashboard_control_lock:
                     self._dashboard_control_run_once_in_progress = False
@@ -1582,9 +1632,7 @@ class Supervisor:
             ):
                 return {"ok": False, "status": "busy"}
             self._dashboard_control_preflight_in_progress = True
-            self._dashboard_control_last_action = "run_preflight"
-            self._dashboard_control_last_action_ts = datetime.now(self.tz).isoformat()
-            self._dashboard_control_last_error = ""
+            self._record_dashboard_control_action(action="run_preflight", status="accepted")
             self._write_dashboard_control_state()
 
         def _worker() -> None:
@@ -1599,7 +1647,13 @@ class Supervisor:
                 )
                 self._refresh_dashboard()
             except Exception as e:
-                self._dashboard_control_last_error = f"{type(e).__name__}: {e}"
+                self._record_dashboard_control_action(
+                    action="run_preflight",
+                    status="failed",
+                    error=f"{type(e).__name__}: {e}",
+                )
+            else:
+                self._record_dashboard_control_action(action="run_preflight", status="completed")
             finally:
                 with self._dashboard_control_lock:
                     self._dashboard_control_preflight_in_progress = False
@@ -1618,9 +1672,7 @@ class Supervisor:
             ):
                 return {"ok": False, "status": "busy"}
             self._dashboard_control_weekly_review_in_progress = True
-            self._dashboard_control_last_action = "run_weekly_review"
-            self._dashboard_control_last_action_ts = datetime.now(self.tz).isoformat()
-            self._dashboard_control_last_error = ""
+            self._record_dashboard_control_action(action="run_weekly_review", status="accepted")
             self._write_dashboard_control_state()
 
         def _worker() -> None:
@@ -1629,9 +1681,20 @@ class Supervisor:
                 if ok:
                     self._refresh_dashboard()
                 else:
-                    self._dashboard_control_last_error = "weekly_review_failed"
+                    self._record_dashboard_control_action(
+                        action="run_weekly_review",
+                        status="failed",
+                        error="weekly_review_failed",
+                    )
             except Exception as e:
-                self._dashboard_control_last_error = f"{type(e).__name__}: {e}"
+                self._record_dashboard_control_action(
+                    action="run_weekly_review",
+                    status="failed",
+                    error=f"{type(e).__name__}: {e}",
+                )
+            else:
+                if ok:
+                    self._record_dashboard_control_action(action="run_weekly_review", status="completed")
             finally:
                 with self._dashboard_control_lock:
                     self._dashboard_control_weekly_review_in_progress = False
@@ -1642,9 +1705,11 @@ class Supervisor:
 
     def _dashboard_control_refresh_dashboard(self, _: Dict[str, Any] | None = None) -> Dict[str, Any]:
         ok = self._refresh_dashboard()
-        self._dashboard_control_last_action = "refresh_dashboard"
-        self._dashboard_control_last_action_ts = datetime.now(self.tz).isoformat()
-        self._dashboard_control_last_error = "" if ok else "dashboard_refresh_failed"
+        self._record_dashboard_control_action(
+            action="refresh_dashboard",
+            status="completed" if ok else "failed",
+            error="" if ok else "dashboard_refresh_failed",
+        )
         self._write_dashboard_control_state()
         return {"ok": bool(ok)}
 
@@ -1849,7 +1914,11 @@ class Supervisor:
         try:
             service.start()
         except Exception as e:
-            self._dashboard_control_last_error = f"{type(e).__name__}: {e}"
+            self._record_dashboard_control_action(
+                action="start_control_service",
+                status="failed",
+                error=f"{type(e).__name__}: {e}",
+            )
             self._write_dashboard_control_state(service_status="error")
             log.warning("Failed to start dashboard control service: %s %s", type(e).__name__, e)
             return
