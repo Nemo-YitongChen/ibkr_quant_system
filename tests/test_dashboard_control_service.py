@@ -170,6 +170,26 @@ class DashboardControlServiceTests(unittest.TestCase):
         self.assertEqual(payload["error"], "not_found")
         self.assertEqual(payload["path"], "/does_not_exist")
 
+    def test_do_post_returns_structured_handler_exception(self):
+        def _boom(_payload):
+            raise RuntimeError("boom")
+
+        service = self._build_service(run_weekly_review=_boom)
+        handler = self._build_handler(service)
+        handler.path = "/run_weekly_review"
+        handler._read_payload = MagicMock(return_value={"market": "HK"})
+        handler._send_json = MagicMock()
+
+        handler.do_POST()
+
+        status_code, payload = handler._send_json.call_args.args
+        self.assertEqual(status_code, 500)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["error"], "handler_exception")
+        self.assertEqual(payload["path"], "/run_weekly_review")
+        self.assertEqual(payload["exception_type"], "RuntimeError")
+        self.assertIn("boom", payload["message"])
+
 
 if __name__ == "__main__":
     unittest.main()
