@@ -5,6 +5,7 @@ from src.tools.generate_dashboard import (
     _build_health_overview,
     _build_market_data_health_overview,
     _build_overview,
+    _build_ops_overview,
     _simple_ops_overview_rows,
     _dashboard_market_state_label,
     _dashboard_report_freshness_label,
@@ -155,3 +156,36 @@ def test_simple_ops_overview_rows_include_status_rollout_counts() -> None:
     )
     assert any(row[0] == "市场状态缺口" and "2" in row[1] for row in rows)
     assert any(row[0] == "市场数据健康" and "研究Fallback" in row[1] for row in rows)
+
+
+def test_build_ops_overview_surfaces_artifact_and_governance_alerts() -> None:
+    overview = _build_ops_overview(
+        [],
+        preflight_summary={"pass_count": 1, "warn_count": 0, "fail_count": 0, "checks": []},
+        control_payload={"service": {"status": "configured"}, "actions": {}},
+        execution_mode_summary={"mismatch_count": 0},
+        status_rollout_summary={
+            "market_state_missing_count": 0,
+            "data_attention_count": 0,
+            "data_research_fallback_count": 0,
+            "market_rows": [],
+        },
+        artifact_health_summary={
+            "status": "degraded",
+            "status_label": "有降级",
+            "summary_text": "artifact 3 | degraded 1",
+            "warning_count": 0,
+            "degraded_count": 1,
+        },
+        governance_health_summary={
+            "status": "warning",
+            "status_label": "有告警",
+            "summary_text": "pending governance action",
+        },
+    )
+
+    categories = {row["category"]: row for row in overview["alert_rows"]}
+    assert categories["ARTIFACT"]["status"] == "FAIL"
+    assert "artifact 3" in categories["ARTIFACT"]["detail"]
+    assert categories["GOVERNANCE"]["status"] == "WARN"
+    assert "pending governance" in categories["GOVERNANCE"]["detail"]

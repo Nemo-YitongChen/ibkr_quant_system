@@ -528,6 +528,41 @@ class Storage:
             self._ensure_column(c, "investment_weekly_decision_evidence_history", "order_value REAL")
             self._ensure_column(c, "investment_weekly_decision_evidence_history", "fill_notional REAL")
             c.execute("""
+            CREATE TABLE IF NOT EXISTS investment_trading_quality_evidence (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                week_label TEXT,
+                week_start TEXT,
+                window_start TEXT,
+                window_end TEXT,
+                ts TEXT,
+                market TEXT,
+                portfolio_id TEXT,
+                evidence_layer TEXT,
+                evidence_key TEXT,
+                sample_count INTEGER,
+                filled_count INTEGER,
+                blocked_count INTEGER,
+                filled_avg_expected_edge_bps REAL,
+                filled_avg_expected_cost_bps REAL,
+                filled_avg_realized_slippage_bps REAL,
+                filled_avg_realized_edge_bps REAL,
+                filled_avg_outcome_20d_bps REAL,
+                blocked_avg_outcome_20d_bps REAL,
+                post_cost_edge_delta_bps REAL,
+                rule_quality TEXT,
+                recommendation TEXT,
+                evidence_summary TEXT,
+                details TEXT
+            )""")
+            c.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_investment_trading_quality_evidence_key "
+                "ON investment_trading_quality_evidence (week_label, portfolio_id, evidence_layer, evidence_key)"
+            )
+            c.execute(
+                "CREATE INDEX IF NOT EXISTS idx_investment_trading_quality_evidence_lookup "
+                "ON investment_trading_quality_evidence (market, portfolio_id, week_start DESC, ts DESC)"
+            )
+            c.execute("""
             CREATE TABLE IF NOT EXISTS investment_patch_review_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 week_label TEXT,
@@ -1070,6 +1105,37 @@ class Storage:
                 list(row.values()),
             )
 
+    def upsert_investment_trading_quality_evidence(self, row: Dict[str, Any]):
+        row = dict(row)
+        row.setdefault("ts", datetime.utcnow().isoformat())
+        row["week_label"] = str(row.get("week_label") or "").strip()
+        row["market"] = str(row.get("market") or "").upper()
+        row["portfolio_id"] = str(row.get("portfolio_id") or "").strip()
+        row["evidence_layer"] = str(row.get("evidence_layer") or "").strip().upper()
+        row["evidence_key"] = str(row.get("evidence_key") or "").strip().upper()
+        details = row.get("details")
+        if isinstance(details, (dict, list)):
+            row["details"] = json.dumps(details, ensure_ascii=False)
+        with self._conn() as c:
+            c.execute(
+                """
+                DELETE FROM investment_trading_quality_evidence
+                WHERE week_label=? AND portfolio_id=? AND evidence_layer=? AND evidence_key=?
+                """,
+                (
+                    str(row.get("week_label") or "").strip(),
+                    str(row.get("portfolio_id") or "").strip(),
+                    str(row.get("evidence_layer") or "").strip().upper(),
+                    str(row.get("evidence_key") or "").strip().upper(),
+                ),
+            )
+            cols = ",".join(row.keys())
+            qs = ",".join(["?"] * len(row))
+            c.execute(
+                f"INSERT INTO investment_trading_quality_evidence ({cols}) VALUES ({qs})",
+                list(row.values()),
+            )
+
     def insert_investment_patch_review_history(self, row: Dict[str, Any]):
         row = dict(row)
         row.setdefault("ts", datetime.utcnow().isoformat())
@@ -1310,6 +1376,48 @@ class Storage:
                     str(portfolio_id or "").strip(),
                     str(symbol or "").strip().upper(),
                     str(symbol or "").strip().upper(),
+                    max(1, int(limit)),
+                ),
+            ).fetchall()
+        out: List[Dict[str, Any]] = []
+        for raw in rows:
+            row = dict(raw)
+            details = row.get("details")
+            if isinstance(details, str) and details:
+                try:
+                    row["details_json"] = json.loads(details)
+                except Exception:
+                    row["details_json"] = {}
+            else:
+                row["details_json"] = {}
+            out.append(row)
+        return out
+
+    def get_recent_investment_trading_quality_evidence(
+        self,
+        market: str,
+        portfolio_id: str = "",
+        *,
+        evidence_layer: str = "",
+        limit: int = 200,
+    ) -> List[Dict[str, Any]]:
+        market_code = str(market or "").upper()
+        with self._conn() as c:
+            c.row_factory = sqlite3.Row
+            rows = c.execute(
+                """
+                SELECT *
+                FROM investment_trading_quality_evidence
+                WHERE market=? AND (?='' OR portfolio_id=?) AND (?='' OR evidence_layer=?)
+                ORDER BY week_start DESC, ts DESC, id DESC
+                LIMIT ?
+                """,
+                (
+                    market_code,
+                    str(portfolio_id or "").strip(),
+                    str(portfolio_id or "").strip(),
+                    str(evidence_layer or "").strip().upper(),
+                    str(evidence_layer or "").strip().upper(),
                     max(1, int(limit)),
                 ),
             ).fetchall()

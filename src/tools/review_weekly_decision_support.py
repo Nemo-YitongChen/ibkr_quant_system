@@ -219,6 +219,179 @@ def _build_weekly_decision_evidence_summary_rows(
     return out
 
 
+def _avg_from_rows(rows: List[Dict[str, Any]], key: str) -> float | None:
+    return _avg_defined([row.get(key) for row in rows if row.get(key) not in (None, "")])
+
+
+def _trading_quality_row(
+    *,
+    portfolio_id: str,
+    market: str,
+    evidence_layer: str,
+    evidence_key: str,
+    filled_rows: List[Dict[str, Any]],
+    blocked_rows: List[Dict[str, Any]],
+) -> Dict[str, Any] | None:
+    sample_count = len(filled_rows) + len(blocked_rows)
+    if sample_count <= 0:
+        return None
+    filled_avg_expected_edge = _avg_from_rows(filled_rows, "expected_edge_bps")
+    filled_avg_expected_cost = _avg_from_rows(filled_rows, "expected_cost_bps")
+    filled_avg_slippage = _avg_from_rows(filled_rows, "realized_slippage_bps")
+    filled_avg_realized_edge = _avg_from_rows(filled_rows, "realized_edge_bps")
+    filled_avg_outcome_20d = _avg_from_rows(filled_rows, "outcome_20d_bps")
+    blocked_avg_outcome_20d = _avg_from_rows(blocked_rows, "outcome_20d_bps")
+    if blocked_rows and filled_avg_outcome_20d is not None and blocked_avg_outcome_20d is not None:
+        post_cost_delta = float(filled_avg_outcome_20d - blocked_avg_outcome_20d)
+    elif filled_avg_expected_edge is not None and filled_avg_expected_cost is not None and filled_avg_realized_edge is not None:
+        post_cost_delta = float(filled_avg_realized_edge - (filled_avg_expected_edge - filled_avg_expected_cost))
+    else:
+        post_cost_delta = None
+
+    rule_quality = "OBSERVE"
+    recommendation = "继续累计样本，不调整规则。"
+    if post_cost_delta is not None:
+        if evidence_layer in {"EDGE_GATE", "MARKET_RULE_GATE"}:
+            if post_cost_delta >= 25.0:
+                rule_quality = "HELPING_POST_COST_EDGE"
+                recommendation = "当前 gate 挡掉的样本事后弱于成交样本，保留现有规则。"
+            elif post_cost_delta <= -25.0:
+                rule_quality = "TOO_RESTRICTIVE"
+                recommendation = "被挡样本事后不弱，复核 gate 阈值或市场规则是否过紧。"
+            else:
+                rule_quality = "MIXED"
+                recommendation = "成交与被挡样本差异不明显，先维持规则并继续观察。"
+        else:
+            if post_cost_delta >= -5.0 and (filled_avg_slippage or 0.0) <= (filled_avg_expected_cost or 0.0) + 5.0:
+                rule_quality = "EXECUTION_DISCIPLINE_OK"
+                recommendation = "当前执行规则基本守住 post-cost edge。"
+            elif post_cost_delta <= -15.0 or (filled_avg_slippage or 0.0) >= (filled_avg_expected_cost or 0.0) + 10.0:
+                rule_quality = "EXECUTION_COST_DRAG"
+                recommendation = "执行成本正在吞噬 edge，优先校准参与率、切片与限价 buffer。"
+            else:
+                rule_quality = "MIXED"
+                recommendation = "执行质量信号混合，继续按 bucket 观察。"
+    evidence_summary = (
+        f"filled={len(filled_rows)} blocked={len(blocked_rows)} "
+        f"delta={post_cost_delta if post_cost_delta is not None else 'n/a'}"
+    )
+    return {
+        "portfolio_id": portfolio_id,
+        "market": market,
+        "evidence_layer": evidence_layer,
+        "evidence_key": evidence_key,
+        "sample_count": int(sample_count),
+        "filled_count": int(len(filled_rows)),
+        "blocked_count": int(len(blocked_rows)),
+        "filled_avg_expected_edge_bps": filled_avg_expected_edge,
+        "filled_avg_expected_cost_bps": filled_avg_expected_cost,
+        "filled_avg_realized_slippage_bps": filled_avg_slippage,
+        "filled_avg_realized_edge_bps": filled_avg_realized_edge,
+        "filled_avg_outcome_20d_bps": filled_avg_outcome_20d,
+        "blocked_avg_outcome_20d_bps": blocked_avg_outcome_20d,
+        "post_cost_edge_delta_bps": post_cost_delta,
+        "rule_quality": rule_quality,
+        "recommendation": recommendation,
+        "evidence_summary": evidence_summary,
+        "details": {
+            "filled_symbols": sorted({str(row.get("symbol") or "") for row in filled_rows if str(row.get("symbol") or "")})[:20],
+            "blocked_symbols": sorted({str(row.get("symbol") or "") for row in blocked_rows if str(row.get("symbol") or "")})[:20],
+        },
+    }
+
+
+def _build_trading_quality_evidence_rows(
+    decision_evidence_rows: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    grouped: Dict[tuple[str, str], List[Dict[str, Any]]] = {}
+    for raw in list(decision_evidence_rows or []):
+        row = dict(raw or {})
+        market = resolve_market_code(str(row.get("market") or ""))
+        portfolio_id = str(row.get("portfolio_id") or "").strip()
+        if market and portfolio_id:
+            grouped.setdefault((market, portfolio_id), []).append(row)
+
+    out: List[Dict[str, Any]] = []
+    for (market, portfolio_id), rows in grouped.items():
+        filled = [row for row in rows if str(row.get("decision_status") or "").strip().upper() == "FILLED"]
+        blocked_edge = [
+            row
+            for row in rows
+            if int(row.get("blocked_edge_order_count", 0) or 0) > 0
+            or str(row.get("decision_status") or "").strip().upper() == "BLOCKED_EDGE"
+        ]
+        blocked_market_rule = [row for row in rows if int(row.get("blocked_market_rule_order_count", 0) or 0) > 0]
+        for candidate in (
+            _trading_quality_row(
+                portfolio_id=portfolio_id,
+                market=market,
+                evidence_layer="EDGE_GATE",
+                evidence_key="ALL",
+                filled_rows=filled,
+                blocked_rows=blocked_edge,
+            ),
+            _trading_quality_row(
+                portfolio_id=portfolio_id,
+                market=market,
+                evidence_layer="MARKET_RULE_GATE",
+                evidence_key="ALL",
+                filled_rows=filled,
+                blocked_rows=blocked_market_rule,
+            ),
+        ):
+            if candidate:
+                out.append(candidate)
+        bucket_map: Dict[str, List[Dict[str, Any]]] = {}
+        for row in filled:
+            bucket = str(row.get("dynamic_liquidity_bucket") or "UNKNOWN").strip().upper() or "UNKNOWN"
+            bucket_map.setdefault(bucket, []).append(row)
+        for bucket, bucket_rows in bucket_map.items():
+            candidate = _trading_quality_row(
+                portfolio_id=portfolio_id,
+                market=market,
+                evidence_layer="EXECUTION_QUALITY",
+                evidence_key=bucket,
+                filled_rows=bucket_rows,
+                blocked_rows=[],
+            )
+            if candidate:
+                out.append(candidate)
+    out.sort(
+        key=lambda row: (
+            str(row.get("market") or ""),
+            str(row.get("portfolio_id") or ""),
+            str(row.get("evidence_layer") or ""),
+            str(row.get("evidence_key") or ""),
+        )
+    )
+    return out
+
+
+def _persist_trading_quality_evidence(
+    db_path: Path,
+    rows: List[Dict[str, Any]],
+    *,
+    week_label: str,
+    week_start: str,
+    window_start: str,
+    window_end: str,
+) -> None:
+    if not rows:
+        return
+    storage = Storage(str(db_path))
+    for raw in list(rows or []):
+        row = dict(raw or {})
+        row.update(
+            {
+                "week_label": week_label,
+                "week_start": week_start,
+                "window_start": window_start,
+                "window_end": window_end,
+            }
+        )
+        storage.upsert_investment_trading_quality_evidence(row)
+
+
 def _decision_summary_by_week(rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     grouped_decision_history: Dict[str, List[Dict[str, Any]]] = {}
     for item in list(rows or []):

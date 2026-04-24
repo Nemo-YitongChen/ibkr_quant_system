@@ -9,6 +9,7 @@ from ..app.investment_engine import InvestmentExecutionEngine
 from ..common.account_profile import load_account_profiles
 from ..common.cli import build_cli_parser, emit_cli_summary
 from ..common.cli_contracts import ArtifactBundle, InvestmentExecutionSummary
+from ..common.config_layers import load_layered_config
 from ..common.logger import get_logger
 from ..common.market_structure import load_market_structure
 from ..common.markets import add_market_args, market_config_path, resolve_market_code
@@ -62,6 +63,22 @@ def _load_yaml(path_str: str) -> Dict[str, Any]:
 
     with _resolve_project_path(path_str).open("r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
+
+
+def _load_paper_config_payload(path_str: str) -> Dict[str, Any]:
+    return load_layered_config(
+        BASE_DIR,
+        path_str,
+        default_paths=("config/investment_paper.yaml",),
+    ).payload
+
+
+def _load_execution_config_payload(path_str: str) -> Dict[str, Any]:
+    return load_layered_config(
+        BASE_DIR,
+        path_str,
+        default_paths=("config/investment_execution.yaml",),
+    ).payload
 
 
 def _slugify_report_name(name: str) -> str:
@@ -119,8 +136,8 @@ def main(argv: list[str] | None = None) -> None:
             args.execution_config or str(ibkr_cfg.get("investment_execution_config", f"config/investment_execution_{market.lower()}.yaml"))
         )
     )
-    paper_cfg = InvestmentPaperConfig.from_dict(_load_yaml(paper_cfg_path).get("paper"))
-    execution_cfg = InvestmentExecutionConfig.from_dict(_load_yaml(execution_cfg_path).get("execution"))
+    paper_cfg = InvestmentPaperConfig.from_dict(_load_paper_config_payload(paper_cfg_path).get("paper"))
+    execution_cfg = InvestmentExecutionConfig.from_dict(_load_execution_config_payload(execution_cfg_path).get("execution"))
     market_structure = load_market_structure(
         BASE_DIR,
         market,

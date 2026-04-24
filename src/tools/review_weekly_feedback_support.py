@@ -3083,6 +3083,7 @@ from .review_weekly_governance_support import (
 from .review_weekly_decision_support import (
     _apply_market_profile_tuning_context,
     _build_market_profile_patch_readiness,
+    _build_trading_quality_evidence_rows,
     _build_weekly_decision_evidence_history_overview,
     _build_weekly_decision_evidence_rows,
     _build_weekly_decision_evidence_summary_rows,
@@ -3095,6 +3096,7 @@ from .review_weekly_decision_support import (
     _decision_summary_by_week,
     _latest_risk_overlay,
     _market_profile_patch_conflict,
+    _persist_trading_quality_evidence,
     _risk_driver_and_diagnosis,
     _risk_overlay_from_history_row,
 )

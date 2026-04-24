@@ -25,6 +25,7 @@ from ..common.adaptive_strategy import (
 )
 from ..common.cli import build_cli_parser, emit_cli_summary
 from ..common.cli_contracts import ArtifactBundle, InvestmentPaperSummary
+from ..common.config_layers import load_layered_config
 from ..common.logger import get_logger
 from ..common.markets import add_market_args, resolve_market_code
 from ..common.runtime_paths import resolve_repo_path
@@ -70,6 +71,14 @@ def _load_yaml(path_str: str) -> Dict[str, Any]:
 
     with _resolve_project_path(path_str).open("r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
+
+
+def _load_paper_config_payload(path_str: str) -> Dict[str, Any]:
+    return load_layered_config(
+        BASE_DIR,
+        path_str,
+        default_paths=("config/investment_paper.yaml",),
+    ).payload
 
 
 def _slugify_report_name(name: str) -> str:
@@ -202,7 +211,7 @@ def main(argv: List[str] | None = None) -> None:
         raise SystemExit("--market is required for investment paper runs")
 
     default_paper_cfg = f"config/investment_paper_{market.lower()}.yaml"
-    paper_cfg = InvestmentPaperConfig.from_dict(_load_yaml(args.paper_config or default_paper_cfg).get("paper"))
+    paper_cfg = InvestmentPaperConfig.from_dict(_load_paper_config_payload(args.paper_config or default_paper_cfg).get("paper"))
     report_dir = _infer_report_dir(args, market)
     portfolio_id = str(args.portfolio_id or f"{market}:{report_dir.name}")
     candidates, plans = _read_report_books(report_dir)

@@ -300,6 +300,10 @@ def patch_review_history(
                 "config_commit_sha": str(row.get("config_commit_sha") or "").strip(),
                 "config_diff_note": str(row.get("config_diff_note") or "").strip(),
                 "operator_note": str(row.get("operator_note") or "").strip(),
+                "approval_status": str(row.get("approval_status") or "").strip(),
+                "rollback_plan": str(row.get("rollback_plan") or "").strip(),
+                "effect_tracking_window": str(row.get("effect_tracking_window") or "").strip(),
+                "effect_tracking_metrics": list(row.get("effect_tracking_metrics") or []),
                 "summary": summary,
             }
         )
@@ -355,10 +359,40 @@ def append_patch_review_history(
             "config_commit_sha": str(evidence_payload.get("config_commit_sha") or "").strip(),
             "config_diff_note": str(evidence_payload.get("config_diff_note") or "").strip(),
             "operator_note": str(evidence_payload.get("operator_note") or "").strip(),
+            "approval_status": str(evidence_payload.get("approval_status") or "").strip(),
+            "rollback_plan": str(evidence_payload.get("rollback_plan") or "").strip(),
+            "effect_tracking_window": str(evidence_payload.get("effect_tracking_window") or "").strip(),
+            "effect_tracking_metrics": list(evidence_payload.get("effect_tracking_metrics") or []),
             "summary": summary,
         }
     )
     return history[-max(int(history_limit or 0), 1) :]
+
+
+def live_change_governance_evidence_fields(
+    *,
+    reviewed_ts: str,
+    config_file: str,
+    config_commit_sha: str,
+    operator_note: str = "",
+) -> Dict[str, Any]:
+    config_label = str(config_file or "config").strip() or "config"
+    rollback_ref = str(config_commit_sha or "").strip()
+    rollback_target = f"previous reviewed git/config state before {rollback_ref[:10]}" if rollback_ref else "previous reviewed config state"
+    return {
+        "approval_status": "APPLIED",
+        "approved_ts": str(reviewed_ts or ""),
+        "approved_by": str(operator_note or "dashboard_control").strip() or "dashboard_control",
+        "rollback_plan": f"Restore {config_label} to {rollback_target}, then rerun weekly review and dashboard refresh.",
+        "effect_tracking_window": "next 3 weekly reviews",
+        "effect_tracking_metrics": [
+            "post_cost_edge_bps",
+            "realized_slippage_bps",
+            "turnover",
+            "drawdown",
+            "blocked_edge_order_count",
+        ],
+    }
 
 
 def patch_review_state(

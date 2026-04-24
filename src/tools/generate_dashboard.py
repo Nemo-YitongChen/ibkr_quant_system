@@ -5183,6 +5183,34 @@ def _build_dashboard_status_rollout_summary(cards: List[Dict[str, Any]]) -> Dict
     }
 
 
+def _build_artifact_governance_alert_rows(
+    artifact_health_summary: Dict[str, Any],
+    governance_health_summary: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    artifact_status = str(artifact_health_summary.get("status", "ready") or "ready").strip().lower()
+    if artifact_status in {"warning", "degraded"}:
+        rows.append(
+            {
+                "category": "ARTIFACT",
+                "name": "artifact_health",
+                "status": "FAIL" if artifact_status == "degraded" else "WARN",
+                "detail": str(artifact_health_summary.get("summary_text", "") or "-"),
+            }
+        )
+    governance_status = str(governance_health_summary.get("status", "ready") or "ready").strip().lower()
+    if governance_status in {"warning", "degraded"}:
+        rows.append(
+            {
+                "category": "GOVERNANCE",
+                "name": "governance_health",
+                "status": "FAIL" if governance_status == "degraded" else "WARN",
+                "detail": str(governance_health_summary.get("summary_text", "") or "-"),
+            }
+        )
+    return rows
+
+
 def _build_ops_overview(
     cards: List[Dict[str, Any]],
     *,
@@ -5214,7 +5242,7 @@ def _build_ops_overview(
     data_research_fallback_count = int(status_rollout_summary.get("data_research_fallback_count", 0) or 0)
     artifact_warning_count = int(artifact_health_summary.get("warning_count", 0) or 0)
     artifact_degraded_count = int(artifact_health_summary.get("degraded_count", 0) or 0)
-    governance_status = str(governance_health_summary.get("status", "ready") or "ready")
+    governance_status = str(governance_health_summary.get("status", "ready") or "ready").strip().lower()
     alert_rows: List[Dict[str, Any]] = []
     for row in warning_rows[:8]:
         alert_rows.append(
@@ -5264,6 +5292,7 @@ def _build_ops_overview(
                     "detail": str(row.get("summary", "") or "-"),
                 }
             )
+    alert_rows.extend(_build_artifact_governance_alert_rows(artifact_health_summary, governance_health_summary))
     preflight_banner_level = ""
     preflight_banner_title = ""
     preflight_banner_reason = ""
@@ -7546,6 +7575,11 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
         ["首改就绪", str(int(governance_health_summary.get("ready_for_manual_apply_count", 0) or 0))],
         ["拒绝热点", str(int(governance_health_summary.get("rejection_hotspot_count", 0) or 0))],
         ["凭证不一致", str(int(governance_health_summary.get("evidence_mismatch_count", 0) or 0))],
+        ["live 变更缺口", str(int(governance_health_summary.get("live_change_governance_gap_count", 0) or 0))],
+        [
+            "live 缺失组件",
+            str(int(governance_health_summary.get("live_change_missing_component_count", 0) or 0)),
+        ],
         [
             "最久待处理(天)",
             str(governance_health_summary.get("oldest_pending_days", "-") or "-"),

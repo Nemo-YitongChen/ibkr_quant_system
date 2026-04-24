@@ -1364,6 +1364,11 @@ class SupervisorCliTests(unittest.TestCase):
                 str(dict(applied_result.get("review_evidence") or {}).get("operator_note") or ""),
                 "approved after manual review",
             )
+            self.assertTrue(str(dict(applied_result.get("review_evidence") or {}).get("rollback_plan") or ""))
+            self.assertEqual(
+                str(dict(applied_result.get("review_evidence") or {}).get("effect_tracking_window") or ""),
+                "next 3 weekly reviews",
+            )
             self.assertEqual(len(list(applied_result.get("review_history") or [])), 2)
             self.assertEqual(str(list(applied_result.get("review_history") or [])[0]["status"]), "APPROVED")
             self.assertEqual(str(list(applied_result.get("review_history") or [])[1]["status"]), "APPLIED")
@@ -1387,6 +1392,11 @@ class SupervisorCliTests(unittest.TestCase):
             self.assertEqual(
                 str(dict(result.get("market_profile_review_evidence") or {}).get("operator_note") or ""),
                 "approved after manual review",
+            )
+            self.assertTrue(str(dict(result.get("market_profile_review_evidence") or {}).get("rollback_plan") or ""))
+            self.assertEqual(
+                str(dict(result.get("market_profile_review_evidence") or {}).get("effect_tracking_window") or ""),
+                "next 3 weekly reviews",
             )
             result_patch = dict(result.get("market_profile_manual_apply_patch") or {})
             self.assertEqual(str(result_patch.get("mode") or ""), "PRIMARY_ONLY")
@@ -1579,6 +1589,11 @@ class SupervisorCliTests(unittest.TestCase):
                 str(dict(applied_result.get("review_evidence") or {}).get("operator_note") or ""),
                 "approved after weekly calibration review",
             )
+            self.assertTrue(str(dict(applied_result.get("review_evidence") or {}).get("rollback_plan") or ""))
+            self.assertEqual(
+                str(dict(applied_result.get("review_evidence") or {}).get("effect_tracking_window") or ""),
+                "next 3 weekly reviews",
+            )
             self.assertEqual(len(list(applied_result.get("review_history") or [])), 2)
             self.assertEqual(str(list(applied_result.get("review_history") or [])[0]["status"]), "APPROVED")
             self.assertEqual(str(list(applied_result.get("review_history") or [])[1]["status"]), "APPLIED")
@@ -1595,6 +1610,11 @@ class SupervisorCliTests(unittest.TestCase):
             self.assertEqual(
                 str(dict(result.get("calibration_patch_review_evidence") or {}).get("config_commit_sha") or ""),
                 "feedface1234567890",
+            )
+            self.assertTrue(str(dict(result.get("calibration_patch_review_evidence") or {}).get("rollback_plan") or ""))
+            self.assertEqual(
+                str(dict(result.get("calibration_patch_review_evidence") or {}).get("effect_tracking_window") or ""),
+                "next 3 weekly reviews",
             )
             result_patch = dict(result.get("calibration_patch_manual_apply_patch") or {})
             self.assertEqual(str(result_patch.get("mode") or ""), "PRIMARY_ONLY")

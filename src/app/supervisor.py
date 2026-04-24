@@ -46,6 +46,7 @@ from .supervisor_patch_support import (
     append_patch_review_history as _append_patch_review_history,
     file_sha1 as _file_sha1,
     iso_week_identity as _iso_week_identity,
+    live_change_governance_evidence_fields as _live_change_governance_evidence_fields,
     market_profile_manual_patch_candidate as _market_profile_manual_patch_candidate,
     market_profile_manual_apply_patch as _market_profile_manual_apply_patch,
     market_profile_patch_priority as _market_profile_patch_priority,
@@ -618,6 +619,12 @@ class Supervisor:
             summary_bits.append(f"diff={diff_note}")
         if user_note:
             summary_bits.append(f"note={user_note}")
+        governance_fields = _live_change_governance_evidence_fields(
+            reviewed_ts=reviewed_ts,
+            config_file=str(config_file),
+            config_commit_sha=str(commit_sha),
+            operator_note=user_note,
+        )
         return {
             "captured_ts": str(reviewed_ts or datetime.now(self.tz).isoformat()),
             "feedback_signature": str(feedback_signature or ""),
@@ -630,6 +637,7 @@ class Supervisor:
             "market": str(report_market or ""),
             "profile": str(patch.get("profile") or ""),
             "primary_item": primary_item,
+            **governance_fields,
             "summary": " | ".join(summary_bits),
         }
 
@@ -742,6 +750,12 @@ class Supervisor:
             summary_bits.append(f"diff={diff_note}")
         if user_note:
             summary_bits.append(f"note={user_note}")
+        governance_fields = _live_change_governance_evidence_fields(
+            reviewed_ts=reviewed_ts,
+            config_file=config_file,
+            config_commit_sha=str(commit_sha),
+            operator_note=user_note,
+        )
         return {
             "captured_ts": str(reviewed_ts or datetime.now(self.tz).isoformat()),
             "feedback_signature": str(feedback_signature or ""),
@@ -754,6 +768,7 @@ class Supervisor:
             "market": str(report_market or ""),
             "profile": str(patch.get("profile") or ""),
             "primary_item": primary_item,
+            **governance_fields,
             "summary": " | ".join(summary_bits),
         }
 

@@ -56,6 +56,7 @@ from .review_weekly_feedback_support import (
     _build_risk_review_rows as _build_risk_review_rows_support,
     _build_weekly_blocked_edge_attribution_rows,
     _build_feedback_calibration_rows as _build_feedback_calibration_rows_support,
+    _build_trading_quality_evidence_rows,
     _build_weekly_decision_evidence_history_overview as _build_weekly_decision_evidence_history_overview_support,
     _build_weekly_decision_evidence_rows,
     _build_weekly_decision_evidence_summary_rows,
@@ -112,6 +113,7 @@ from .review_weekly_feedback_support import (
     _persist_feedback_automation_history as _persist_feedback_automation_history_support,
     _persist_feedback_threshold_history as _persist_feedback_threshold_history_support,
     _persist_market_profile_patch_history as _persist_market_profile_patch_history_support,
+    _persist_trading_quality_evidence as _persist_trading_quality_evidence_support,
     _persist_weekly_decision_evidence_history as _persist_weekly_decision_evidence_history_support,
     _persist_weekly_tuning_history as _persist_weekly_tuning_history_support,
     _resolve_labeling_summary_dir as _resolve_labeling_summary_dir_support,
@@ -442,6 +444,25 @@ def _persist_weekly_decision_evidence_history(
     window_end: str,
 ) -> None:
     return _persist_weekly_decision_evidence_history_support(
+        db_path,
+        rows,
+        week_label=week_label,
+        week_start=week_start,
+        window_start=window_start,
+        window_end=window_end,
+    )
+
+
+def _persist_trading_quality_evidence(
+    db_path: Path,
+    rows: List[Dict[str, Any]],
+    *,
+    week_label: str,
+    week_start: str,
+    window_start: str,
+    window_end: str,
+) -> None:
+    return _persist_trading_quality_evidence_support(
         db_path,
         rows,
         week_label=week_label,
@@ -1009,6 +1030,15 @@ def _build_weekly_history_calibration_bundle(
         window_start=window_start,
         window_end=window_end,
     )
+    trading_quality_evidence_rows = _build_trading_quality_evidence_rows(decision_evidence_rows)
+    _persist_trading_quality_evidence(
+        db_path,
+        trading_quality_evidence_rows,
+        week_label=review_week_label,
+        week_start=review_week_start,
+        window_start=window_start,
+        window_end=window_end,
+    )
     weekly_tuning_history_overview_rows = _build_weekly_tuning_history_overview(
         db_path,
         weekly_tuning_dataset_rows,
@@ -1046,6 +1076,7 @@ def _build_weekly_history_calibration_bundle(
     return {
         "weekly_tuning_history_overview_rows": weekly_tuning_history_overview_rows,
         "weekly_decision_evidence_history_overview_rows": weekly_decision_evidence_history_overview_rows,
+        "trading_quality_evidence_rows": trading_quality_evidence_rows,
         "weekly_edge_calibration_rows": weekly_edge_calibration_rows,
         "weekly_slicing_calibration_rows": weekly_slicing_calibration_rows,
         "weekly_risk_calibration_rows": weekly_risk_calibration_rows,
@@ -1422,6 +1453,9 @@ def main(argv: List[str] | None = None) -> None:
     weekly_decision_evidence_history_overview_rows = list(
         history_calibration_bundle.get("weekly_decision_evidence_history_overview_rows") or []
     )
+    trading_quality_evidence_rows = list(
+        history_calibration_bundle.get("trading_quality_evidence_rows") or []
+    )
     weekly_edge_calibration_rows = list(
         history_calibration_bundle.get("weekly_edge_calibration_rows") or []
     )
@@ -1479,6 +1513,7 @@ def main(argv: List[str] | None = None) -> None:
         decision_evidence_rows=decision_evidence_rows,
         decision_evidence_summary_rows=decision_evidence_summary_rows,
         weekly_decision_evidence_history_overview_rows=weekly_decision_evidence_history_overview_rows,
+        trading_quality_evidence_rows=trading_quality_evidence_rows,
         execution_effect_rows=execution_effect_rows,
         planned_execution_cost_rows=planned_execution_cost_rows,
         execution_session_rows=execution_session_rows,

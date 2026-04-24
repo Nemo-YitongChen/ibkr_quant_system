@@ -425,6 +425,7 @@ def test_investment_workflow_cli_smoke_generates_contract_artifacts(tmp_path, mo
         weekly_dir / "weekly_outcome_spread_summary.csv",
         weekly_dir / "weekly_edge_realization_summary.csv",
         weekly_dir / "weekly_blocked_edge_attribution.csv",
+        weekly_dir / "weekly_trading_quality_evidence.csv",
         weekly_dir / "weekly_tuning_dataset.csv",
         weekly_dir / "weekly_tuning_dataset.json",
         weekly_dir / "weekly_tuning_history_overview.csv",
@@ -489,6 +490,7 @@ def test_investment_workflow_cli_smoke_generates_contract_artifacts(tmp_path, mo
     assert weekly_summary["weekly_tuning_dataset"][0]["portfolio_id"] == portfolio_id
     assert weekly_summary["weekly_tuning_history_overview"][0]["portfolio_id"] == portfolio_id
     assert weekly_summary["decision_evidence_history_overview"][0]["portfolio_id"] == portfolio_id
+    assert weekly_summary["trading_quality_evidence"][0]["portfolio_id"] == portfolio_id
     assert weekly_summary["edge_calibration_summary"][0]["portfolio_id"] == portfolio_id
     assert weekly_summary["slicing_calibration_summary"][0]["portfolio_id"] == portfolio_id
     assert weekly_summary["risk_calibration_summary"][0]["portfolio_id"] == portfolio_id

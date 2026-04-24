@@ -29,6 +29,7 @@ from src.tools.review_investment_weekly import (
     _build_weekly_decision_evidence_rows,
     _build_weekly_decision_evidence_summary_rows,
     _build_weekly_decision_evidence_history_overview,
+    _build_trading_quality_evidence_rows,
     _build_weekly_calibration_patch_suggestion_rows,
     _build_weekly_edge_calibration_rows,
     _build_weekly_edge_realization_rows,
@@ -55,6 +56,7 @@ from src.tools.review_investment_weekly import (
     _persist_feedback_automation_history,
     _persist_market_profile_patch_history,
     _persist_weekly_decision_evidence_history,
+    _persist_trading_quality_evidence,
     _persist_weekly_tuning_history,
     _persist_feedback_threshold_history,
     _run_source,
@@ -1637,6 +1639,81 @@ class ReviewInvestmentWeeklyTests(unittest.TestCase):
             self.assertEqual(str(row["decision_blocked_edge_trend"]), "IMPROVING")
             self.assertAlmostEqual(float(row["decision_avg_dynamic_order_adv_pct_delta"]), 0.006, places=6)
             self.assertAlmostEqual(float(row["decision_avg_slice_count_delta"]), -2.0, places=6)
+
+    def test_trading_quality_evidence_rows_persist_gate_and_execution_quality(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "audit.db"
+            filled = {
+                "portfolio_id": "US:watchlist",
+                "market": "US",
+                "run_id": "EX1",
+                "parent_order_key": "AAA-parent",
+                "symbol": "AAA",
+                "decision_status": "FILLED",
+                "order_value": 5000.0,
+                "fill_notional": 5000.0,
+                "expected_edge_bps": 90.0,
+                "expected_cost_bps": 20.0,
+                "edge_gate_threshold_bps": 45.0,
+                "blocked_market_rule_order_count": 0,
+                "blocked_edge_order_count": 0,
+                "dynamic_liquidity_bucket": "CORE",
+                "dynamic_order_adv_pct": 0.01,
+                "slice_count": 2,
+                "realized_slippage_bps": 16.0,
+                "realized_edge_bps": 78.0,
+                "outcome_20d_bps": 120.0,
+            }
+            blocked = {
+                "portfolio_id": "US:watchlist",
+                "market": "US",
+                "run_id": "EX1",
+                "parent_order_key": "BBB-parent",
+                "symbol": "BBB",
+                "decision_status": "BLOCKED_EDGE",
+                "order_value": 4000.0,
+                "fill_notional": 0.0,
+                "expected_edge_bps": 25.0,
+                "expected_cost_bps": 20.0,
+                "edge_gate_threshold_bps": 45.0,
+                "blocked_market_rule_order_count": 0,
+                "blocked_edge_order_count": 1,
+                "dynamic_liquidity_bucket": "TAIL",
+                "dynamic_order_adv_pct": 0.003,
+                "slice_count": 5,
+                "realized_slippage_bps": None,
+                "realized_edge_bps": None,
+                "outcome_20d_bps": -20.0,
+            }
+            rows = _build_trading_quality_evidence_rows([filled, blocked])
+
+            edge_row = next(row for row in rows if row["evidence_layer"] == "EDGE_GATE")
+            execution_row = next(row for row in rows if row["evidence_layer"] == "EXECUTION_QUALITY")
+            self.assertEqual(edge_row["portfolio_id"], "US:watchlist")
+            self.assertEqual(edge_row["sample_count"], 2)
+            self.assertEqual(edge_row["blocked_count"], 1)
+            self.assertAlmostEqual(float(edge_row["post_cost_edge_delta_bps"]), 140.0, places=6)
+            self.assertEqual(edge_row["rule_quality"], "HELPING_POST_COST_EDGE")
+            self.assertEqual(execution_row["evidence_key"], "CORE")
+            self.assertEqual(execution_row["rule_quality"], "EXECUTION_DISCIPLINE_OK")
+
+            _persist_trading_quality_evidence(
+                db_path,
+                rows,
+                week_label="2026-W14",
+                week_start="2026-03-30",
+                window_start="2026-03-24T00:00:00+00:00",
+                window_end="2026-03-31T00:00:00+00:00",
+            )
+            stored = Storage(str(db_path)).get_recent_investment_trading_quality_evidence(
+                "US",
+                portfolio_id="US:watchlist",
+                limit=10,
+            )
+            self.assertEqual(len(stored), 3)
+            stored_edge = next(row for row in stored if row["evidence_layer"] == "EDGE_GATE")
+            self.assertEqual(stored_edge["details_json"]["filled_symbols"], ["AAA"])
+            self.assertEqual(stored_edge["details_json"]["blocked_symbols"], ["BBB"])
 
     def test_weekly_edge_slicing_and_risk_calibration_rows(self):
         with tempfile.TemporaryDirectory() as tmp:

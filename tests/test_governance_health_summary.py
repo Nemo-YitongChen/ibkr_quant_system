@@ -62,3 +62,64 @@ def test_governance_health_summary_degrades_on_applied_without_evidence() -> Non
 
     assert summary["status"] == "degraded"
     assert summary["evidence_mismatch_count"] == 1
+
+
+def test_governance_health_summary_degrades_live_applied_without_four_piece_governance() -> None:
+    cards = [
+        {
+            "market": "US",
+            "watchlist": "live_core",
+            "account_mode": "live",
+            "dashboard_control": {
+                "portfolio": {
+                    "weekly_feedback_patch_governance_action_label": "",
+                    "weekly_feedback_market_profile_review_status": "APPLIED",
+                    "weekly_feedback_market_profile_reviewed_ts": "2026-04-24T00:00:00+00:00",
+                    "weekly_feedback_market_profile_review_evidence_summary": "post-cost evidence accepted",
+                    "weekly_feedback_market_profile_review_evidence": {
+                        "summary": "post-cost evidence accepted",
+                        "approved_by": "operator",
+                    },
+                }
+            },
+            "patch_review_history_rows": [],
+        }
+    ]
+
+    summary = build_governance_health_summary(cards, [])
+
+    assert summary["status"] == "degraded"
+    assert summary["live_change_governance_gap_count"] == 1
+    assert summary["live_change_missing_component_count"] == 2
+    assert summary["applied_live_change_gap_count"] == 1
+    assert "missing rollback,effect_tracking" in summary["focus_items"][0]
+
+
+def test_governance_health_summary_accepts_live_applied_with_four_piece_governance() -> None:
+    cards = [
+        {
+            "market": "US",
+            "watchlist": "live_core",
+            "account_mode": "live",
+            "dashboard_control": {
+                "portfolio": {
+                    "weekly_feedback_patch_governance_action_label": "",
+                    "weekly_feedback_market_profile_review_status": "APPLIED",
+                    "weekly_feedback_market_profile_reviewed_ts": "2026-04-24T00:00:00+00:00",
+                    "weekly_feedback_market_profile_review_evidence_summary": "post-cost evidence accepted",
+                    "weekly_feedback_market_profile_review_evidence": {
+                        "summary": "post-cost evidence accepted",
+                        "approved_by": "operator",
+                        "rollback_plan": "restore previous overlay config and rerun supervisor cycle",
+                        "effect_tracking_window": "next 3 weekly reviews",
+                    },
+                }
+            },
+            "patch_review_history_rows": [],
+        }
+    ]
+
+    summary = build_governance_health_summary(cards, [])
+
+    assert summary["status"] == "ready"
+    assert summary["live_change_governance_gap_count"] == 0
