@@ -123,7 +123,20 @@ class DashboardControlService:
                     self._send_json(404, {"ok": False, "error": "not_found", "path": path})
                     return
                 handler, ok_status, error_status = route
-                result = dict(handler(payload) or {})
+                try:
+                    result = dict(handler(payload) or {})
+                except Exception as exc:
+                    self._send_json(
+                        500,
+                        {
+                            "ok": False,
+                            "error": "handler_exception",
+                            "path": path,
+                            "exception_type": type(exc).__name__,
+                            "message": str(exc),
+                        },
+                    )
+                    return
                 self._send_json(ok_status if bool(result.get("ok", False)) else error_status, result)
 
         return Handler
