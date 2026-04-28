@@ -68,15 +68,19 @@ def validate_main() -> None:
     path = ROOT / "src" / "main.py"
     module = parse_module(path)
 
-    found_run_forever_call = False
+    found_main = False
+    found_intraday_bootstrap_call = False
     for node in ast.walk(module):
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            if node.func.attr == "run_forever":
-                found_run_forever_call = True
-                break
+        if isinstance(node, ast.FunctionDef) and node.name == "main":
+            found_main = True
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name) and node.func.id == "run_intraday_engine":
+                found_intraday_bootstrap_call = True
 
-    if not found_run_forever_call:
-        raise ValidationError("src/main.py does not call run_forever()")
+    if not found_main:
+        raise ValidationError("src/main.py does not define main()")
+    if not found_intraday_bootstrap_call:
+        raise ValidationError("src/main.py does not dispatch to run_intraday_engine()")
 
 
 def main() -> int:
