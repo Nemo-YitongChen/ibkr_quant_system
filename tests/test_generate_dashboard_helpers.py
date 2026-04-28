@@ -330,6 +330,43 @@ def test_build_ops_overview_surfaces_artifact_and_governance_alerts() -> None:
 
     categories = {row["category"]: row for row in overview["alert_rows"]}
     assert categories["ARTIFACT"]["status"] == "FAIL"
+    assert categories["ARTIFACT"]["alert_class"] == "artifact_contract"
+    assert categories["ARTIFACT"]["alert_severity"] == "fail"
     assert "artifact 3" in categories["ARTIFACT"]["detail"]
     assert categories["GOVERNANCE"]["status"] == "WARN"
+    assert categories["GOVERNANCE"]["alert_class"] == "governance"
     assert "pending governance" in categories["GOVERNANCE"]["detail"]
+
+
+def test_build_ops_overview_classifies_preflight_gateway_port_alerts() -> None:
+    overview = _build_ops_overview(
+        [],
+        preflight_summary={
+            "pass_count": 2,
+            "warn_count": 1,
+            "fail_count": 0,
+            "checks": [
+                {
+                    "name": "ibkr_port:127.0.0.1:4002",
+                    "status": "WARN",
+                    "detail": "127.0.0.1:4002 not_listening",
+                }
+            ],
+        },
+        control_payload={"service": {"status": "configured"}, "actions": {}},
+        execution_mode_summary={"mismatch_count": 0},
+        status_rollout_summary={
+            "market_state_missing_count": 0,
+            "data_attention_count": 0,
+            "data_research_fallback_count": 0,
+            "market_rows": [],
+        },
+        artifact_health_summary={"warning_count": 0, "degraded_count": 0},
+        governance_health_summary={"status": "ready"},
+    )
+
+    alert = overview["alert_rows"][0]
+    assert alert["alert_class"] == "gateway_port"
+    assert alert["alert_severity"] == "warn"
+    assert overview["alert_class_counts"]["gateway_port"] == 1
+    assert overview["alert_severity_counts"]["warn"] == 1

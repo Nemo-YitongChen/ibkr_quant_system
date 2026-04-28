@@ -14,6 +14,7 @@ import yaml
 from ..analysis.tracking import STATUS_LABELS
 from ..common.account_profile import load_account_profiles, resolved_account_profile_summary
 from ..common.adaptive_strategy import load_report_adaptive_strategy_payload
+from ..common.alert_classification import alert_severity, classify_alert_row
 from ..common.artifact_contracts import dashboard_artifact_contracts, report_artifact_contracts
 from ..common.artifact_health import (
     build_artifact_consistency_rows,
@@ -5265,6 +5266,28 @@ def _build_artifact_governance_alert_rows(
     return rows
 
 
+def _ops_alert_row(category: str, name: str, status: str, detail: str) -> Dict[str, Any]:
+    row = {
+        "category": str(category or ""),
+        "name": str(name or ""),
+        "status": str(status or ""),
+        "detail": str(detail or ""),
+    }
+    row["alert_class"] = classify_alert_row(row)
+    row["alert_severity"] = alert_severity(row)
+    return row
+
+
+def _with_ops_alert_classification(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for raw in list(rows or []):
+        row = dict(raw or {})
+        row["alert_class"] = classify_alert_row(row)
+        row["alert_severity"] = alert_severity(row)
+        out.append(row)
+    return out
+
+
 def _gateway_port_check_rows(preflight_summary: Dict[str, Any]) -> List[Dict[str, Any]]:
     return [
         dict(row)
@@ -5385,53 +5408,64 @@ def _build_ops_overview(
     alert_rows: List[Dict[str, Any]] = []
     for row in warning_rows[:8]:
         alert_rows.append(
-            {
-                "category": "PREFLIGHT",
-                "name": str(row.get("name", "") or ""),
-                "status": str(row.get("status", "") or ""),
-                "detail": str(row.get("detail", "") or ""),
-            }
+            _ops_alert_row(
+                "PREFLIGHT",
+                str(row.get("name", "") or ""),
+                str(row.get("status", "") or ""),
+                str(row.get("detail", "") or ""),
+            )
         )
     for card in stale_rows[:4]:
         report_status = dict(card.get("report_status", {}) or {})
         alert_rows.append(
-            {
-                "category": "REPORT",
-                "name": f"{card.get('market', '')}:{card.get('watchlist', '')}",
-                "status": "WARN",
-                "detail": str(report_status.get("fresh_reason", "") or "report_not_fresh"),
-            }
+            _ops_alert_row(
+                "REPORT",
+                f"{card.get('market', '')}:{card.get('watchlist', '')}",
+                "WARN",
+                str(report_status.get("fresh_reason", "") or "report_not_fresh"),
+            )
         )
     for card in degraded_rows[:4]:
         health = dict(card.get("health_summary", {}) or {})
         alert_rows.append(
-            {
-                "category": "HEALTH",
-                "name": f"{card.get('market', '')}:{card.get('watchlist', '')}",
-                "status": str(health.get("status", "WARN") or "WARN"),
-                "detail": str(health.get("status_detail", "") or "-"),
-            }
+            _ops_alert_row(
+                "HEALTH",
+                f"{card.get('market', '')}:{card.get('watchlist', '')}",
+                str(health.get("status", "WARN") or "WARN"),
+                str(health.get("status_detail", "") or "-"),
+            )
         )
     for row in status_rollout_rows[:4]:
         if int(row.get("market_state_missing_count", 0) or 0) > 0:
             alert_rows.append(
-                {
-                    "category": "MARKET_STATE",
-                    "name": str(row.get("market", "") or "-"),
-                    "status": "WARN",
-                    "detail": f"market_state_missing={int(row.get('market_state_missing_count', 0) or 0)}",
-                }
+                _ops_alert_row(
+                    "MARKET_STATE",
+                    str(row.get("market", "") or "-"),
+                    "WARN",
+                    f"market_state_missing={int(row.get('market_state_missing_count', 0) or 0)}",
+                )
             )
         if int(row.get("data_attention_count", 0) or 0) > 0:
             alert_rows.append(
-                {
-                    "category": "DATA",
-                    "name": str(row.get("market", "") or "-"),
-                    "status": "WARN",
-                    "detail": str(row.get("summary", "") or "-"),
-                }
+                _ops_alert_row(
+                    "DATA",
+                    str(row.get("market", "") or "-"),
+                    "WARN",
+                    str(row.get("summary", "") or "-"),
+                )
             )
-    alert_rows.extend(_build_artifact_governance_alert_rows(artifact_health_summary, governance_health_summary))
+    alert_rows.extend(
+        _with_ops_alert_classification(
+            _build_artifact_governance_alert_rows(artifact_health_summary, governance_health_summary)
+        )
+    )
+    alert_class_counts: Dict[str, int] = {}
+    alert_severity_counts: Dict[str, int] = {"fail": 0, "warn": 0, "ok": 0}
+    for row in alert_rows:
+        alert_class = str(row.get("alert_class") or "unknown")
+        severity = str(row.get("alert_severity") or "warn")
+        alert_class_counts[alert_class] = int(alert_class_counts.get(alert_class, 0)) + 1
+        alert_severity_counts[severity if severity in alert_severity_counts else "warn"] += 1
     preflight_banner_level = ""
     preflight_banner_title = ""
     preflight_banner_reason = ""
@@ -5508,6 +5542,8 @@ def _build_ops_overview(
         "preflight_banner_reason": preflight_banner_reason,
         "preflight_banner_action": preflight_banner_action,
         "preflight_banner_rows": preflight_banner_rows,
+        "alert_class_counts": alert_class_counts,
+        "alert_severity_counts": alert_severity_counts,
         "alert_rows": alert_rows,
     }
 
@@ -7959,6 +7995,8 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
             _dashboard_control_action_label(str(row.get("action", "") or "")),
             str(row.get("status", "") or ""),
             str(row.get("portfolio_id", "") or "-"),
+            str(row.get("error_class", "") or "-"),
+            str(row.get("error_severity", "") or "-"),
             str(row.get("detail", "") or "-"),
             str(row.get("error", "") or "-"),
         ]
@@ -8027,6 +8065,8 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
             row.get("category", ""),
             row.get("name", ""),
             row.get("status", ""),
+            row.get("alert_class", ""),
+            row.get("alert_severity", ""),
             row.get("detail", ""),
         ]
         for row in list(ops_overview.get("alert_rows", []) or [])
@@ -8091,7 +8131,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
       </div>
       <div class="meta">preflight_generated_at={html.escape(str(ops_overview.get('preflight_generated_at', '-') or '-'))}</div>
       {_render_table(["market", "portfolios", "state_gap", "stale_reports", "ops_warn", "ops_degraded", "data_attention", "research_fallback", "summary"], status_rollout_rows) if status_rollout_rows else ""}
-      {_render_table(["category", "name", "status", "detail"], ops_alert_rows) if ops_alert_rows else '<div class="empty">当前没有需要优先处理的运维告警。</div>'}
+      {_render_table(["category", "name", "status", "alert_class", "severity", "detail"], ops_alert_rows) if ops_alert_rows else '<div class="empty">当前没有需要优先处理的运维告警。</div>'}
       </div>
     </section>
     """
@@ -8117,7 +8157,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
       <div class="meta advanced-only" data-i18n-zh="这些按钮调用本机 supervisor control service；组合级开关会写入当前 summary 目录的 `dashboard_control_state.json`，并在下次启动 `python -m src.app.supervisor` 时自动恢复。">这些按钮调用本机 supervisor control service；组合级开关会写入当前 summary 目录的 `dashboard_control_state.json`，并在下次启动 `python -m src.app.supervisor` 时自动恢复。</div>
       <div class="advanced-only">
       <h3>控制操作审计</h3>
-      {_render_table(["ts", "action", "status", "portfolio", "detail", "error"], control_action_history_rows) if control_action_history_rows else '<div class="empty">暂无控制操作审计记录。</div>'}
+      {_render_table(["ts", "action", "status", "portfolio", "error_class", "severity", "detail", "error"], control_action_history_rows) if control_action_history_rows else '<div class="empty">暂无控制操作审计记录。</div>'}
       </div>
     </section>
     """

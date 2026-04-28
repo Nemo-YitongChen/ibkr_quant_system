@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from datetime import datetime
+import os
 from pathlib import Path
 from unittest.mock import patch
 import subprocess
@@ -31,6 +32,13 @@ class SupervisorCliTests(unittest.TestCase):
         )
         self._broker_snapshot_sync_patcher.start()
         self.addCleanup(self._broker_snapshot_sync_patcher.stop)
+
+    def _set_report_artifact_mtime(self, report_dir: Path, marker_dt: datetime) -> None:
+        ts = marker_dt.timestamp()
+        for name in ("investment_report.md", "enrichment.json"):
+            path = report_dir / name
+            if path.exists():
+                os.utime(path, (ts, ts))
 
     def test_managed_process_stop_clears_handle_after_graceful_shutdown(self):
         proc = unittest.mock.Mock()
@@ -7216,6 +7224,7 @@ class SupervisorCliTests(unittest.TestCase):
             supervisor = Supervisor(str(cfg_path))
             current = datetime.now(supervisor.tz)
             now = current.replace(hour=23, minute=9, second=0, microsecond=0)
+            self._set_report_artifact_mtime(report_dir, supervisor._market_now(now, supervisor.markets[0]))
             with patch.object(supervisor, "_generate_reports") as mock_reports:
                 supervisor.run_cycle(now)
             mock_reports.assert_not_called()
@@ -7318,6 +7327,7 @@ class SupervisorCliTests(unittest.TestCase):
             supervisor = Supervisor(str(cfg_path))
             current = datetime.now(supervisor.tz)
             now = current.replace(hour=23, minute=9, second=0, microsecond=0)
+            self._set_report_artifact_mtime(report_dir, supervisor._market_now(now, supervisor.markets[0]))
             with patch.object(
                 supervisor,
                 "_current_macro_signature",

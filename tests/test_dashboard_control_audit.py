@@ -28,6 +28,7 @@ def test_dashboard_control_action_audit_redacts_sensitive_text(tmp_path):
     assert "/Volumes/Data and Info" not in row["error"]
     assert "xyz" not in row["error"]
     assert row["error_class"] == "exception"
+    assert row["error_severity"] == "fail"
 
     audit_path = tmp_path / "dashboard_control_action_audit.jsonl"
     append_dashboard_control_action_audit(audit_path, row)
@@ -43,4 +44,5 @@ def test_dashboard_control_error_classification_buckets():
     assert classify_dashboard_control_error("connection refused") == "transient_io"
     assert classify_dashboard_control_error("permission denied") == "permission"
     assert classify_dashboard_control_error("weekly_review_failed") == "task_failed"
+    assert classify_dashboard_control_error("handler_exception: failed") == "exception"
     assert redact_dashboard_control_text("api_key=abc password=def") == "api_key=<redacted> password=<redacted>"

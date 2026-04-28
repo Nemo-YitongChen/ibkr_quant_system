@@ -20,6 +20,7 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
                 "action_history": [
                     {"action": "run_once", "status": "completed"},
                     {"action": "refresh_dashboard", "status": "completed"},
+                    {"action": "run_preflight", "status": "failed", "error_class": "transient_io"},
                 ],
             },
         },
@@ -45,6 +46,8 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
         "evidence_quality",
     ]
     assert by_id["ops_health"]["metrics"]["degraded_health_count"] == 1
-    assert by_id["dashboard_control_actions"]["metrics"]["history_count"] == 2
+    assert by_id["dashboard_control_actions"]["metrics"]["history_count"] == 3
+    assert by_id["dashboard_control_actions"]["metrics"]["transient_io_error_count"] == 1
+    assert by_id["dashboard_control_actions"]["metrics"]["retryable_error_count"] == 1
     assert by_id["market_views"]["metrics"]["market_count"] == 3
     assert by_id["evidence_quality"]["metrics"]["evidence_row_count"] == 2

@@ -5,6 +5,8 @@ import re
 from pathlib import Path
 from typing import Any, Dict
 
+from ..common.alert_classification import classify_error_text, error_severity
+
 
 _SECRET_ASSIGNMENT_RE = re.compile(
     r"(?i)\b(token|secret|password|passwd|api[_-]?key|authorization)\s*[:=]\s*([^\s,;]+)"
@@ -15,23 +17,7 @@ _VOLUME_PATH_RE = re.compile(r"/Volumes/([^\n\r\t]+)")
 
 
 def classify_dashboard_control_error(error: Any, *, status: str = "") -> str:
-    text = str(error or "").strip().lower()
-    status_text = str(status or "").strip().lower()
-    if not text and status_text not in {"failed", "error"}:
-        return "none"
-    if any(token in text for token in ("missing_", "unsupported_", "not_found", "invalid")):
-        return "validation"
-    if any(token in text for token in ("permission", "denied", "auth", "forbidden")):
-        return "permission"
-    if any(token in text for token in ("timeout", "connection", "unreachable", "refused", "broken pipe")):
-        return "transient_io"
-    if any(token in text for token in ("handler_exception", "traceback", "runtimeerror", "exception")):
-        return "exception"
-    if text in {"weekly_review_failed", "dashboard_refresh_failed"} or text.endswith("_failed"):
-        return "task_failed"
-    if status_text in {"failed", "error"}:
-        return "unknown_failure"
-    return "none"
+    return classify_error_text(error, status=status)
 
 
 def redact_dashboard_control_text(value: Any) -> str:
@@ -57,6 +43,10 @@ def sanitize_dashboard_control_action(row: Dict[str, Any] | None) -> Dict[str, A
     }
     sanitized["error_class"] = classify_dashboard_control_error(
         sanitized.get("error"),
+        status=str(sanitized.get("status") or ""),
+    )
+    sanitized["error_severity"] = error_severity(
+        str(sanitized.get("error_class") or ""),
         status=str(sanitized.get("status") or ""),
     )
     return sanitized

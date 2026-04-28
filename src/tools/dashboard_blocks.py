@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
+from ..common.alert_classification import summarize_error_classes
+
 
 def _dict(value: Any) -> Dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
@@ -60,6 +62,7 @@ def build_control_actions_block(payload: Dict[str, Any]) -> Dict[str, Any]:
     actions = _dict(control.get("actions"))
     history = list(reversed(_rows(actions.get("action_history"), limit=50)))[:20]
     failed_count = sum(1 for row in history if str(row.get("status") or "").lower() == "failed")
+    error_summary = summarize_error_classes(history)
     return {
         "id": "dashboard_control_actions",
         "title": "Dashboard Control Actions",
@@ -67,11 +70,18 @@ def build_control_actions_block(payload: Dict[str, Any]) -> Dict[str, Any]:
         "summary": (
             f"service={service.get('status') or 'disabled'} "
             f"last_action={actions.get('last_action') or '-'} "
-            f"failed_recent={failed_count}"
+            f"failed_recent={failed_count} "
+            f"primary_error={error_summary.get('primary_error_class') or 'none'}"
         ),
         "metrics": {
             "history_count": len(history),
             "failed_count": failed_count,
+            "retryable_error_count": _int(error_summary.get("retryable_count")),
+            "validation_error_count": _int(dict(error_summary.get("class_counts") or {}).get("validation")),
+            "permission_error_count": _int(dict(error_summary.get("class_counts") or {}).get("permission")),
+            "transient_io_error_count": _int(dict(error_summary.get("class_counts") or {}).get("transient_io")),
+            "task_failed_error_count": _int(dict(error_summary.get("class_counts") or {}).get("task_failed")),
+            "exception_error_count": _int(dict(error_summary.get("class_counts") or {}).get("exception")),
             "run_once_in_progress": int(bool(actions.get("run_once_in_progress"))),
             "preflight_in_progress": int(bool(actions.get("preflight_in_progress"))),
             "weekly_review_in_progress": int(bool(actions.get("weekly_review_in_progress"))),
