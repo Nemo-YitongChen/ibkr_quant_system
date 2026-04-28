@@ -61,6 +61,22 @@
 
 ## 3. main 上最近已合入的状态
 
+### 2026-04-28 PR / 分支收口
+
+当前 `main` 已完成最近一轮 PR 与旧分支收口：
+
+- GitHub open PR 数为 `0`
+- 远端只保留 `origin/main`
+- PR #10 dashboard evidence follow-up 已合入
+- PR #11 refined progressive optimization plan 已合入
+- PR #2 的有效 backlog 文档已提取并保留到 `main`
+- smoke / structure-check / fill audit / order audit / dashboard freshness 相关测试与 CI workflow 已合入
+- 最新全量验证结果为 `401 passed`
+
+详细归档见：
+
+- `docs/change_archive_2026-04-28_pr_branch_cleanup.md`
+
 ### 已合入的最近一轮关键建设
 
 当前 `main` 已经包含一轮比较明显的“工程加固”工作，核心方向是：
@@ -92,33 +108,9 @@
 
 ---
 
-## 4. 最近未合入但值得关注的工作流
+## 4. 最近已收口的工作流
 
-仓库里最近还有几条 **已开 PR 但尚未合入** 的工作，说明当前主要推进方向正在往“测试护栏 / 工程防回归”继续走：
-
-### 待合入 PR
-
-- **PR #2** `docs: add issue backlog drafts for project planning`
-  - 把 backlog 整理成 issue-ready drafts
-  - 说明项目开始从“只做”转向“可规划地做”
-
-- **PR #3** `ci: add structural validation for critical startup modules`
-  - 增加 startup-critical 模块结构校验
-  - 重点防 `storage.py` / `engine.py` 这类关键入口出现结构性回归
-
-- **PR #4** `test: add smoke tests for critical startup paths`
-  - 增加启动路径 smoke tests
-  - 重点覆盖 import、Storage 初始化、TradingEngine 构造
-
-- **PR #5** `test: verify bracket order audit persistence`
-  - 为 bracket order 的 audit persistence 增加高信号回归测试
-
-- **PR #6** `test: verify fill processor audit and risk event chain`
-  - 为 fill -> risk event -> gate callback 审计链增加高信号回归测试
-
-### 这批 PR 说明了什么
-
-这批未合入 PR 的共同指向很明确：
+最近一轮已收口工作说明当前主要推进方向正在往“测试护栏 / 工程防回归”继续走：
 
 > 当前项目的优先级，已经从“快速堆功能”转向“把关键运行链路守稳”。
 
