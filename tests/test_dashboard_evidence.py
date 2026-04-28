@@ -16,11 +16,14 @@ def test_build_market_views_always_returns_us_hk_cn():
     assert views["US"]["portfolio_count"] == 0
     assert views["US"]["settlement_cycle"] == "T+1"
     assert views["US"]["context"]["timezone"] == "America/New_York"
+    assert "趋势优先" in views["US"]["context_summary"]
     assert views["HK"]["portfolios"] == []
     assert views["HK"]["primary_review_axis"] == "board_lot_fee_drag_and_edge_gate"
+    assert "board_lot_mismatch" in views["HK"]["primary_risks"]
     assert views["CN"]["stale_report_count"] == 0
     assert views["CN"]["research_only"] is True
     assert views["CN"]["day_turnaround_allowed"] is False
+    assert "research_only" in views["CN"]["primary_risks"]
 
 
 def test_market_views_empty_input_returns_all_markets():

@@ -7806,6 +7806,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
             str(row.get("market", "") or ""),
             str(row.get("context_summary", "") or ""),
             str(row.get("primary_review_axis", "") or ""),
+            ", ".join(str(item) for item in list(row.get("primary_risks", []) or [])[:4]),
             str(int(row.get("portfolio_count", 0) or 0)),
             str(int(row.get("open_count", 0) or 0)),
             str(int(row.get("fresh_report_count", 0) or 0)),
@@ -9240,7 +9241,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     <section class="card overview">
       <h2>US/HK/CN 市场视图</h2>
       <div class="meta">按市场聚合开市、报告新鲜度、健康退化、数据关注和执行模式，避免只看全局平均。</div>
-      {_render_table(["market", "context", "review_axis", "portfolios", "open", "fresh", "stale", "degraded", "data_attention", "auto", "review_only", "paused"], market_view_rows)}
+      {_render_table(["market", "context", "review_axis", "primary_risks", "portfolios", "open", "fresh", "stale", "degraded", "data_attention", "auto", "review_only", "paused"], market_view_rows)}
     </section>
     """ if market_view_rows else ""
     weekly_waterfall_card = f"""
