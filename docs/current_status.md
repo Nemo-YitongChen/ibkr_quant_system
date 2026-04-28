@@ -79,6 +79,7 @@
 - `docs/change_archive_2026-04-28_dashboard_gateway_no_trade.md`
 - `docs/change_archive_2026-04-29_gateway_runtime_state.md`
 - `docs/change_archive_2026-04-29_alert_error_classification.md`
+- `docs/change_archive_2026-04-29_strategy_parameter_registry.md`
 
 ### 已合入的最近一轮关键建设
 
@@ -108,6 +109,8 @@
 - **工程基础已补一轮**
 - **运行治理框架已成型**
 - **下一步重点不是盲目加功能，而是继续补 guardrail / regression / dashboard 语义一致性**
+- **策略参数建议已经开始配置化**
+- **adaptive strategy 已接入 layered config source 追踪**
 
 ---
 

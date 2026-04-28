@@ -14,6 +14,13 @@ from ..common.adaptive_strategy import (
     adaptive_strategy_effective_controls_human_note,
     load_adaptive_strategy,
 )
+from ..common.strategy_parameter_registry import (
+    StrategyParameterRegistry,
+    load_strategy_parameter_registry,
+    strategy_parameter_field_meta,
+    strategy_parameter_priority,
+    strategy_parameter_proposed_value,
+)
 from ..common.market_structure import load_market_structure, market_structure_summary
 from ..common.markets import market_config_path, resolve_market_code
 from ..common.runtime_paths import resolve_repo_path
@@ -33,6 +40,7 @@ from .review_weekly_thresholds import (
 BASE_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_PAPER_CFG = InvestmentPaperConfig()
 DEFAULT_EXECUTION_CFG = InvestmentExecutionConfig()
+_STRATEGY_PARAMETER_REGISTRY: StrategyParameterRegistry | None = None
 
 
 def _clamp(value: float, lo: float, hi: float) -> float:
@@ -2624,88 +2632,28 @@ def _runtime_config_paths_for_market(market: str) -> Dict[str, Path]:
     }
 
 
+def _strategy_parameter_registry() -> StrategyParameterRegistry:
+    global _STRATEGY_PARAMETER_REGISTRY
+    if _STRATEGY_PARAMETER_REGISTRY is None:
+        _STRATEGY_PARAMETER_REGISTRY = load_strategy_parameter_registry(BASE_DIR)
+    return _STRATEGY_PARAMETER_REGISTRY
+
+
 def _calibration_patch_field_meta(field: str) -> Dict[str, Any]:
-    return {
-        "min_expected_edge_bps": {"field_label": "min expected edge", "step": 2.0, "bounds": (4.0, 60.0), "precision": 1},
-        "edge_cost_buffer_bps": {"field_label": "edge cost buffer", "step": 1.0, "bounds": (1.0, 20.0), "precision": 1},
-        "risk_budget_net_exposure": {"field_label": "risk budget net exposure", "step": 0.03, "bounds": (0.20, 1.00), "precision": 2},
-        "risk_budget_gross_exposure": {"field_label": "risk budget gross exposure", "step": 0.03, "bounds": (0.25, 1.20), "precision": 2},
-        "risk_budget_short_exposure": {"field_label": "risk budget short exposure", "step": 0.02, "bounds": (0.00, 0.50), "precision": 2},
-        "risk_recovery_max_bonus": {"field_label": "risk recovery max bonus", "step": 0.01, "bounds": (0.00, 0.15), "precision": 2},
-        "adv_max_participation_pct": {"field_label": "ADV max participation", "step": 0.005, "bounds": (0.005, 0.20), "precision": 3},
-        "adv_split_trigger_pct": {"field_label": "ADV split trigger", "step": 0.005, "bounds": (0.002, 0.10), "precision": 3},
-        "limit_price_buffer_bps": {"field_label": "limit price buffer", "step": 2.0, "bounds": (2.0, 40.0), "precision": 1},
-        "max_slices_per_symbol": {"field_label": "max slices per symbol", "step": 1.0, "bounds": (1.0, 8.0), "precision": 0},
-        "correlation_soft_limit": {"field_label": "correlation soft limit", "step": 0.03, "bounds": (0.30, 0.90), "precision": 2},
-        "stress_loss_soft_limit": {"field_label": "stress loss soft limit", "step": 0.01, "bounds": (0.03, 0.20), "precision": 3},
-        "portfolio_liquidity_soft_floor": {"field_label": "portfolio liquidity soft floor", "step": 0.03, "bounds": (0.10, 0.80), "precision": 2},
-        "portfolio_atr_soft_limit": {"field_label": "portfolio ATR soft limit", "step": 0.005, "bounds": (0.02, 0.15), "precision": 3},
-        "sector_concentration_soft_limit": {"field_label": "sector concentration soft limit", "step": 0.03, "bounds": (0.20, 0.80), "precision": 2},
-        "market_sentiment_soft_floor": {"field_label": "market sentiment soft floor", "step": 0.05, "bounds": (-0.60, 0.10), "precision": 2},
-    }.get(str(field or "").strip(), {})
+    return strategy_parameter_field_meta(field, registry=_strategy_parameter_registry())
 
 
 def _calibration_patch_priority(scope: str, field: str) -> tuple[int, str]:
-    scope_code = str(scope or "").strip().upper()
-    field_name = str(field or "").strip()
-    rankings: Dict[str, Dict[str, tuple[int, str]]] = {
-        "EXECUTION_GATE": {
-            "edge_cost_buffer_bps": (1, "先改低风险 buffer"),
-            "min_expected_edge_bps": (2, "再改主门槛"),
-        },
-        "SLICING_RELAX": {
-            "adv_split_trigger_pct": (1, "先调 split trigger"),
-            "adv_max_participation_pct": (2, "再调 ADV 上限"),
-            "limit_price_buffer_bps": (3, "最后调 limit buffer"),
-        },
-        "SLICING_TIGHTEN": {
-            "adv_split_trigger_pct": (1, "先调 split trigger"),
-            "adv_max_participation_pct": (2, "再调 ADV 上限"),
-            "max_slices_per_symbol": (3, "必要时再抬 slices 上限"),
-            "limit_price_buffer_bps": (4, "最后调 limit buffer"),
-        },
-        "RISK_BUDGET": {
-            "risk_budget_net_exposure": (1, "先改 net budget"),
-            "risk_budget_gross_exposure": (2, "再改 gross budget"),
-            "risk_budget_short_exposure": (3, "最后改 short budget"),
-        },
-        "RISK_THROTTLE": {
-            "correlation_soft_limit": (1, "先改相关性阈值"),
-            "stress_loss_soft_limit": (1, "先改 stress 阈值"),
-            "portfolio_liquidity_soft_floor": (1, "先改流动性阈值"),
-            "portfolio_atr_soft_limit": (1, "先改波动率阈值"),
-            "sector_concentration_soft_limit": (1, "先改集中度阈值"),
-            "market_sentiment_soft_floor": (1, "先改情绪阈值"),
-        },
-        "RISK_RECOVERY": {
-            "risk_recovery_max_bonus": (1, "先改 recovery bonus"),
-        },
-    }
-    return rankings.get(scope_code, {}).get(field_name, (9, "后续再评估"))
+    return strategy_parameter_priority(scope, field, registry=_strategy_parameter_registry())
 
 
 def _calibration_patch_value(field: str, current_value: Any, change_hint: str) -> Any:
-    meta = _calibration_patch_field_meta(field)
-    if not meta:
-        return current_value
-    try:
-        current = float(current_value)
-    except Exception:
-        return current_value
-    step = float(meta.get("step", 0.0) or 0.0)
-    lower, upper = meta.get("bounds", (-1e9, 1e9))
-    precision = int(meta.get("precision", 4) or 4)
-    direction = str(change_hint or "").strip().upper()
-    if direction in {"RELAX_LOWER", "LOWER", "REDUCE"}:
-        proposed = current - step
-    elif direction in {"INCREASE", "HIGHER", "TIGHTEN_HIGHER"}:
-        proposed = current + step
-    else:
-        proposed = current
-    proposed = _clamp(float(proposed), float(lower), float(upper))
-    if precision <= 0:
-        return int(round(proposed))
-    return round(float(proposed), precision)
+    return strategy_parameter_proposed_value(
+        field,
+        current_value,
+        change_hint,
+        registry=_strategy_parameter_registry(),
+    )
 
 
 def _calibration_runtime_market_cache(market: str) -> Dict[str, Any]:

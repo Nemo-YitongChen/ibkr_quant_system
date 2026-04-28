@@ -5,7 +5,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Dict, List
 
-import yaml
+from .config_layers import load_layered_config
 
 
 @dataclass
@@ -154,6 +154,7 @@ class AdaptiveStrategyConfig:
     market_profiles: Dict[str, MarketProfileConfig] = field(default_factory=dict)
     rollout: List[RolloutStage] = field(default_factory=list)
     notes: List[str] = field(default_factory=list)
+    config_sources: List[str] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, raw: Dict[str, Any] | None) -> "AdaptiveStrategyConfig":
@@ -197,11 +198,10 @@ def adaptive_strategy_config_path(base_dir: Path, explicit_path: str | None = No
 
 def load_adaptive_strategy(base_dir: Path, explicit_path: str | None = None) -> AdaptiveStrategyConfig:
     path = adaptive_strategy_config_path(base_dir, explicit_path)
-    if not path.exists():
-        return AdaptiveStrategyConfig()
-    with path.open("r", encoding="utf-8") as f:
-        payload = yaml.safe_load(f) or {}
-    return AdaptiveStrategyConfig.from_dict(payload)
+    loaded = load_layered_config(base_dir, str(path))
+    cfg = AdaptiveStrategyConfig.from_dict(loaded.payload)
+    cfg.config_sources = list(loaded.sources)
+    return cfg
 
 
 def _load_json_dict(path: Path) -> Dict[str, Any]:
@@ -305,6 +305,7 @@ def adaptive_strategy_context(cfg: AdaptiveStrategyConfig) -> Dict[str, Any]:
         "market_profiles": market_profiles,
         "rollout": rollout,
         "notes": list(cfg.notes or []),
+        "config_sources": list(cfg.config_sources or []),
         "summary_text": " | ".join(summary_parts),
     }
 

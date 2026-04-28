@@ -7,6 +7,12 @@ from typing import Any, Dict, List, Mapping, Set
 from zoneinfo import ZoneInfo
 
 from ..common.markets import resolve_market_code
+from ..common.strategy_parameter_registry import (
+    StrategyParameterRegistry,
+    load_strategy_parameter_registry,
+    strategy_parameter_priority,
+    strategy_parameter_proposed_value,
+)
 from .supervisor_support import (
     clamp_float,
     feedback_confidence_value,
@@ -15,6 +21,17 @@ from .supervisor_support import (
     scale_feedback_delta,
     scale_feedback_penalty_rows,
 )
+
+
+BASE_DIR = Path(__file__).resolve().parents[2]
+_STRATEGY_PARAMETER_REGISTRY: StrategyParameterRegistry | None = None
+
+
+def _strategy_parameter_registry() -> StrategyParameterRegistry:
+    global _STRATEGY_PARAMETER_REGISTRY
+    if _STRATEGY_PARAMETER_REGISTRY is None:
+        _STRATEGY_PARAMETER_REGISTRY = load_strategy_parameter_registry(BASE_DIR)
+    return _STRATEGY_PARAMETER_REGISTRY
 
 
 def market_profile_review_draft(row: Dict[str, Any] | None) -> Dict[str, Any]:
@@ -150,57 +167,33 @@ def market_profile_review_draft(row: Dict[str, Any] | None) -> Dict[str, Any]:
 
 
 def market_profile_patch_value(field: str, current_value: Any, change_hint: str) -> Any:
-    try:
-        current = float(current_value)
-    except Exception:
-        return current_value
-    direction = str(change_hint or "").strip().upper()
-    step_map = {
-        "min_expected_edge_bps": 2.0,
-        "edge_cost_buffer_bps": 1.0,
-        "regime_risk_on_threshold": 0.02,
-        "regime_hard_risk_off_threshold": 0.02,
-        "no_trade_band_pct": 0.005,
-        "turnover_penalty_scale": 0.03,
-    }
-    bounds_map = {
-        "min_expected_edge_bps": (4.0, 60.0, 1),
-        "edge_cost_buffer_bps": (1.0, 20.0, 1),
-        "regime_risk_on_threshold": (0.20, 0.90, 2),
-        "regime_hard_risk_off_threshold": (0.05, 0.60, 2),
-        "no_trade_band_pct": (0.005, 0.20, 3),
-        "turnover_penalty_scale": (0.0, 0.60, 2),
-    }
-    step = float(step_map.get(field, 0.0) or 0.0)
-    lower, upper, precision = bounds_map.get(field, (-1e9, 1e9, 4))
-    if direction in {"RELAX_LOWER", "REDUCE", "RECALIBRATE_RELAX"}:
-        proposed = current - step
-    elif direction in {"TIGHTEN_HIGHER", "INCREASE"}:
-        proposed = current + step
-    else:
-        proposed = current
-    proposed = clamp_float(proposed, lower, upper)
-    return round(float(proposed), int(precision))
+    return strategy_parameter_proposed_value(
+        field,
+        current_value,
+        change_hint,
+        registry=_strategy_parameter_registry(),
+    )
 
 
 def market_profile_patch_priority(scope: str, field: str) -> tuple[int, str, str, str]:
     scope_code = str(scope or "").strip().upper()
     field_name = str(field or "").strip()
+    rank, label = strategy_parameter_priority(scope_code, field_name, registry=_strategy_parameter_registry())
     if scope_code == "EXECUTION":
-        ranking = {
-            "edge_cost_buffer_bps": (1, "先改低风险 buffer", "LOW", "低风险"),
-            "min_expected_edge_bps": (2, "再改主门槛", "MEDIUM", "中风险"),
-        }
-        return ranking.get(field_name, (9, "后续再评估", "MEDIUM", "中风险"))
+        risk = {
+            "edge_cost_buffer_bps": ("LOW", "低风险"),
+            "min_expected_edge_bps": ("MEDIUM", "中风险"),
+        }.get(field_name, ("MEDIUM", "中风险"))
+        return int(rank), str(label), risk[0], risk[1]
     if scope_code == "REGIME_PLAN":
-        ranking = {
-            "no_trade_band_pct": (1, "先改 no-trade band", "LOW", "低风险"),
-            "turnover_penalty_scale": (2, "再改 turnover penalty", "LOW", "低风险"),
-            "regime_risk_on_threshold": (3, "然后复核 risk-on", "MEDIUM", "中风险"),
-            "regime_hard_risk_off_threshold": (4, "最后再动 hard-off", "HIGH", "高风险"),
-        }
-        return ranking.get(field_name, (9, "后续再评估", "MEDIUM", "中风险"))
-    return (9, "后续再评估", "MEDIUM", "中风险")
+        risk = {
+            "no_trade_band_pct": ("LOW", "低风险"),
+            "turnover_penalty_scale": ("LOW", "低风险"),
+            "regime_risk_on_threshold": ("MEDIUM", "中风险"),
+            "regime_hard_risk_off_threshold": ("HIGH", "高风险"),
+        }.get(field_name, ("MEDIUM", "中风险"))
+        return int(rank), str(label), risk[0], risk[1]
+    return int(rank), str(label), "MEDIUM", "中风险"
 
 
 def market_profile_manual_apply_patch(patch: Dict[str, Any] | None) -> Dict[str, Any]:

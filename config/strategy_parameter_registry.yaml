@@ -1,0 +1,186 @@
+fields:
+  min_expected_edge_bps:
+    field_label: "min expected edge"
+    step: 2.0
+    bounds: [4.0, 60.0]
+    precision: 1
+  edge_cost_buffer_bps:
+    field_label: "edge cost buffer"
+    step: 1.0
+    bounds: [1.0, 20.0]
+    precision: 1
+  regime_risk_on_threshold:
+    field_label: "risk-on threshold"
+    step: 0.02
+    bounds: [0.20, 0.90]
+    precision: 2
+  regime_hard_risk_off_threshold:
+    field_label: "hard risk-off threshold"
+    step: 0.02
+    bounds: [0.05, 0.60]
+    precision: 2
+  no_trade_band_pct:
+    field_label: "no-trade band"
+    step: 0.005
+    bounds: [0.005, 0.20]
+    precision: 3
+  turnover_penalty_scale:
+    field_label: "turnover penalty"
+    step: 0.03
+    bounds: [0.00, 0.60]
+    precision: 2
+  risk_budget_net_exposure:
+    field_label: "risk budget net exposure"
+    step: 0.03
+    bounds: [0.20, 1.00]
+    precision: 2
+  risk_budget_gross_exposure:
+    field_label: "risk budget gross exposure"
+    step: 0.03
+    bounds: [0.25, 1.20]
+    precision: 2
+  risk_budget_short_exposure:
+    field_label: "risk budget short exposure"
+    step: 0.02
+    bounds: [0.00, 0.50]
+    precision: 2
+  risk_recovery_max_bonus:
+    field_label: "risk recovery max bonus"
+    step: 0.01
+    bounds: [0.00, 0.15]
+    precision: 2
+  adv_max_participation_pct:
+    field_label: "ADV max participation"
+    step: 0.005
+    bounds: [0.005, 0.20]
+    precision: 3
+  adv_split_trigger_pct:
+    field_label: "ADV split trigger"
+    step: 0.005
+    bounds: [0.002, 0.10]
+    precision: 3
+  limit_price_buffer_bps:
+    field_label: "limit price buffer"
+    step: 2.0
+    bounds: [2.0, 40.0]
+    precision: 1
+  max_slices_per_symbol:
+    field_label: "max slices per symbol"
+    step: 1.0
+    bounds: [1.0, 8.0]
+    precision: 0
+  correlation_soft_limit:
+    field_label: "correlation soft limit"
+    step: 0.03
+    bounds: [0.30, 0.90]
+    precision: 2
+  stress_loss_soft_limit:
+    field_label: "stress loss soft limit"
+    step: 0.01
+    bounds: [0.03, 0.20]
+    precision: 3
+  portfolio_liquidity_soft_floor:
+    field_label: "portfolio liquidity soft floor"
+    step: 0.03
+    bounds: [0.10, 0.80]
+    precision: 2
+  portfolio_atr_soft_limit:
+    field_label: "portfolio ATR soft limit"
+    step: 0.005
+    bounds: [0.02, 0.15]
+    precision: 3
+  sector_concentration_soft_limit:
+    field_label: "sector concentration soft limit"
+    step: 0.03
+    bounds: [0.20, 0.80]
+    precision: 2
+  market_sentiment_soft_floor:
+    field_label: "market sentiment soft floor"
+    step: 0.05
+    bounds: [-0.60, 0.10]
+    precision: 2
+
+priorities:
+  EXECUTION_GATE:
+    edge_cost_buffer_bps:
+      rank: 1
+      label: "先改低风险 buffer"
+    min_expected_edge_bps:
+      rank: 2
+      label: "再改主门槛"
+  EXECUTION:
+    edge_cost_buffer_bps:
+      rank: 1
+      label: "先改低风险 buffer"
+    min_expected_edge_bps:
+      rank: 2
+      label: "再改主门槛"
+  REGIME_PLAN:
+    no_trade_band_pct:
+      rank: 1
+      label: "先改 no-trade band"
+    turnover_penalty_scale:
+      rank: 2
+      label: "再改 turnover penalty"
+    regime_risk_on_threshold:
+      rank: 3
+      label: "然后复核 risk-on"
+    regime_hard_risk_off_threshold:
+      rank: 4
+      label: "最后再动 hard-off"
+  SLICING_RELAX:
+    adv_split_trigger_pct:
+      rank: 1
+      label: "先调 split trigger"
+    adv_max_participation_pct:
+      rank: 2
+      label: "再调 ADV 上限"
+    limit_price_buffer_bps:
+      rank: 3
+      label: "最后调 limit buffer"
+  SLICING_TIGHTEN:
+    adv_split_trigger_pct:
+      rank: 1
+      label: "先调 split trigger"
+    adv_max_participation_pct:
+      rank: 2
+      label: "再调 ADV 上限"
+    max_slices_per_symbol:
+      rank: 3
+      label: "必要时再抬 slices 上限"
+    limit_price_buffer_bps:
+      rank: 4
+      label: "最后调 limit buffer"
+  RISK_BUDGET:
+    risk_budget_net_exposure:
+      rank: 1
+      label: "先改 net budget"
+    risk_budget_gross_exposure:
+      rank: 2
+      label: "再改 gross budget"
+    risk_budget_short_exposure:
+      rank: 3
+      label: "最后改 short budget"
+  RISK_THROTTLE:
+    correlation_soft_limit:
+      rank: 1
+      label: "先改相关性阈值"
+    stress_loss_soft_limit:
+      rank: 1
+      label: "先改 stress 阈值"
+    portfolio_liquidity_soft_floor:
+      rank: 1
+      label: "先改流动性阈值"
+    portfolio_atr_soft_limit:
+      rank: 1
+      label: "先改波动率阈值"
+    sector_concentration_soft_limit:
+      rank: 1
+      label: "先改集中度阈值"
+    market_sentiment_soft_floor:
+      rank: 1
+      label: "先改情绪阈值"
+  RISK_RECOVERY:
+    risk_recovery_max_bonus:
+      rank: 1
+      label: "先改 recovery bonus"

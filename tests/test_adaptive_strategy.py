@@ -54,6 +54,51 @@ def test_load_adaptive_strategy_framework_defaults() -> None:
     assert context["market_profiles"]["HK"]["regime_risk_on_threshold"] >= context["market_profiles"]["US"]["regime_risk_on_threshold"]
 
 
+def test_load_adaptive_strategy_supports_layered_market_override(tmp_path: Path) -> None:
+    base_cfg = tmp_path / "adaptive_base.yaml"
+    override_cfg = tmp_path / "adaptive_us_override.yaml"
+    base_cfg.write_text(
+        "\n".join(
+            [
+                "adaptive_strategy:",
+                "  meta:",
+                '    name: "ACM-RS"',
+                "  execution:",
+                '    rebalance_frequency: "weekly"',
+                "  market_profiles:",
+                "    DEFAULT:",
+                '      label: "Base"',
+                "      min_expected_edge_bps: 18.0",
+                "      edge_cost_buffer_bps: 6.0",
+                "    US:",
+                '      label: "US base"',
+                "      min_expected_edge_bps: 16.0",
+                "      edge_cost_buffer_bps: 5.0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    override_cfg.write_text(
+        "\n".join(
+            [
+                f"extends: {base_cfg}",
+                "adaptive_strategy:",
+                "  market_profiles:",
+                "    US:",
+                "      edge_cost_buffer_bps: 4.0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    cfg = load_adaptive_strategy(tmp_path, str(override_cfg))
+    context = adaptive_strategy_context(cfg)
+
+    assert context["market_profiles"]["US"]["min_expected_edge_bps"] == 16.0
+    assert context["market_profiles"]["US"]["edge_cost_buffer_bps"] == 4.0
+    assert len(context["config_sources"]) == 2
+
+
 def test_write_investment_md_includes_adaptive_strategy_section() -> None:
     cfg = load_adaptive_strategy(Path("."), "config/adaptive_strategy_framework.yaml")
     with TemporaryDirectory() as tmp:
