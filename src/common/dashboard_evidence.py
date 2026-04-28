@@ -14,6 +14,35 @@ WATERFALL_COMPONENTS: tuple[tuple[str, str, str], ...] = (
 )
 DEFAULT_MARKET_VIEW_MARKETS: tuple[str, ...] = ("US", "HK", "CN")
 DATA_ATTENTION_LABELS = {"待排查", "有缺失", "无数据", "混合", "研究Fallback", "warning", "fail"}
+MARKET_VIEW_CONTEXTS: Dict[str, Dict[str, Any]] = {
+    "US": {
+        "timezone": "America/New_York",
+        "settlement_cycle": "T+1",
+        "day_turnaround_allowed": True,
+        "research_only": False,
+        "execution_bias": "liquid_large_cap_etf_first",
+        "primary_review_axis": "edge_gate_and_turnover",
+        "context_summary": "T+1 / day-turnaround allowed / low-friction edge calibration",
+    },
+    "HK": {
+        "timezone": "Asia/Hong_Kong",
+        "settlement_cycle": "T+2",
+        "day_turnaround_allowed": True,
+        "research_only": False,
+        "execution_bias": "low_turnover_board_lot_aware",
+        "primary_review_axis": "board_lot_fee_drag_and_edge_gate",
+        "context_summary": "T+2 / board-lot and fee drag / low-turnover calibration",
+    },
+    "CN": {
+        "timezone": "Asia/Shanghai",
+        "settlement_cycle": "T+1",
+        "day_turnaround_allowed": False,
+        "research_only": True,
+        "execution_bias": "research_only_etf_large_cap",
+        "primary_review_axis": "market_rule_and_research_only_blocks",
+        "context_summary": "T+1 / no same-day turnaround / research-only market-rule review",
+    },
+}
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -167,6 +196,18 @@ def build_market_views(
             )
         out[market_code] = {
             "market": market_code,
+            "context": dict(MARKET_VIEW_CONTEXTS.get(market_code, {})),
+            "context_summary": str(
+                dict(MARKET_VIEW_CONTEXTS.get(market_code, {})).get("context_summary") or ""
+            ),
+            "settlement_cycle": str(dict(MARKET_VIEW_CONTEXTS.get(market_code, {})).get("settlement_cycle") or ""),
+            "day_turnaround_allowed": bool(
+                dict(MARKET_VIEW_CONTEXTS.get(market_code, {})).get("day_turnaround_allowed", False)
+            ),
+            "research_only": bool(dict(MARKET_VIEW_CONTEXTS.get(market_code, {})).get("research_only", False)),
+            "primary_review_axis": str(
+                dict(MARKET_VIEW_CONTEXTS.get(market_code, {})).get("primary_review_axis") or ""
+            ),
             "portfolio_count": len(market_cards),
             "open_count": open_count,
             "fresh_report_count": fresh_count,

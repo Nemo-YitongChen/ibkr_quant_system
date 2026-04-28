@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Dict, List, Optional, Any
 
 from ..common.logger import get_logger
@@ -41,6 +41,53 @@ class StrategyConfig:
     mr: MRConfig = field(default_factory=MRConfig)
     bo: BOConfig = field(default_factory=BOConfig)
     mid: RegimeConfig = field(default_factory=RegimeConfig)
+
+    @staticmethod
+    def _dataclass_from_dict(cls: Any, raw: Dict[str, Any] | None) -> Any:
+        raw = dict(raw or {})
+        values = {field.name: raw[field.name] for field in fields(cls) if field.name in raw}
+        return cls(**values)
+
+    @classmethod
+    def from_dict(cls, raw: Dict[str, Any] | None) -> "StrategyConfig":
+        raw = dict(raw or {})
+        strategy_raw = dict(raw.get("strategy") or {})
+        orders_raw = dict(raw.get("orders") or {})
+        flat_raw = {key: value for key, value in raw.items() if key in cls.__dataclass_fields__}
+        nested = {
+            "risk": TradeRiskConfig.from_dict(dict(raw.get("risk") or {})),
+            "mr": cls._dataclass_from_dict(MRConfig, dict(raw.get("mr") or {})),
+            "bo": cls._dataclass_from_dict(BOConfig, dict(raw.get("bo") or {})),
+            "mid": cls._dataclass_from_dict(RegimeConfig, dict(raw.get("mid") or {})),
+        }
+        values: Dict[str, Any] = {}
+        values.update(flat_raw)
+        for key in (
+            "trade_threshold",
+            "base_qty",
+            "enable_pure_short",
+            "short_threshold",
+            "mid_soft_floor",
+            "mid_qty_min",
+            "mid_qty_max",
+            "runtime_mode",
+            "paper_allowed_execution_sources",
+            "enforce_pretrade_risk_gate",
+        ):
+            if key in strategy_raw:
+                values[key] = strategy_raw[key]
+        if "default_take_profit_pct" in orders_raw:
+            values["take_profit_pct"] = orders_raw["default_take_profit_pct"]
+        if "default_stop_loss_pct" in orders_raw:
+            values["stop_loss_pct"] = orders_raw["default_stop_loss_pct"]
+        values.update(nested)
+        if "paper_allowed_execution_sources" in values:
+            values["paper_allowed_execution_sources"] = [
+                str(item).upper()
+                for item in list(values.get("paper_allowed_execution_sources") or [])
+                if str(item).strip()
+            ]
+        return cls(**values)
 
 
 @dataclass

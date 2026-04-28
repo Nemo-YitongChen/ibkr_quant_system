@@ -500,9 +500,11 @@ def dashboard_control_artifacts_payload(
     market_profile_manual_patch_yaml_path: str,
     calibration_patch_json_path: str,
     calibration_patch_yaml_path: str,
+    dashboard_control_action_audit_path: str = "",
 ) -> Dict[str, Any]:
     return {
         "dashboard_control_state_path": str(dashboard_control_state_path or ""),
+        "dashboard_control_action_audit_path": str(dashboard_control_action_audit_path or ""),
         "market_profile_manual_patch_json_path": str(market_profile_manual_patch_json_path or ""),
         "market_profile_manual_patch_yaml_path": str(market_profile_manual_patch_yaml_path or ""),
         "calibration_patch_json_path": str(calibration_patch_json_path or ""),

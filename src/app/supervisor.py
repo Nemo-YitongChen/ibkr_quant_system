@@ -29,6 +29,11 @@ from ..common.runtime_paths import resolve_repo_path, resolve_scoped_runtime_pat
 from ..common.storage import Storage
 from ..enrichment.providers import EnrichmentProviders
 from .dashboard_control import DashboardControlService
+from .dashboard_control_audit import (
+    append_dashboard_control_action_audit as _append_dashboard_control_action_audit,
+    redact_dashboard_control_text as _redact_dashboard_control_text,
+    sanitize_dashboard_control_action as _sanitize_dashboard_control_action,
+)
 from .supervisor_patch_support import (
     calibration_patch_candidate as _calibration_patch_candidate,
     dashboard_control_calibration_patch_fields as _dashboard_control_calibration_patch_fields,
@@ -445,6 +450,9 @@ class Supervisor:
 
     def _dashboard_control_state_path(self) -> Path:
         return self._summary_output_dir() / "dashboard_control_state.json"
+
+    def _dashboard_control_action_audit_path(self) -> Path:
+        return self._summary_output_dir() / "dashboard_control_action_audit.jsonl"
 
     def _market_profile_manual_patch_artifact_paths(self) -> tuple[Path, Path]:
         out_dir = self._summary_output_dir()
@@ -1224,22 +1232,28 @@ class Supervisor:
         error: str = "",
     ) -> None:
         ts = str(action_ts or datetime.now(self.tz).isoformat())
-        self._dashboard_control_last_action = str(action or "")
-        self._dashboard_control_last_action_ts = ts
-        self._dashboard_control_last_error = str(error or "")
-        self._dashboard_control_action_history.append(
+        row = _sanitize_dashboard_control_action(
             {
                 "ts": ts,
-                "action": str(action or ""),
-                "status": str(status or ""),
-                "portfolio_id": str(portfolio_id or ""),
-                "detail": str(detail or ""),
-                "error": str(error or ""),
+                "action": action,
+                "status": status,
+                "portfolio_id": portfolio_id,
+                "detail": detail,
+                "error": error,
             }
         )
+        self._dashboard_control_last_action = str(row.get("action") or "")
+        self._dashboard_control_last_action_ts = ts
+        self._dashboard_control_last_error = str(row.get("error") or "")
+        self._dashboard_control_action_history.append(row)
         self._dashboard_control_action_history = self._dashboard_control_action_history[
             -DASHBOARD_CONTROL_ACTION_HISTORY_LIMIT:
         ]
+        if self._dashboard_control_enabled():
+            try:
+                _append_dashboard_control_action_audit(self._dashboard_control_action_audit_path(), row)
+            except OSError as e:
+                log.warning("Failed to append dashboard control action audit: path=%s error=%s", self._dashboard_control_action_audit_path(), e)
 
     def _dashboard_control_patch_review_bundle_for_item(
         self,
@@ -1371,6 +1385,7 @@ class Supervisor:
         calibration_patch_json_path, calibration_patch_yaml_path = self._calibration_patch_artifact_paths()
         return _dashboard_control_artifacts_payload(
             dashboard_control_state_path=str(self._dashboard_control_state_path()),
+            dashboard_control_action_audit_path=str(self._dashboard_control_action_audit_path()),
             market_profile_manual_patch_json_path=str(manual_patch_json_path),
             market_profile_manual_patch_yaml_path=str(manual_patch_yaml_path),
             calibration_patch_json_path=str(calibration_patch_json_path),
@@ -1512,13 +1527,17 @@ class Supervisor:
         except Exception:
             return
         actions = dict(payload.get("actions") or {})
-        self._dashboard_control_last_action = str(actions.get("last_action") or self._dashboard_control_last_action)
+        self._dashboard_control_last_action = _redact_dashboard_control_text(
+            actions.get("last_action") or self._dashboard_control_last_action
+        )
         self._dashboard_control_last_action_ts = str(
             actions.get("last_action_ts") or self._dashboard_control_last_action_ts
         )
-        self._dashboard_control_last_error = str(actions.get("last_error") or self._dashboard_control_last_error)
+        self._dashboard_control_last_error = _redact_dashboard_control_text(
+            actions.get("last_error") or self._dashboard_control_last_error
+        )
         self._dashboard_control_action_history = [
-            dict(row)
+            _sanitize_dashboard_control_action(dict(row))
             for row in list(actions.get("action_history") or [])
             if isinstance(row, dict)
         ][-DASHBOARD_CONTROL_ACTION_HISTORY_LIMIT:]

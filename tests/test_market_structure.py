@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from tempfile import NamedTemporaryFile, TemporaryDirectory
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 from src.analysis.investment_portfolio import InvestmentPaperConfig
@@ -25,6 +26,20 @@ class _FakeIB:
     errorEvent = _DummyEvent()
     execDetailsEvent = _DummyEvent()
     commissionReportEvent = _DummyEvent()
+
+
+def _price_bars(count: int, *, start: float = 100.0) -> list[SimpleNamespace]:
+    return [
+        SimpleNamespace(
+            time=i,
+            open=start + i - 0.5,
+            high=start + i + 1.0,
+            low=start + i - 1.0,
+            close=start + i,
+            volume=1000000 + i,
+        )
+        for i in range(count)
+    ]
 
 
 def test_load_hk_market_structure_includes_fee_stack() -> None:
@@ -134,6 +149,46 @@ def test_investment_opportunity_engine_small_account_prefers_etf_entries() -> No
         assert rows[1]["entry_status"] == "ENTRY_NOW"
         assert rows[1]["market_structure_status"] == "CLEAR"
         assert rows[1]["user_reason_label"] == "可开始分批"
+
+
+def test_xetra_opportunity_defaults_to_external_market_data_first() -> None:
+    with NamedTemporaryFile(suffix=".db") as tmp:
+        engine = InvestmentOpportunityEngine(
+            ib=_FakeIB(),
+            account_id="DUQ152001",
+            storage=Storage(tmp.name),
+            market="XETRA",
+            portfolio_id="XETRA:test",
+            execution_cfg=InvestmentExecutionConfig(),
+            opportunity_cfg=InvestmentOpportunityConfig(),
+            market_structure=load_market_structure(Path("."), "XETRA"),
+        )
+        assert engine.prefer_external_market_data is True
+        assert engine.data_adapter.prefer_yfinance_daily is True
+        assert engine.data_adapter.prefer_yfinance_intraday is True
+
+
+def test_xetra_opportunity_metrics_skip_ibkr_snapshot_in_external_mode() -> None:
+    with NamedTemporaryFile(suffix=".db") as tmp:
+        engine = InvestmentOpportunityEngine(
+            ib=_FakeIB(),
+            account_id="DUQ152001",
+            storage=Storage(tmp.name),
+            market="XETRA",
+            portfolio_id="XETRA:test",
+            execution_cfg=InvestmentExecutionConfig(),
+            opportunity_cfg=InvestmentOpportunityConfig(),
+            market_structure=load_market_structure(Path("."), "XETRA"),
+        )
+        engine.data_adapter = Mock()
+        engine.data_adapter.get_daily_bars.return_value = (_price_bars(80, start=90.0), "yfinance")
+        engine.data_adapter.get_5m_bars_with_source.return_value = (_price_bars(12, start=120.0), "yfinance_5m")
+        engine.md.get_snapshot_price = Mock(side_effect=AssertionError("IBKR snapshot should not be called"))
+
+        metrics = engine._candidate_metrics(["RWE.DE"])
+
+        assert metrics["RWE.DE"]["ref_price_source"] == "yfinance_5m"
+        engine.md.get_snapshot_price.assert_not_called()
 
 
 def test_investment_opportunity_engine_applies_adaptive_defensive_waits() -> None:

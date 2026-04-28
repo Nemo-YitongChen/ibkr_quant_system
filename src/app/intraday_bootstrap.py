@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -169,18 +170,9 @@ def _build_strategy_config(
     paper_allowed_execution_sources: List[str] | None = None,
     enforce_pretrade_risk_gate: bool = True,
 ) -> StrategyConfig:
-    strategy_raw = dict(strat_cfg_raw.get("strategy", {}) or {})
-    orders_raw = dict(strat_cfg_raw.get("orders", {}) or {})
-    return StrategyConfig(
-        trade_threshold=float(strategy_raw.get("trade_threshold", StrategyConfig.trade_threshold)),
-        base_qty=float(strategy_raw.get("base_qty", StrategyConfig.base_qty)),
-        take_profit_pct=float(orders_raw.get("default_take_profit_pct", StrategyConfig.take_profit_pct)),
-        stop_loss_pct=float(orders_raw.get("default_stop_loss_pct", StrategyConfig.stop_loss_pct)),
-        enable_pure_short=bool(strategy_raw.get("enable_pure_short", StrategyConfig.enable_pure_short)),
-        short_threshold=float(strategy_raw.get("short_threshold", StrategyConfig.short_threshold)),
-        mid_soft_floor=float(strategy_raw.get("mid_soft_floor", StrategyConfig.mid_soft_floor)),
-        mid_qty_min=float(strategy_raw.get("mid_qty_min", StrategyConfig.mid_qty_min)),
-        mid_qty_max=float(strategy_raw.get("mid_qty_max", StrategyConfig.mid_qty_max)),
+    base_cfg = StrategyConfig.from_dict(strat_cfg_raw)
+    return replace(
+        base_cfg,
         runtime_mode=str(runtime_mode or ""),
         paper_allowed_execution_sources=[
             str(value).upper()

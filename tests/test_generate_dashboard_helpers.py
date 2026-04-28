@@ -6,6 +6,7 @@ from src.tools.generate_dashboard import (
     _build_market_data_health_overview,
     _build_overview,
     _build_ops_overview,
+    _dashboard_v2_block_metrics_text,
     _simple_ops_overview_rows,
     _dashboard_market_state_label,
     _dashboard_report_freshness_label,
@@ -42,6 +43,22 @@ def test_dashboard_market_state_label_supports_none() -> None:
     assert _dashboard_market_state_label(None) == "市场状态: 暂无数据"
     assert _dashboard_market_state_label(True) == "开市中"
     assert _dashboard_market_state_label(False) == "已闭市"
+
+
+def test_dashboard_v2_block_metrics_text_renders_advanced_html_metrics() -> None:
+    text = _dashboard_v2_block_metrics_text(
+        {
+            "metrics": {
+                "market_count": 3,
+                "portfolio_count": 7,
+                "nested": {"ignored": True},
+            }
+        }
+    )
+
+    assert "market_count=3" in text
+    assert "portfolio_count=7" in text
+    assert "nested" not in text
 
 
 def test_build_health_overview_prefers_degraded_and_merges_summary() -> None:

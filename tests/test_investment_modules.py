@@ -1692,6 +1692,28 @@ class InvestmentModuleTests(unittest.TestCase):
         self.assertEqual(len(bars), 8)
         self.assertAlmostEqual(float(bars[-1].close), float(yf_bars[-1].close), places=6)
 
+    def test_market_data_adapter_yfinance_first_daily_skips_ibkr(self):
+        md = Mock()
+        md.get_daily_bars.side_effect = AssertionError("IBKR daily history should not be called")
+        adapter = MarketDataAdapter(md, prefer_yfinance_daily=True)
+        yf_bars = _bars(n=6, start=80.0, step=0.2)
+        with patch("src.data.adapters.fetch_daily_bars_yf", return_value=yf_bars):
+            bars, source = adapter.get_daily_bars("RWE.DE", days=30)
+        self.assertEqual(source, "yfinance")
+        self.assertEqual(len(bars), len(yf_bars))
+        md.get_daily_bars.assert_not_called()
+
+    def test_market_data_adapter_yfinance_first_5m_skips_ibkr(self):
+        md = Mock()
+        md.get_5m_bars.side_effect = AssertionError("IBKR 5m history should not be called")
+        adapter = MarketDataAdapter(md, prefer_yfinance_intraday=True)
+        yf_bars = _bars(n=12, start=50.0, step=0.1)
+        with patch("src.data.adapters.fetch_intraday_bars_yf", return_value=yf_bars):
+            bars, source = adapter.get_5m_bars_with_source("RWE.DE", need=8, fallback_days=5)
+        self.assertEqual(source, "yfinance_5m")
+        self.assertEqual(len(bars), 8)
+        md.get_5m_bars.assert_not_called()
+
     def test_market_data_adapter_falls_back_when_sync_path_receives_awaitable(self):
         async def _async_ib_response():
             return []

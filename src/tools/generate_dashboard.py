@@ -1247,6 +1247,21 @@ def _short_summary_text(text: str, *, max_len: int = 88) -> str:
     return compact[: max(8, int(max_len)) - 1].rstrip(" ,;:，；：/|") + "…"
 
 
+def _dashboard_v2_block_metrics_text(block: Dict[str, Any], *, max_items: int = 8) -> str:
+    metrics = dict(block.get("metrics") or {})
+    parts: List[str] = []
+    for key in sorted(metrics):
+        value = metrics.get(key)
+        if isinstance(value, (dict, list, tuple)):
+            continue
+        if value in (None, ""):
+            continue
+        parts.append(f"{key}={value}")
+        if len(parts) >= max(1, int(max_items)):
+            break
+    return " / ".join(parts)
+
+
 def _simple_research_summary_lines(
     *,
     recommended_action: str,
@@ -7781,6 +7796,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
             str(row.get("id", "") or ""),
             str(row.get("status", "") or ""),
             _short_summary_text(str(row.get("summary", "") or "-"), max_len=120),
+            _short_summary_text(_dashboard_v2_block_metrics_text(row), max_len=140),
         ]
         for row in list(payload.get("dashboard_v2_blocks", []) or [])
         if isinstance(row, dict)
@@ -7788,6 +7804,8 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     market_view_rows = [
         [
             str(row.get("market", "") or ""),
+            str(row.get("context_summary", "") or ""),
+            str(row.get("primary_review_axis", "") or ""),
             str(int(row.get("portfolio_count", 0) or 0)),
             str(int(row.get("open_count", 0) or 0)),
             str(int(row.get("fresh_report_count", 0) or 0)),
@@ -9215,14 +9233,14 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     <section class="card overview">
       <h2>Dashboard v2 Blocks</h2>
       <div class="meta">这四块是后续 dashboard v2 的稳定 JSON builder 输出，先在专业模式里暴露结构和健康摘要。</div>
-      {_render_table(["block", "status", "summary"], dashboard_v2_block_rows)}
+      {_render_table(["block", "status", "summary", "metrics"], dashboard_v2_block_rows)}
     </section>
     """ if dashboard_v2_block_rows else ""
     market_views_card = f"""
     <section class="card overview">
       <h2>US/HK/CN 市场视图</h2>
       <div class="meta">按市场聚合开市、报告新鲜度、健康退化、数据关注和执行模式，避免只看全局平均。</div>
-      {_render_table(["market", "portfolios", "open", "fresh", "stale", "degraded", "data_attention", "auto", "review_only", "paused"], market_view_rows)}
+      {_render_table(["market", "context", "review_axis", "portfolios", "open", "fresh", "stale", "degraded", "data_attention", "auto", "review_only", "paused"], market_view_rows)}
     </section>
     """ if market_view_rows else ""
     weekly_waterfall_card = f"""

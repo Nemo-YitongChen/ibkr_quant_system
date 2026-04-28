@@ -12,3 +12,4 @@ opportunity:
   include_hold_candidates: true
   use_intraday_5m: true
   intraday_lookback_bars: 24
+  prefer_external_market_data: true

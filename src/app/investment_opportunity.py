@@ -29,6 +29,8 @@ from ..analysis.investment_portfolio import InvestmentPaperConfig
 
 log = get_logger("app.investment_opportunity")
 
+_EXTERNAL_MARKET_DATA_FIRST_MARKETS = {"XETRA"}
+
 
 def _sma(values: List[float], window: int) -> float:
     if window <= 0 or len(values) < window:
@@ -67,6 +69,7 @@ class InvestmentOpportunityConfig:
     include_hold_candidates: bool = True
     use_intraday_5m: bool = True
     intraday_lookback_bars: int = 24
+    prefer_external_market_data: bool | None = None
 
     @classmethod
     def from_dict(cls, raw: Dict[str, Any] | None) -> "InvestmentOpportunityConfig":
@@ -109,6 +112,11 @@ class InvestmentOpportunityEngine:
         self.adaptive_strategy = adaptive_strategy
         self.opportunity_cfg = align_opportunity_config_with_adaptive_strategy(opportunity_cfg, adaptive_strategy)
         self.market_structure = market_structure or MarketStructureConfig(market=self.market)
+        configured_external_first = getattr(self.opportunity_cfg, "prefer_external_market_data", None)
+        if configured_external_first is None:
+            self.prefer_external_market_data = self.market in _EXTERNAL_MARKET_DATA_FIRST_MARKETS
+        else:
+            self.prefer_external_market_data = bool(configured_external_first)
         self.execution_engine = InvestmentExecutionEngine(
             ib=ib,
             account_id=account_id,
@@ -120,7 +128,11 @@ class InvestmentOpportunityEngine:
             market_structure=self.market_structure,
         )
         self.md = MarketDataService(ib)
-        self.data_adapter = MarketDataAdapter(self.md)
+        self.data_adapter = MarketDataAdapter(
+            self.md,
+            prefer_yfinance_daily=bool(self.prefer_external_market_data),
+            prefer_yfinance_intraday=bool(self.prefer_external_market_data),
+        )
 
     @staticmethod
     def _read_csv(path: Path) -> List[Dict[str, Any]]:
@@ -164,10 +176,12 @@ class InvestmentOpportunityEngine:
                 if intraday_closes:
                     intraday_close = float(intraday_closes[-1])
                     intraday_sma_6 = _sma(intraday_closes, min(6, len(intraday_closes)))
-            try:
-                snapshot_price = self.md.get_snapshot_price(symbol)
-            except Exception:
-                snapshot_price = 0.0
+            snapshot_price = 0.0
+            if not bool(self.prefer_external_market_data):
+                try:
+                    snapshot_price = self.md.get_snapshot_price(symbol)
+                except Exception:
+                    snapshot_price = 0.0
             last_close = float(closes[-1]) if closes else 0.0
             ref_price = float(snapshot_price or intraday_close or last_close)
             if snapshot_price:

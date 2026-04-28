@@ -1778,7 +1778,11 @@ class ReviewInvestmentWeeklyTests(unittest.TestCase):
         self.assertEqual(review_row["block_reason"], "EDGE_GATE")
         self.assertEqual(review_row["allowed_count"], 1)
         self.assertEqual(review_row["blocked_count"], 1)
+        self.assertAlmostEqual(float(review_row["allowed_minus_blocked_outcome_5d_bps"]), 47.0, places=6)
         self.assertAlmostEqual(float(review_row["allowed_minus_blocked_outcome_20d_bps"]), 140.0, places=6)
+        self.assertAlmostEqual(float(review_row["allowed_minus_blocked_outcome_60d_bps"]), 235.0, places=6)
+        self.assertEqual(review_row["positive_outcome_horizon_count"], 3)
+        self.assertEqual(review_row["review_basis"], "5/20/60d_multi_horizon")
         self.assertEqual(review_row["review_label"], "BLOCKING_HELPED")
 
     def test_weekly_edge_slicing_and_risk_calibration_rows(self):

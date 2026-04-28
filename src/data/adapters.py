@@ -50,6 +50,8 @@ class MarketDataAdapter:
     daily_cache_ttl_sec: int = 1800
     intraday_cache_ttl_sec: int = 120
     serialize_ib_requests: bool = True
+    prefer_yfinance_daily: bool = False
+    prefer_yfinance_intraday: bool = False
 
     def __post_init__(self) -> None:
         self._daily_cache: dict[tuple[str, int], tuple[float, List[BarData], str]] = {}
@@ -97,11 +99,44 @@ class MarketDataAdapter:
             except Exception:
                 return
 
+    def _daily_yfinance_bars(self, symbol: str, days: int, key: tuple[str, int]) -> Tuple[List[BarData], str]:
+        bars = fetch_daily_bars_yf(symbol, days=days)
+        if not bars:
+            return [], ""
+        converted = _to_bar_data(bars, "yfinance")
+        if converted:
+            self._cache_put(self._daily_cache, key, converted, "yfinance")
+            return list(converted), "yfinance"
+        return [], ""
+
+    def _intraday_yfinance_bars(
+        self,
+        symbol: str,
+        *,
+        need: int,
+        fallback_days: int,
+        key: tuple[str, int, int],
+    ) -> Tuple[List[BarData], str]:
+        bars = fetch_intraday_bars_yf(symbol, interval="5m", days=fallback_days)
+        if not bars:
+            return [], ""
+        converted = _to_bar_data(bars[-max(1, int(need)) :], "yfinance_5m")
+        if converted:
+            self._cache_put(self._intraday_cache, key, converted, "yfinance_5m")
+            return list(converted), "yfinance_5m"
+        return [], ""
+
     def get_daily_bars(self, symbol: str, days: int) -> Tuple[List[BarData], str]:
         key = (str(symbol).upper(), int(days))
         cached_bars, cached_source = self._cache_get(self._daily_cache, key, int(self.daily_cache_ttl_sec))
         if cached_bars:
             return cached_bars, cached_source
+        if bool(self.prefer_yfinance_daily):
+            bars, source = self._daily_yfinance_bars(symbol, days, key)
+            if bars:
+                return bars, source
+            log.info("daily bars yfinance-first returned empty for %s; skipping IBKR history request", symbol)
+            return [], ""
         try:
             if bool(self.serialize_ib_requests):
                 with self._ib_lock:
@@ -120,18 +155,19 @@ class MarketDataAdapter:
                 log.info("daily bars use yfinance for %s in non-owner sync IB path: %s", symbol, e)
             else:
                 log.warning("daily bars fallback to yfinance for %s: %s", symbol, e)
-        bars = fetch_daily_bars_yf(symbol, days=days)
-        if bars:
-            converted = _to_bar_data(bars, "yfinance")
-            self._cache_put(self._daily_cache, key, converted, "yfinance")
-            return list(converted), "yfinance"
-        return [], ""
+        return self._daily_yfinance_bars(symbol, days, key)
 
     def get_5m_bars_with_source(self, symbol: str, need: int = 156, fallback_days: int = 5) -> Tuple[List[BarData], str]:
         key = (str(symbol).upper(), int(need), int(fallback_days))
         cached_bars, cached_source = self._cache_get(self._intraday_cache, key, int(self.intraday_cache_ttl_sec))
         if cached_bars:
             return cached_bars, cached_source
+        if bool(self.prefer_yfinance_intraday):
+            bars, source = self._intraday_yfinance_bars(symbol, need=need, fallback_days=fallback_days, key=key)
+            if bars:
+                return bars, source
+            log.info("5m bars yfinance-first returned empty for %s; skipping IBKR history request", symbol)
+            return [], ""
         try:
             if bool(self.serialize_ib_requests):
                 with self._ib_lock:
@@ -150,12 +186,7 @@ class MarketDataAdapter:
                 log.info("5m bars use yfinance for %s in non-owner sync IB path: %s", symbol, e)
             else:
                 log.warning("5m bars fallback to yfinance for %s: %s", symbol, e)
-        bars = fetch_intraday_bars_yf(symbol, interval="5m", days=fallback_days)
-        if bars:
-            converted = _to_bar_data(bars[-max(1, int(need)) :], "yfinance_5m")
-            self._cache_put(self._intraday_cache, key, converted, "yfinance_5m")
-            return list(converted), "yfinance_5m"
-        return [], ""
+        return self._intraday_yfinance_bars(symbol, need=need, fallback_days=fallback_days, key=key)
 
     def get_5m_bars(self, symbol: str, need: int = 156) -> List[BarData]:
         bars, _ = self.get_5m_bars_with_source(symbol, need=need)

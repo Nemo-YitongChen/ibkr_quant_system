@@ -478,23 +478,38 @@ def _build_blocked_vs_allowed_expost_rows(decision_evidence_rows: List[Dict[str,
             reason = str(row.get("block_reason") or "UNKNOWN").strip().upper() or "UNKNOWN"
             blocked_by_reason.setdefault(reason, []).append(row)
         for block_reason, blocked_rows in blocked_by_reason.items():
+            allowed_avg_5d = _avg_from_rows(allowed_rows, "outcome_5d_bps")
+            blocked_avg_5d = _avg_from_rows(blocked_rows, "outcome_5d_bps")
             allowed_avg_20d = _avg_from_rows(allowed_rows, "outcome_20d_bps")
             blocked_avg_20d = _avg_from_rows(blocked_rows, "outcome_20d_bps")
-            delta = None
+            allowed_avg_60d = _avg_from_rows(allowed_rows, "outcome_60d_bps")
+            blocked_avg_60d = _avg_from_rows(blocked_rows, "outcome_60d_bps")
+            delta_5d = None
+            if allowed_avg_5d is not None and blocked_avg_5d is not None:
+                delta_5d = float(allowed_avg_5d - blocked_avg_5d)
+            delta_20d = None
             if allowed_avg_20d is not None and blocked_avg_20d is not None:
-                delta = float(allowed_avg_20d - blocked_avg_20d)
+                delta_20d = float(allowed_avg_20d - blocked_avg_20d)
+            delta_60d = None
+            if allowed_avg_60d is not None and blocked_avg_60d is not None:
+                delta_60d = float(allowed_avg_60d - blocked_avg_60d)
+            horizon_deltas = [value for value in (delta_5d, delta_20d, delta_60d) if value is not None]
+            positive_horizons = sum(1 for value in horizon_deltas if float(value) >= 15.0)
+            negative_horizons = sum(1 for value in horizon_deltas if float(value) <= -15.0)
             review_label = "INSUFFICIENT_OUTCOME_SAMPLE"
-            review_note = "等待更多 20d outcome 样本。"
-            if delta is not None:
-                if delta >= 25.0:
+            review_note = "等待更多 5/20/60d outcome 样本。"
+            review_basis = "no_outcome"
+            if horizon_deltas:
+                review_basis = "5/20/60d_multi_horizon"
+                if positive_horizons >= 2 or (delta_20d is not None and delta_20d >= 25.0):
                     review_label = "BLOCKING_HELPED"
-                    review_note = "被允许订单 20d outcome 明显强于被挡订单，当前 gate 方向有效。"
-                elif delta <= -25.0:
+                    review_note = "被允许订单在 outcome 维度强于被挡订单，当前 gate 方向有效。"
+                elif negative_horizons >= 2 or (delta_20d is not None and delta_20d <= -25.0):
                     review_label = "BLOCKED_OUTPERFORMED_ALLOWED"
                     review_note = "被挡订单事后强于被允许订单，优先复核该 gate 是否过紧。"
                 else:
                     review_label = "MIXED"
-                    review_note = "被允许与被挡样本差异不明显，继续累计样本。"
+                    review_note = "被允许与被挡样本在 5/20/60d 上差异不稳定，继续累计样本。"
             out.append(
                 {
                     "market": market,
@@ -506,13 +521,19 @@ def _build_blocked_vs_allowed_expost_rows(decision_evidence_rows: List[Dict[str,
                     "blocked_avg_expected_edge_bps": _avg_from_rows(blocked_rows, "expected_edge_bps"),
                     "allowed_avg_realized_edge_bps": _avg_from_rows(allowed_rows, "realized_edge_bps"),
                     "blocked_avg_realized_edge_bps": _avg_from_rows(blocked_rows, "realized_edge_bps"),
-                    "allowed_avg_outcome_5d_bps": _avg_from_rows(allowed_rows, "outcome_5d_bps"),
-                    "blocked_avg_outcome_5d_bps": _avg_from_rows(blocked_rows, "outcome_5d_bps"),
+                    "allowed_avg_outcome_5d_bps": allowed_avg_5d,
+                    "blocked_avg_outcome_5d_bps": blocked_avg_5d,
                     "allowed_avg_outcome_20d_bps": allowed_avg_20d,
                     "blocked_avg_outcome_20d_bps": blocked_avg_20d,
-                    "allowed_avg_outcome_60d_bps": _avg_from_rows(allowed_rows, "outcome_60d_bps"),
-                    "blocked_avg_outcome_60d_bps": _avg_from_rows(blocked_rows, "outcome_60d_bps"),
-                    "allowed_minus_blocked_outcome_20d_bps": delta,
+                    "allowed_avg_outcome_60d_bps": allowed_avg_60d,
+                    "blocked_avg_outcome_60d_bps": blocked_avg_60d,
+                    "allowed_minus_blocked_outcome_5d_bps": delta_5d,
+                    "allowed_minus_blocked_outcome_20d_bps": delta_20d,
+                    "allowed_minus_blocked_outcome_60d_bps": delta_60d,
+                    "outcome_horizon_count": int(len(horizon_deltas)),
+                    "positive_outcome_horizon_count": int(positive_horizons),
+                    "negative_outcome_horizon_count": int(negative_horizons),
+                    "review_basis": review_basis,
                     "review_label": review_label,
                     "review_note": review_note,
                 }
