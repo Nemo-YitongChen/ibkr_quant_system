@@ -71,6 +71,8 @@ DASHBOARD_MODE_DISPLAY_LABELS: Dict[str, str] = {
 }
 
 DASHBOARD_TRANSLATIONS_EN.update({
+    "IB Gateway 已连接；先复核当前健康、权限或账户快照告警，再继续看执行计划。": "IB Gateway is connected; review current health, permission, or account snapshot warnings before continuing with the execution plan.",
+    "无成交优化": "No-Fill Optimization",
     "开市中": "Market Open",
     "已闭市": "Market Closed",
     "状态汇总": "Status Rollout",
@@ -5525,6 +5527,56 @@ def _simple_gateway_status_text(health: Dict[str, Any]) -> str:
     return f"{status} | {detail}" if detail else status
 
 
+def _simple_gateway_metric_int(health: Dict[str, Any], key: str) -> int:
+    try:
+        return int(float(health.get(key, 0) or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _simple_gateway_detail_is_disconnected(detail: str) -> bool:
+    text = str(detail or "").strip().lower()
+    if not text:
+        return False
+    disconnected_tokens = (
+        "not_listening",
+        "connection refused",
+        "connectionrefused",
+        "connect failed",
+        "unreachable",
+        "timed out",
+        "timeout",
+        "disconnected",
+    )
+    return any(token in text for token in disconnected_tokens)
+
+
+def _simple_gateway_is_connected(health: Dict[str, Any]) -> bool:
+    status = str(health.get("status", "OK") or "OK").strip()
+    status_key = status.upper()
+    detail = str(health.get("status_detail", "") or "").strip()
+    connectivity_breaks = _simple_gateway_metric_int(health, "connectivity_breaks")
+    connectivity_restores = _simple_gateway_metric_int(health, "connectivity_restores")
+    if _simple_gateway_detail_is_disconnected(detail):
+        return False
+    if connectivity_breaks > connectivity_restores:
+        return False
+    if status in {"IBKR正常"} or status_key in {"OK", "READY", "LIMITED", "WARNING", "WARN"}:
+        return True
+    if status_key == "DEGRADED":
+        limited_but_connected = any(
+            _simple_gateway_metric_int(health, key) > 0
+            for key in (
+                "delayed_count",
+                "permission_count",
+                "account_limit_count",
+                "snapshot_fallback_count",
+            )
+        )
+        return limited_but_connected or connectivity_restores > 0
+    return False
+
+
 def _simple_next_step_text(
     *,
     mode: str,
@@ -5532,6 +5584,7 @@ def _simple_next_step_text(
     open_flag: bool,
     report_fresh: str,
     gateway_status_label: str,
+    gateway_connected: bool,
     action_label: str,
     action_detail: str,
     recommendation_differs: bool,
@@ -5541,8 +5594,10 @@ def _simple_next_step_text(
         return "当前市场只输出研究结果，不会提交交易。"
     if report_fresh != "fresh":
         return "先刷新最新报告，确认这一轮数据已经生成完成。"
-    if gateway_status_label not in {"OK", "IBKR正常"}:
+    if not gateway_connected:
         return "先启动 IB Gateway，并确认 paper/live 目标端口可连接。"
+    if gateway_status_label not in {"OK", "IBKR正常"}:
+        return "IB Gateway 已连接；先复核当前健康、权限或账户快照告警，再继续看执行计划。"
     if recommendation_differs and recommended_execution_mode_label and recommended_execution_mode_label != "-":
         return f"先把执行模式切到“{recommended_execution_mode_label}”。"
     if action_label and action_label != "观察":
@@ -6599,6 +6654,7 @@ def _render_card(card: Dict[str, Any]) -> str:
     execution_badge = _dashboard_execution_badge_label(mode, is_dry_run_view)
     gateway_status_label = str(health.get("status", "OK") or "OK").strip() or "OK"
     gateway_status_text = _simple_gateway_status_text(health)
+    gateway_connected = _simple_gateway_is_connected(health)
     market_structure_summary = dict(card.get("market_structure_summary", {}) or {})
     account_profile_summary = dict(card.get("account_profile_summary", {}) or {})
     simple_status_text = (
@@ -6621,6 +6677,7 @@ def _render_card(card: Dict[str, Any]) -> str:
         open_flag=open_flag,
         report_fresh=report_fresh,
         gateway_status_label=gateway_status_label,
+        gateway_connected=gateway_connected,
         action_label=action_label,
         action_detail=action_detail,
         recommendation_differs=recommendation_differs,
@@ -7373,6 +7430,8 @@ def _simple_weekly_strategy_context_rows(card: Dict[str, Any]) -> List[List[str]
         rows.append(["市场档案", str(weekly_context.get("adaptive_strategy_market_profile_note") or "").strip()])
     if str(weekly_context.get("market_profile_tuning_note") or "").strip():
         rows.append(["调优方向", str(weekly_context.get("market_profile_tuning_note") or "").strip()])
+    if str(weekly_context.get("no_trade_optimization_note") or "").strip():
+        rows.append(["无成交优化", str(weekly_context.get("no_trade_optimization_note") or "").strip()])
     review_summary = str(
         control_portfolio.get("weekly_feedback_market_profile_review_summary")
         or weekly_context.get("market_profile_review_summary")

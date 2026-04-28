@@ -1397,6 +1397,8 @@ def _build_weekly_tuning_dataset_row(
         "market_profile_tuning_bias": str(tuning.get("market_profile_tuning_bias") or ""),
         "market_profile_tuning_action": str(tuning.get("market_profile_tuning_action") or ""),
         "market_profile_tuning_note": str(tuning.get("market_profile_tuning_note") or ""),
+        "no_trade_optimization_note": str(tuning.get("no_trade_optimization_note") or ""),
+        "counterfactual_optimization_available": int(tuning.get("counterfactual_optimization_available", 0) or 0),
         "market_profile_ready_for_manual_apply": int(summary.get("market_profile_ready_for_manual_apply", 0) or 0),
         "market_profile_readiness_label": str(summary.get("market_profile_readiness_label") or ""),
         "market_profile_readiness_summary": str(summary.get("market_profile_readiness_summary") or ""),
@@ -1597,6 +1599,10 @@ def _apply_market_profile_tuning_context(
         row["market_profile_tuning_action"] = str(tuning.get("market_profile_tuning_action", "") or "")
         row["market_profile_tuning_note"] = str(tuning.get("market_profile_tuning_note", "") or "")
         row["market_profile_tuning_summary"] = str(tuning.get("market_profile_tuning_summary", "") or "")
+        row["no_trade_optimization_note"] = str(tuning.get("no_trade_optimization_note", "") or "")
+        row["counterfactual_optimization_available"] = int(
+            tuning.get("counterfactual_optimization_available", 0) or 0
+        )
         row["market_profile_cohort_weeks"] = int(readiness.get("market_profile_cohort_weeks", 0) or 0)
         row["market_profile_baseline_week"] = str(readiness.get("market_profile_baseline_week", "") or "")
         row["market_profile_action_chain"] = str(readiness.get("market_profile_action_chain", "") or "")

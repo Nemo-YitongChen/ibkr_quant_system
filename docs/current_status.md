@@ -76,6 +76,7 @@
 详细归档见：
 
 - `docs/change_archive_2026-04-28_pr_branch_cleanup.md`
+- `docs/change_archive_2026-04-28_dashboard_gateway_no_trade.md`
 
 ### 已合入的最近一轮关键建设
 

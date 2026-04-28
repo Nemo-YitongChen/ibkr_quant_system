@@ -419,6 +419,9 @@ class ReviewInvestmentWeeklyTests(unittest.TestCase):
             "min_edge=16.0bps | edge_buffer=5.0bps",
         )
         self.assertIn("min_expected_edge_bps", str(row["market_profile_tuning_note"]))
+        self.assertIn("counterfactual", str(row["market_profile_tuning_note"]))
+        self.assertIn("5/20/60d", str(row["no_trade_optimization_note"]))
+        self.assertEqual(int(row["counterfactual_optimization_available"]), 1)
 
     def test_weekly_tuning_dataset_rows_merge_strategy_outcome_and_execution_views(self):
         rows = _build_weekly_tuning_dataset_rows(

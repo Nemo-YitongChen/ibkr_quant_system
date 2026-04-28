@@ -640,6 +640,7 @@ def _build_market_profile_tuning_summary(
         tuning_bias_label = "暂无明显失配"
         tuning_action = "KEEP_BASELINE"
         note = "当前市场档案没有出现单一主导的失配信号，先继续观察。"
+        no_trade_optimization_note = ""
 
         if gate_weight >= max(0.02, strategy_delta + 0.01, risk_delta + 0.01) and blocked_edge_count > 0:
             tuning_target = "EXECUTION_GATE"
@@ -650,6 +651,20 @@ def _build_market_profile_tuning_summary(
             note = (
                 "本周更明显的阻断来自 execution edge gate，优先复核 "
                 "min_expected_edge_bps / edge_cost_buffer_bps，而不是继续收紧执行节奏。"
+            )
+            no_trade_prefix = (
+                "本周几乎所有计划单都被 gate 阻断；"
+                if gate_ratio >= 0.95
+                else "即使当前 paper 成交样本不足，"
+            )
+            no_trade_optimization_note = (
+                f"{no_trade_prefix}仍可用候选快照、被阻断订单的 5/20/60d outcome、"
+                "expected_edge 与 required_edge gap、shadow/dry-run 回标做 counterfactual 校准；"
+                "先在 paper/shadow 单字段放宽验证，不直接 live 生效。"
+            )
+            note = (
+                f"{note}若本周没有 paper 成交，先用 counterfactual/outcome 回标验证被挡单，"
+                "再做 paper/shadow 单字段放宽。"
             )
         elif strategy_delta >= max(0.05, risk_delta + 0.02, gate_weight + 0.02):
             tuning_target = "REGIME_PLAN"
@@ -703,6 +718,8 @@ def _build_market_profile_tuning_summary(
                 "market_profile_tuning_action": tuning_action,
                 "market_profile_tuning_note": note,
                 "market_profile_tuning_summary": summary_text,
+                "no_trade_optimization_note": no_trade_optimization_note,
+                "counterfactual_optimization_available": int(bool(no_trade_optimization_note)),
                 "strategy_control_weight_delta": float(strategy_delta),
                 "risk_overlay_weight_delta": float(risk_delta),
                 "execution_gate_blocked_weight": float(gate_weight),

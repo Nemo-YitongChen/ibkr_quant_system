@@ -7,7 +7,10 @@ from src.tools.generate_dashboard import (
     _build_overview,
     _build_ops_overview,
     _dashboard_v2_block_metrics_text,
+    _simple_gateway_is_connected,
+    _simple_next_step_text,
     _simple_ops_overview_rows,
+    _simple_weekly_strategy_context_rows,
     _dashboard_market_state_label,
     _dashboard_report_freshness_label,
     _translate_market_status_label_en,
@@ -59,6 +62,68 @@ def test_dashboard_v2_block_metrics_text_renders_advanced_html_metrics() -> None
     assert "market_count=3" in text
     assert "portfolio_count=7" in text
     assert "nested" not in text
+
+
+def test_simple_gateway_connected_treats_limited_permissions_as_connected() -> None:
+    health = {
+        "status": "LIMITED",
+        "status_detail": "perm=2 delayed=1",
+        "permission_count": 2,
+        "delayed_count": 1,
+    }
+
+    assert _simple_gateway_is_connected(health) is True
+    next_step = _simple_next_step_text(
+        mode="paper-auto-submit",
+        is_dry_run_view=False,
+        open_flag=True,
+        report_fresh="fresh",
+        gateway_status_label="LIMITED",
+        gateway_connected=True,
+        action_label="观察",
+        action_detail="",
+        recommendation_differs=False,
+        recommended_execution_mode_label="-",
+    )
+
+    assert "IB Gateway 已连接" in next_step
+    assert "先启动 IB Gateway" not in next_step
+
+
+def test_simple_gateway_disconnected_only_for_unresolved_connectivity_break() -> None:
+    health = {
+        "status": "DEGRADED",
+        "status_detail": "127.0.0.1:4002 not_listening",
+        "connectivity_breaks": 1,
+        "connectivity_restores": 0,
+    }
+
+    assert _simple_gateway_is_connected(health) is False
+    assert _simple_next_step_text(
+        mode="paper-auto-submit",
+        is_dry_run_view=False,
+        open_flag=True,
+        report_fresh="fresh",
+        gateway_status_label="DEGRADED",
+        gateway_connected=False,
+        action_label="观察",
+        action_detail="",
+        recommendation_differs=False,
+        recommended_execution_mode_label="-",
+    ) == "先启动 IB Gateway，并确认 paper/live 目标端口可连接。"
+
+
+def test_simple_weekly_strategy_context_rows_include_no_trade_optimization_note() -> None:
+    rows = _simple_weekly_strategy_context_rows(
+        {
+            "weekly_strategy_context": {
+                "weekly_strategy_note": "本周没有成交。",
+                "no_trade_optimization_note": "用候选快照和 shadow 回标继续校准。",
+            }
+        }
+    )
+
+    assert ["无成交优化", "用候选快照和 shadow 回标继续校准。"] in rows
 
 
 def test_build_health_overview_prefers_degraded_and_merges_summary() -> None:

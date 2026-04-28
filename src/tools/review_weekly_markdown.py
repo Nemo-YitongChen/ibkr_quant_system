@@ -99,6 +99,8 @@ def write_weekly_review_markdown(
                 lines.append(f"  市场档案: {row['adaptive_strategy_market_profile_note']}")
             if row.get("market_profile_tuning_note"):
                 lines.append(f"  参数调优: {row['market_profile_tuning_note']}")
+            if row.get("no_trade_optimization_note"):
+                lines.append(f"  无成交优化: {row['no_trade_optimization_note']}")
             if row.get("market_profile_readiness_summary"):
                 lines.append(f"  建议状态: {row['market_profile_readiness_summary']}")
             if row.get("strategy_effective_controls_note"):
