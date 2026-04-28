@@ -29,7 +29,14 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
             "HK": {"market": "HK", "portfolio_count": 1, "stale_report_count": 1},
             "CN": {"market": "CN", "portfolio_count": 0},
         },
-        "unified_evidence_overview": {"row_count": 2, "allowed_row_count": 1, "blocked_row_count": 1},
+        "unified_evidence_overview": {
+            "row_count": 3,
+            "allowed_row_count": 1,
+            "blocked_row_count": 1,
+            "candidate_only_row_count": 1,
+            "outcome_labeled_row_count": 2,
+            "partial_join_row_count": 1,
+        },
         "blocked_vs_allowed_expost_review": [
             {"review_label": "BLOCKING_HELPED", "block_reason": "EDGE_GATE"},
         ],
@@ -50,4 +57,6 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
     assert by_id["dashboard_control_actions"]["metrics"]["transient_io_error_count"] == 1
     assert by_id["dashboard_control_actions"]["metrics"]["retryable_error_count"] == 1
     assert by_id["market_views"]["metrics"]["market_count"] == 3
-    assert by_id["evidence_quality"]["metrics"]["evidence_row_count"] == 2
+    assert by_id["evidence_quality"]["metrics"]["evidence_row_count"] == 3
+    assert by_id["evidence_quality"]["metrics"]["candidate_only_row_count"] == 1
+    assert by_id["evidence_quality"]["metrics"]["outcome_labeled_row_count"] == 2

@@ -223,17 +223,28 @@ def test_build_unified_evidence_overview_groups_by_market():
             {"market": "US", "allowed_flag": 1, "blocked_flag": 0},
             {"market": "US", "allowed_flag": 0, "blocked_flag": 1},
             {"market": "HK", "allowed_flag": "true", "blocked_flag": ""},
-            {"market": "", "allowed_flag": 0, "blocked_flag": True},
+            {
+                "market": "",
+                "allowed_flag": 0,
+                "blocked_flag": True,
+                "candidate_only_flag": 1,
+                "join_quality": "candidate_outcome_only",
+                "outcome_20d_bps": 120.0,
+            },
         ]
     )
 
     assert overview["row_count"] == 4
     assert overview["allowed_row_count"] == 2
     assert overview["blocked_row_count"] == 2
+    assert overview["candidate_only_row_count"] == 1
+    assert overview["outcome_labeled_row_count"] == 1
+    assert overview["partial_join_row_count"] == 1
     by_market = {row["market"]: row for row in overview["market_rows"]}
     assert by_market["US"]["row_count"] == 2
     assert by_market["HK"]["allowed_row_count"] == 1
     assert by_market["UNKNOWN"]["blocked_row_count"] == 1
+    assert by_market["UNKNOWN"]["candidate_only_row_count"] == 1
 
 
 def test_unified_evidence_overview_counts_bool_and_string_flags():

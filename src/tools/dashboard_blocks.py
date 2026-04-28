@@ -128,12 +128,16 @@ def build_evidence_quality_block(payload: Dict[str, Any]) -> Dict[str, Any]:
         "status": "warn" if too_restrictive_count else "ok",
         "summary": (
             f"evidence_rows={_int(evidence_overview.get('row_count'))} "
+            f"candidate_only={_int(evidence_overview.get('candidate_only_row_count'))} "
             f"blocked_reviews={len(blocked_review_rows)}"
         ),
         "metrics": {
             "evidence_row_count": _int(evidence_overview.get("row_count")),
             "blocked_row_count": _int(evidence_overview.get("blocked_row_count")),
             "allowed_row_count": _int(evidence_overview.get("allowed_row_count")),
+            "candidate_only_row_count": _int(evidence_overview.get("candidate_only_row_count")),
+            "outcome_labeled_row_count": _int(evidence_overview.get("outcome_labeled_row_count")),
+            "partial_join_row_count": _int(evidence_overview.get("partial_join_row_count")),
             "too_restrictive_count": too_restrictive_count,
             "waterfall_row_count": len(waterfall_rows),
         },

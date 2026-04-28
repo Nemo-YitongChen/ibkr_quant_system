@@ -1788,6 +1788,101 @@ class ReviewInvestmentWeeklyTests(unittest.TestCase):
         self.assertEqual(review_row["review_basis"], "5/20/60d_multi_horizon")
         self.assertEqual(review_row["review_label"], "BLOCKING_HELPED")
 
+    def test_decision_evidence_keeps_candidate_outcomes_without_orders(self):
+        portfolio_id = "US:watchlist"
+        snapshot_rows = [
+            {
+                "snapshot_id": "RUN1|final|AAA",
+                "market": "US",
+                "portfolio_id": portfolio_id,
+                "analysis_run_id": "RUN1",
+                "stage": "final",
+                "symbol": "AAA",
+                "action": "ACCUMULATE",
+                "direction": "LONG",
+                "score": 0.72,
+                "score_before_cost": 0.81,
+                "expected_cost_bps": 12.0,
+                "expected_edge_bps": 55.0,
+                "details": json.dumps({"stage_rank": 1}),
+            },
+            {
+                "snapshot_id": "RUN1|deep|BBB",
+                "market": "US",
+                "portfolio_id": portfolio_id,
+                "analysis_run_id": "RUN1",
+                "stage": "deep",
+                "symbol": "BBB",
+                "action": "WATCH",
+                "direction": "LONG",
+                "score": 0.44,
+                "score_before_cost": 0.50,
+                "expected_cost_bps": 9.0,
+                "expected_edge_bps": 18.0,
+                "details": json.dumps({"stage_rank": 2}),
+            },
+        ]
+        outcome_rows = [
+            {
+                "snapshot_id": "RUN1|final|AAA",
+                "market": "US",
+                "portfolio_id": portfolio_id,
+                "symbol": "AAA",
+                "horizon_days": 5,
+                "future_return": 0.02,
+            },
+            {
+                "snapshot_id": "RUN1|final|AAA",
+                "market": "US",
+                "portfolio_id": portfolio_id,
+                "symbol": "AAA",
+                "horizon_days": 20,
+                "future_return": 0.07,
+            },
+            {
+                "snapshot_id": "RUN1|deep|BBB",
+                "market": "US",
+                "portfolio_id": portfolio_id,
+                "symbol": "BBB",
+                "horizon_days": 20,
+                "future_return": -0.01,
+            },
+        ]
+
+        decision_rows = _build_weekly_decision_evidence_rows(
+            [],
+            strategy_context_rows=[
+                {
+                    "portfolio_id": portfolio_id,
+                    "strategy_effective_controls_note": "no order week",
+                }
+            ],
+            attribution_rows=[
+                {
+                    "portfolio_id": portfolio_id,
+                    "strategy_control_weight_delta": 0.05,
+                }
+            ],
+            snapshot_rows=snapshot_rows,
+            outcome_rows=outcome_rows,
+        )
+        self.assertEqual(len(decision_rows), 2)
+        selected = next(row for row in decision_rows if row["symbol"] == "AAA")
+        self.assertEqual(str(selected["decision_source"]), "candidate_snapshot")
+        self.assertEqual(str(selected["decision_status"]), "CANDIDATE_SELECTED")
+        self.assertEqual(str(selected["join_quality"]), "candidate_outcome_only")
+        self.assertEqual(int(selected["candidate_only_flag"]), 1)
+        self.assertAlmostEqual(float(selected["realized_edge_bps"]), 688.0, places=6)
+        self.assertAlmostEqual(float(selected["outcome_20d_bps"]), 700.0, places=6)
+
+        unified_rows = _build_unified_evidence_rows(decision_rows)
+        unified_selected = next(row for row in unified_rows if row["symbol"] == "AAA")
+        self.assertEqual(int(unified_selected["candidate_only_flag"]), 1)
+        self.assertEqual(str(unified_selected["join_quality"]), "candidate_outcome_only")
+        self.assertEqual(int(unified_selected["allowed_flag"]), 0)
+        self.assertEqual(int(unified_selected["blocked_flag"]), 0)
+        self.assertAlmostEqual(float(unified_selected["realized_edge_delta_bps"]), 645.0, places=6)
+
     def test_weekly_edge_slicing_and_risk_calibration_rows(self):
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "audit.db"

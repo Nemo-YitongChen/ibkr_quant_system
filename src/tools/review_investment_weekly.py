@@ -836,6 +836,8 @@ def _build_weekly_strategy_feedback_bundle(
     risk_review_rows: List[Dict[str, Any]],
     execution_session_rows: List[Dict[str, Any]],
     execution_hotspot_rows: List[Dict[str, Any]],
+    snapshot_rows: List[Dict[str, Any]],
+    outcome_rows: List[Dict[str, Any]],
     feedback_calibration_map: Dict[str, Dict[str, Any]],
     db_path: Path,
     review_week_label: str,
@@ -861,6 +863,8 @@ def _build_weekly_strategy_feedback_bundle(
         execution_parent_rows,
         strategy_context_rows=strategy_context_rows,
         attribution_rows=attribution_rows,
+        snapshot_rows=snapshot_rows,
+        outcome_rows=outcome_rows,
     )
     decision_evidence_summary_rows = _build_weekly_decision_evidence_summary_rows(decision_evidence_rows)
     unified_evidence_rows = _build_unified_evidence_rows(decision_evidence_rows)
@@ -1362,6 +1366,8 @@ def main(argv: List[str] | None = None) -> None:
         risk_review_rows=risk_review_rows,
         execution_session_rows=execution_session_rows,
         execution_hotspot_rows=execution_hotspot_rows,
+        snapshot_rows=snapshot_rows,
+        outcome_rows=outcome_rows,
         feedback_calibration_map=feedback_calibration_map,
         db_path=db_path,
         review_week_label=review_week_label,

@@ -27,6 +27,23 @@ def _decision_evidence_context_maps(
     }
 
 
+def _decision_join_quality(row: Dict[str, Any]) -> str:
+    has_candidate = bool(str(row.get("candidate_snapshot_id") or row.get("linked_snapshot_id") or "").strip())
+    has_fill = _safe_float(row.get("fill_notional"), 0.0) > 0.0
+    has_outcome = any(row.get(f"outcome_{days}d_bps") not in (None, "") for days in (5, 20, 60))
+    if bool(row.get("candidate_only_flag", 0)):
+        return "candidate_outcome_only" if has_outcome else "candidate_only_pending_outcome"
+    if has_candidate and has_fill and has_outcome:
+        return "complete"
+    if has_candidate and has_outcome:
+        return "decision_outcome_no_fill"
+    if has_candidate and has_fill:
+        return "execution_no_outcome"
+    if has_candidate:
+        return "candidate_linked_pending_outcome"
+    return "execution_only"
+
+
 def _build_weekly_decision_evidence_row(
     row: Dict[str, Any],
     *,
@@ -36,7 +53,9 @@ def _build_weekly_decision_evidence_row(
     realized_edge_bps = row.get("realized_edge_bps")
     if realized_edge_bps in (None, ""):
         realized_edge_bps = row.get("execution_capture_bps")
-    return {
+    out = {
+        "decision_source": "execution_parent",
+        "candidate_only_flag": 0,
         "portfolio_id": str(row.get("portfolio_id") or ""),
         "market": str(row.get("market") or ""),
         "run_id": str(row.get("run_id") or ""),
@@ -80,6 +99,173 @@ def _build_weekly_decision_evidence_row(
         "outcome_20d_realized_edge_bps": row.get("outcome_20d_realized_edge_bps"),
         "outcome_60d_realized_edge_bps": row.get("outcome_60d_realized_edge_bps"),
     }
+    out["join_quality"] = _decision_join_quality(out)
+    return out
+
+
+def _candidate_snapshot_stage_priority(stage: str) -> int:
+    normalized = str(stage or "").strip().lower()
+    if normalized in {"final", "short"}:
+        return 3
+    if normalized == "deep":
+        return 2
+    if normalized == "broad":
+        return 1
+    return 0
+
+
+def _is_candidate_selected_stage(stage: str) -> bool:
+    return str(stage or "").strip().lower() in {"final", "short"}
+
+
+def _enrich_decision_candidate_snapshot(row: Dict[str, Any]) -> Dict[str, Any]:
+    enriched = dict(row or {})
+    details = _parse_json_dict(enriched.get("details"))
+    enriched["stage_rank"] = _safe_int(enriched.get("stage_rank"), _safe_int(details.get("stage_rank"), 0))
+    enriched["stage1_rank"] = _safe_int(enriched.get("stage1_rank"), _safe_int(details.get("stage1_rank"), 0))
+    return enriched
+
+
+def _best_candidate_snapshot_rows(snapshot_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    grouped: Dict[tuple[str, str, str, str], Dict[str, Any]] = {}
+    for raw in list(snapshot_rows or []):
+        row = _enrich_decision_candidate_snapshot(dict(raw or {}))
+        snapshot_id = str(row.get("snapshot_id") or "").strip()
+        portfolio_id = str(row.get("portfolio_id") or "").strip()
+        analysis_run_id = str(row.get("analysis_run_id") or "").strip()
+        symbol = str(row.get("symbol") or "").upper().strip()
+        direction = str(row.get("direction") or "LONG").upper().strip()
+        if not snapshot_id or not portfolio_id or not symbol:
+            continue
+        key = (portfolio_id, analysis_run_id, symbol, direction)
+        current = dict(grouped.get(key) or {})
+        if not current:
+            grouped[key] = row
+            continue
+        current_rank = _safe_int(current.get("stage_rank"), 10**6)
+        next_rank = _safe_int(row.get("stage_rank"), 10**6)
+        if current_rank <= 0:
+            current_rank = 10**6
+        if next_rank <= 0:
+            next_rank = 10**6
+        current_key = (
+            _candidate_snapshot_stage_priority(str(current.get("stage") or "")),
+            -current_rank,
+            str(current.get("ts") or ""),
+        )
+        next_key = (
+            _candidate_snapshot_stage_priority(str(row.get("stage") or "")),
+            -next_rank,
+            str(row.get("ts") or ""),
+        )
+        if next_key > current_key:
+            grouped[key] = row
+    out = list(grouped.values())
+    out.sort(
+        key=lambda item: (
+            str(item.get("market") or ""),
+            str(item.get("portfolio_id") or ""),
+            str(item.get("analysis_run_id") or ""),
+            _safe_int(item.get("stage_rank"), 10**6),
+            str(item.get("symbol") or ""),
+        )
+    )
+    return out
+
+
+def _outcomes_by_snapshot(outcome_rows: List[Dict[str, Any]]) -> Dict[str, Dict[int, Dict[str, Any]]]:
+    out: Dict[str, Dict[int, Dict[str, Any]]] = {}
+    for raw in list(outcome_rows or []):
+        row = dict(raw or {})
+        snapshot_id = str(row.get("snapshot_id") or "").strip()
+        horizon_days = _safe_int(row.get("horizon_days"), 0)
+        if snapshot_id and horizon_days > 0:
+            out.setdefault(snapshot_id, {})[horizon_days] = row
+    return out
+
+
+def _candidate_outcome_bps(outcomes: Dict[int, Dict[str, Any]], horizon_days: int) -> float | None:
+    outcome = dict(outcomes.get(int(horizon_days)) or {})
+    if not outcome:
+        return None
+    return float(_safe_float(outcome.get("future_return"), 0.0) * 10000.0)
+
+
+def _build_candidate_only_decision_evidence_rows(
+    snapshot_rows: List[Dict[str, Any]],
+    outcome_rows: List[Dict[str, Any]],
+    *,
+    linked_snapshot_ids: set[str],
+    strategy_context_map: Dict[str, Dict[str, Any]],
+    attribution_map: Dict[str, Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    outcome_map = _outcomes_by_snapshot(outcome_rows)
+    out: List[Dict[str, Any]] = []
+    for snapshot in _best_candidate_snapshot_rows(snapshot_rows):
+        snapshot_id = str(snapshot.get("snapshot_id") or "").strip()
+        if not snapshot_id or snapshot_id in linked_snapshot_ids:
+            continue
+        portfolio_id = str(snapshot.get("portfolio_id") or "").strip()
+        if not portfolio_id:
+            continue
+        stage = str(snapshot.get("stage") or "").strip().lower()
+        expected_cost_bps = _safe_float(snapshot.get("expected_cost_bps"), 0.0)
+        outcomes = dict(outcome_map.get(snapshot_id) or {})
+        outcome_5d = _candidate_outcome_bps(outcomes, 5)
+        outcome_20d = _candidate_outcome_bps(outcomes, 20)
+        outcome_60d = _candidate_outcome_bps(outcomes, 60)
+        realized_edge_bps = float(outcome_20d - expected_cost_bps) if outcome_20d is not None else None
+        strategy_context = dict(strategy_context_map.get(portfolio_id) or {})
+        attribution = dict(attribution_map.get(portfolio_id) or {})
+        row = {
+            "decision_source": "candidate_snapshot",
+            "candidate_only_flag": 1,
+            "portfolio_id": portfolio_id,
+            "market": str(snapshot.get("market") or ""),
+            "run_id": str(snapshot.get("analysis_run_id") or ""),
+            "parent_order_key": f"CANDIDATE:{snapshot_id}",
+            "symbol": str(snapshot.get("symbol") or "").upper(),
+            "action": str(snapshot.get("action") or ""),
+            "decision_status": "CANDIDATE_SELECTED" if _is_candidate_selected_stage(stage) else "CANDIDATE_RESEARCH",
+            "candidate_snapshot_id": snapshot_id,
+            "candidate_stage": stage,
+            "order_value": 0.0,
+            "fill_notional": 0.0,
+            "signal_score": _safe_float(snapshot.get("score_before_cost"), _safe_float(snapshot.get("score"), 0.0)),
+            "expected_edge_bps": _safe_float(snapshot.get("expected_edge_bps"), 0.0),
+            "expected_cost_bps": expected_cost_bps,
+            "edge_gate_threshold_bps": 0.0,
+            "required_edge_gap_bps": 0.0,
+            "blocked_market_rule_order_count": 0,
+            "blocked_edge_order_count": 0,
+            "blocked_gate_order_count": 0,
+            "dynamic_liquidity_bucket": "",
+            "dynamic_order_adv_pct": 0.0,
+            "slice_count": 0,
+            "strategy_control_weight_delta": float(attribution.get("strategy_control_weight_delta", 0.0) or 0.0),
+            "risk_overlay_weight_delta": float(attribution.get("risk_overlay_weight_delta", 0.0) or 0.0),
+            "risk_market_profile_budget_weight_delta": float(
+                attribution.get("risk_market_profile_budget_weight_delta", 0.0) or 0.0
+            ),
+            "risk_throttle_weight_delta": float(attribution.get("risk_throttle_weight_delta", 0.0) or 0.0),
+            "risk_recovery_weight_credit": float(attribution.get("risk_recovery_weight_credit", 0.0) or 0.0),
+            "execution_gate_blocked_weight": float(attribution.get("execution_gate_blocked_weight", 0.0) or 0.0),
+            "strategy_effective_controls_note": str(strategy_context.get("strategy_effective_controls_note") or ""),
+            "execution_gate_summary": str(strategy_context.get("execution_gate_summary") or ""),
+            "realized_slippage_bps": None,
+            "realized_edge_bps": realized_edge_bps,
+            "execution_capture_bps": None,
+            "first_fill_delay_seconds": None,
+            "outcome_5d_bps": outcome_5d,
+            "outcome_20d_bps": outcome_20d,
+            "outcome_60d_bps": outcome_60d,
+            "outcome_5d_realized_edge_bps": float(outcome_5d - expected_cost_bps) if outcome_5d is not None else None,
+            "outcome_20d_realized_edge_bps": realized_edge_bps,
+            "outcome_60d_realized_edge_bps": float(outcome_60d - expected_cost_bps) if outcome_60d is not None else None,
+        }
+        row["join_quality"] = _decision_join_quality(row)
+        out.append(row)
+    return out
 
 
 def _build_weekly_decision_evidence_rows(
@@ -87,6 +273,8 @@ def _build_weekly_decision_evidence_rows(
     *,
     strategy_context_rows: List[Dict[str, Any]] | None = None,
     attribution_rows: List[Dict[str, Any]] | None = None,
+    snapshot_rows: List[Dict[str, Any]] | None = None,
+    outcome_rows: List[Dict[str, Any]] | None = None,
 ) -> List[Dict[str, Any]]:
     context_maps = _decision_evidence_context_maps(
         strategy_context_rows=strategy_context_rows,
@@ -95,11 +283,15 @@ def _build_weekly_decision_evidence_rows(
     strategy_context_map = dict(context_maps.get("strategy_context_map") or {})
     attribution_map = dict(context_maps.get("attribution_map") or {})
     out: List[Dict[str, Any]] = []
+    linked_snapshot_ids: set[str] = set()
     for raw in list(execution_parent_rows or []):
         row = dict(raw or {})
         portfolio_id = str(row.get("portfolio_id") or "").strip()
         if not portfolio_id:
             continue
+        linked_snapshot_id = str(row.get("linked_snapshot_id") or row.get("candidate_snapshot_id") or "").strip()
+        if linked_snapshot_id:
+            linked_snapshot_ids.add(linked_snapshot_id)
         strategy_context = dict(strategy_context_map.get(portfolio_id) or {})
         attribution = dict(attribution_map.get(portfolio_id) or {})
         out.append(
@@ -109,6 +301,15 @@ def _build_weekly_decision_evidence_rows(
                 attribution=attribution,
             )
         )
+    out.extend(
+        _build_candidate_only_decision_evidence_rows(
+            list(snapshot_rows or []),
+            list(outcome_rows or []),
+            linked_snapshot_ids=linked_snapshot_ids,
+            strategy_context_map=strategy_context_map,
+            attribution_map=attribution_map,
+        )
+    )
     out.sort(
         key=lambda item: (
             str(item.get("market") or ""),
@@ -411,8 +612,13 @@ def _build_unified_evidence_rows(decision_evidence_rows: List[Dict[str, Any]]) -
             {
                 "market": resolve_market_code(str(row.get("market") or "")),
                 "portfolio_id": portfolio_id,
+                "decision_source": str(row.get("decision_source") or "execution_parent"),
                 "run_id": str(row.get("run_id") or ""),
                 "parent_order_key": str(row.get("parent_order_key") or ""),
+                "candidate_snapshot_id": str(row.get("candidate_snapshot_id") or ""),
+                "candidate_stage": str(row.get("candidate_stage") or ""),
+                "candidate_only_flag": int(row.get("candidate_only_flag", 0) or 0),
+                "join_quality": str(row.get("join_quality") or ""),
                 "symbol": str(row.get("symbol") or ""),
                 "action": str(row.get("action") or ""),
                 "decision_status": str(row.get("decision_status") or ""),
@@ -439,10 +645,15 @@ def _build_unified_evidence_rows(decision_evidence_rows: List[Dict[str, Any]]) -
                 "strategy_control_weight_delta": _safe_float(row.get("strategy_control_weight_delta"), 0.0),
                 "risk_overlay_weight_delta": _safe_float(row.get("risk_overlay_weight_delta"), 0.0),
                 "execution_gate_blocked_weight": _safe_float(row.get("execution_gate_blocked_weight"), 0.0),
+                "planned_order_value": _safe_float(row.get("order_value"), 0.0),
+                "filled_order_value": _safe_float(row.get("fill_notional"), 0.0),
                 "realized_slippage_bps": row.get("realized_slippage_bps"),
                 "realized_edge_bps": realized_edge,
                 "realized_edge_delta_bps": realized_edge_delta,
                 "first_fill_delay_seconds": row.get("first_fill_delay_seconds"),
+                "outcome_5d": row.get("outcome_5d_bps"),
+                "outcome_20d": row.get("outcome_20d_bps"),
+                "outcome_60d": row.get("outcome_60d_bps"),
                 "outcome_5d_bps": row.get("outcome_5d_bps"),
                 "outcome_20d_bps": row.get("outcome_20d_bps"),
                 "outcome_60d_bps": row.get("outcome_60d_bps"),

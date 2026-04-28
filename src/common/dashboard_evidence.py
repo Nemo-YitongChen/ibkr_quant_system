@@ -196,6 +196,9 @@ def build_unified_evidence_overview(rows: List[Dict[str, Any]]) -> Dict[str, Any
     by_market: Dict[str, Dict[str, Any]] = {}
     blocked = 0
     allowed = 0
+    candidate_only = 0
+    outcome_labeled = 0
+    partial_join = 0
     for raw in list(rows or []):
         row = dict(raw or {})
         market = str(row.get("market") or "").strip().upper() or "UNKNOWN"
@@ -206,6 +209,9 @@ def build_unified_evidence_overview(rows: List[Dict[str, Any]]) -> Dict[str, Any
                 "row_count": 0,
                 "blocked_row_count": 0,
                 "allowed_row_count": 0,
+                "candidate_only_row_count": 0,
+                "outcome_labeled_row_count": 0,
+                "partial_join_row_count": 0,
             },
         )
         market_row["row_count"] = int(market_row.get("row_count", 0) or 0) + 1
@@ -215,9 +221,22 @@ def build_unified_evidence_overview(rows: List[Dict[str, Any]]) -> Dict[str, Any
         if _flag(row.get("allowed_flag")):
             allowed += 1
             market_row["allowed_row_count"] = int(market_row.get("allowed_row_count", 0) or 0) + 1
+        if _flag(row.get("candidate_only_flag")):
+            candidate_only += 1
+            market_row["candidate_only_row_count"] = int(market_row.get("candidate_only_row_count", 0) or 0) + 1
+        if any(row.get(key) not in (None, "") for key in ("outcome_5d_bps", "outcome_20d_bps", "outcome_60d_bps")):
+            outcome_labeled += 1
+            market_row["outcome_labeled_row_count"] = int(market_row.get("outcome_labeled_row_count", 0) or 0) + 1
+        join_quality = str(row.get("join_quality") or "").strip().lower()
+        if join_quality and join_quality != "complete":
+            partial_join += 1
+            market_row["partial_join_row_count"] = int(market_row.get("partial_join_row_count", 0) or 0) + 1
     return {
         "row_count": len(rows),
         "blocked_row_count": blocked,
         "allowed_row_count": allowed,
+        "candidate_only_row_count": candidate_only,
+        "outcome_labeled_row_count": outcome_labeled,
+        "partial_join_row_count": partial_join,
         "market_rows": sorted(by_market.values(), key=lambda row: str(row.get("market") or "")),
     }
