@@ -228,7 +228,7 @@ def test_dashboard_report_freshness_label_marks_stale_when_generation_lags() -> 
 def test_dashboard_report_freshness_label_marks_ready_when_generation_is_recent() -> None:
     label = _dashboard_report_freshness_label(
         market="HK",
-        report_date="2026-04-18",
+        report_date="2026-04-19",
         latest_generated_at="2026-04-19T08:00:00",
         as_of_date="2026-04-19",
     )
