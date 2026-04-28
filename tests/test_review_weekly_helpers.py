@@ -1,5 +1,11 @@
 from pathlib import Path
 
+from src.tools.generate_dashboard import (
+    _build_health_overview,
+    _build_market_data_health_overview,
+    _dashboard_market_state_label,
+    _dashboard_report_freshness_label,
+)
 from src.tools.review_investment_weekly import _weekly_strategy_note
 from src.tools.review_weekly_io import read_csv_rows
 from src.tools.review_weekly_markdown import write_weekly_review_markdown
@@ -206,3 +212,49 @@ def test_weekly_strategy_note_prefers_strategy_control_and_execution_gate_messag
     assert "策略主动转入防守" in note
     assert "1 个新开仓机会" in note
     assert "2 笔计划单因执行 gate" in note
+
+
+def test_dashboard_report_freshness_label_marks_stale_when_generation_lags() -> None:
+    label = _dashboard_report_freshness_label(
+        market="US",
+        report_date="2026-04-10",
+        latest_generated_at="2026-04-13T09:30:00",
+        as_of_date="2026-04-19",
+    )
+    assert "待刷新" in label
+    assert "US" in label
+
+
+def test_dashboard_report_freshness_label_marks_ready_when_generation_is_recent() -> None:
+    label = _dashboard_report_freshness_label(
+        market="HK",
+        report_date="2026-04-18",
+        latest_generated_at="2026-04-19T08:00:00",
+        as_of_date="2026-04-19",
+    )
+    assert "已更新" in label
+    assert "HK" in label
+
+
+def test_dashboard_market_state_label_handles_missing_summary() -> None:
+    label = _dashboard_market_state_label(None)
+    assert label == "市场状态: 暂无数据"
+
+
+def test_build_health_overview_flags_degraded_and_warning_states() -> None:
+    rows = _build_health_overview(
+        [
+            {"status": "ready", "summary": "US 正常"},
+            {"status": "warning", "summary": "HK 需复核"},
+            {"status": "degraded", "summary": "CN 数据不完整"},
+        ]
+    )
+    assert rows[0]["status"] == "degraded"
+    assert "CN 数据不完整" in rows[0]["summary"]
+    assert "HK 需复核" in rows[0]["summary"]
+
+
+def test_build_market_data_health_overview_handles_empty_rows() -> None:
+    rows = _build_market_data_health_overview([])
+    assert rows[0]["status"] == "warning"
+    assert "暂无市场数据健康检查结果" in rows[0]["summary"]
