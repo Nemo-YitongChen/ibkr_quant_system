@@ -73,6 +73,7 @@ DASHBOARD_MODE_DISPLAY_LABELS: Dict[str, str] = {
 DASHBOARD_TRANSLATIONS_EN.update({
     "IB Gateway 已连接；先复核当前健康、权限或账户快照告警，再继续看执行计划。": "IB Gateway is connected; review current health, permission, or account snapshot warnings before continuing with the execution plan.",
     "无成交优化": "No-Fill Optimization",
+    "量化客户端": "Quant Client",
     "开市中": "Market Open",
     "已闭市": "Market Closed",
     "状态汇总": "Status Rollout",
@@ -5264,6 +5265,90 @@ def _build_artifact_governance_alert_rows(
     return rows
 
 
+def _gateway_port_check_rows(preflight_summary: Dict[str, Any]) -> List[Dict[str, Any]]:
+    return [
+        dict(row)
+        for row in list(preflight_summary.get("checks", []) or [])
+        if isinstance(row, dict) and str(row.get("name", "") or "").startswith("ibkr_port:")
+    ]
+
+
+def _build_gateway_runtime_summary(
+    preflight_summary: Dict[str, Any],
+    control_payload: Dict[str, Any],
+) -> Dict[str, Any]:
+    port_rows = _gateway_port_check_rows(preflight_summary)
+    pass_rows = [row for row in port_rows if str(row.get("status", "") or "").upper() == "PASS"]
+    blocked_rows = [row for row in port_rows if str(row.get("status", "") or "").upper() in {"WARN", "FAIL"}]
+    endpoints = [
+        str(row.get("detail", "") or row.get("name", "") or "").strip()
+        for row in port_rows
+        if str(row.get("detail", "") or row.get("name", "") or "").strip()
+    ]
+    actions = dict(control_payload.get("actions", {}) or {})
+    service = dict(control_payload.get("service", {}) or {})
+    run_once_active = bool(actions.get("run_once_in_progress", False))
+    preflight_active = bool(actions.get("preflight_in_progress", False))
+    weekly_review_active = bool(actions.get("weekly_review_in_progress", False))
+    service_status = str(service.get("status", "disabled") or "disabled").strip().lower()
+
+    if blocked_rows and not pass_rows:
+        status = "port_unavailable"
+        status_label = "Gateway API 端口未监听"
+        client_state = "disconnected"
+        detail = "；".join(endpoints) or "preflight 未发现可用 IB Gateway API 端口"
+        action = "先启动 IB Gateway，并确认 paper/live 目标端口处于监听状态。"
+    elif blocked_rows:
+        status = "partial"
+        status_label = "部分 Gateway API 端口未就绪"
+        client_state = "partial"
+        detail = "；".join(endpoints)
+        action = "先确认当前 paper/live 目标组合实际使用的端口；未使用端口的 warning 不应阻断执行。"
+    elif pass_rows:
+        detail = "；".join(endpoints)
+        if run_once_active:
+            status = "client_active"
+            status_label = "量化客户端运行中"
+            client_state = "active"
+            action = "等待当前 run_once / execution 周期完成，再复核订单与 fill audit。"
+        elif preflight_active or weekly_review_active:
+            status = "maintenance_active"
+            status_label = "维护任务运行中，交易客户端空闲"
+            client_state = "idle"
+            action = "等待 preflight / weekly review 完成；需要下单时再启动 run_once 或 supervisor 周期。"
+        elif service_status in {"running", "configured"}:
+            status = "client_idle"
+            status_label = "Gateway socket 已就绪，量化客户端空闲"
+            client_state = "idle"
+            action = "如果 Gateway UI 显示“API客户端已断开”，这通常表示当前没有运行中的量化任务；需要执行时启动 supervisor 或点击 run_once。"
+        else:
+            status = "control_disabled"
+            status_label = "Gateway socket 已就绪，控制服务未运行"
+            client_state = "idle"
+            action = "先启动 supervisor/dashboard control，再触发 run_once 或执行任务。"
+    else:
+        status = "unknown"
+        status_label = "Gateway API 端口状态未知"
+        client_state = "unknown"
+        detail = "preflight 尚未输出 ibkr_port 检查"
+        action = "先运行 Preflight，确认 paper/live Gateway API 端口。"
+
+    return {
+        "status": status,
+        "status_label": status_label,
+        "api_client_state": client_state,
+        "detail": detail,
+        "action": action,
+        "endpoint_count": int(len(port_rows)),
+        "listening_endpoint_count": int(len(pass_rows)),
+        "warning_endpoint_count": int(len(blocked_rows)),
+        "service_status": service_status,
+        "run_once_in_progress": run_once_active,
+        "preflight_in_progress": preflight_active,
+        "weekly_review_in_progress": weekly_review_active,
+    }
+
+
 def _build_ops_overview(
     cards: List[Dict[str, Any]],
     *,
@@ -5296,6 +5381,7 @@ def _build_ops_overview(
     artifact_warning_count = int(artifact_health_summary.get("warning_count", 0) or 0)
     artifact_degraded_count = int(artifact_health_summary.get("degraded_count", 0) or 0)
     governance_status = str(governance_health_summary.get("status", "ready") or "ready").strip().lower()
+    gateway_runtime_summary = _build_gateway_runtime_summary(preflight_summary, control_payload)
     alert_rows: List[Dict[str, Any]] = []
     for row in warning_rows[:8]:
         alert_rows.append(
@@ -5383,6 +5469,7 @@ def _build_ops_overview(
         f"artifact_degraded={artifact_degraded_count} | "
         f"data_attention={data_attention_count} | "
         f"mode_mismatch={execution_mismatch_count} | "
+        f"gateway_runtime={gateway_runtime_summary.get('status', 'unknown')} | "
         f"governance={governance_status} | "
         f"service={str(service_state.get('status', 'disabled') or 'disabled')}"
     )
@@ -5406,6 +5493,10 @@ def _build_ops_overview(
         "governance_status_label": str(governance_health_summary.get("status_label", "") or "已就绪"),
         "governance_summary_text": str(governance_health_summary.get("summary_text", "") or "-"),
         "control_service_status": str(service_state.get("status", "disabled") or "disabled"),
+        "gateway_runtime_summary": gateway_runtime_summary,
+        "gateway_runtime_status": str(gateway_runtime_summary.get("status", "") or ""),
+        "gateway_runtime_status_label": str(gateway_runtime_summary.get("status_label", "") or ""),
+        "gateway_api_client_state": str(gateway_runtime_summary.get("api_client_state", "") or ""),
         "run_once_in_progress": bool(action_state.get("run_once_in_progress", False)),
         "preflight_in_progress": bool(action_state.get("preflight_in_progress", False)),
         "weekly_review_in_progress": bool(action_state.get("weekly_review_in_progress", False)),
@@ -5525,6 +5616,17 @@ def _simple_gateway_status_text(health: Dict[str, Any]) -> str:
     status = str(health.get("status", "OK") or "OK").strip() or "OK"
     detail = str(health.get("status_detail", "") or "").strip()
     return f"{status} | {detail}" if detail else status
+
+
+def _simple_gateway_runtime_text(card: Dict[str, Any]) -> str:
+    runtime = dict(card.get("gateway_runtime_summary", {}) or {})
+    if not runtime:
+        return "-"
+    label = str(runtime.get("status_label", "") or "").strip()
+    action = str(runtime.get("action", "") or "").strip()
+    if label and action:
+        return f"{label}；{action}"
+    return label or action or "-"
 
 
 def _simple_gateway_metric_int(health: Dict[str, Any], key: str) -> int:
@@ -6691,6 +6793,7 @@ def _render_card(card: Dict[str, Any]) -> str:
             ["现在该做什么", simple_action_text],
             ["为什么", simple_reason_text],
             ["IB Gateway", gateway_status_text],
+            ["量化客户端", _simple_gateway_runtime_text(card)],
             ["下一步", simple_next_step_text],
         ])}
       </div>
@@ -7070,6 +7173,9 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
         artifact_health_summary=artifact_health_overview,
         governance_health_summary=governance_health_summary,
     )
+    gateway_runtime_summary = dict(ops_overview.get("gateway_runtime_summary", {}) or {})
+    for card in list(trade_cards) + list(dry_run_cards):
+        card["gateway_runtime_summary"] = gateway_runtime_summary
     payload = {
         "generated_at": datetime.now().isoformat(),
         "runtime_status": _build_runtime_status(cards),
@@ -7227,6 +7333,14 @@ def _simple_ops_overview_rows(ops_overview: Dict[str, Any]) -> List[List[str]]:
         [
             "IB Gateway 端口",
             _count_status(int(ops_overview.get("ibkr_port_warning_count", 0) or 0), "有告警"),
+        ],
+        [
+            "量化客户端",
+            str(
+                dict(ops_overview.get("gateway_runtime_summary", {}) or {}).get("status_label")
+                or ops_overview.get("gateway_runtime_status_label")
+                or "-"
+            ),
         ],
         [
             "市场状态缺口",

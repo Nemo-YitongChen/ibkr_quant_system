@@ -4,10 +4,12 @@ from src.tools.generate_dashboard import (
     _build_dashboard_status_rollout_summary,
     _build_health_overview,
     _build_market_data_health_overview,
+    _build_gateway_runtime_summary,
     _build_overview,
     _build_ops_overview,
     _dashboard_v2_block_metrics_text,
     _simple_gateway_is_connected,
+    _simple_gateway_runtime_text,
     _simple_next_step_text,
     _simple_ops_overview_rows,
     _simple_weekly_strategy_context_rows,
@@ -111,6 +113,62 @@ def test_simple_gateway_disconnected_only_for_unresolved_connectivity_break() ->
         recommendation_differs=False,
         recommended_execution_mode_label="-",
     ) == "先启动 IB Gateway，并确认 paper/live 目标端口可连接。"
+
+
+def test_gateway_runtime_summary_treats_listening_port_as_idle_client() -> None:
+    summary = _build_gateway_runtime_summary(
+        {
+            "checks": [
+                {
+                    "name": "ibkr_port:127.0.0.1:4002",
+                    "status": "PASS",
+                    "detail": "127.0.0.1:4002 listening markets=US",
+                }
+            ]
+        },
+        {
+            "service": {"status": "running"},
+            "actions": {"run_once_in_progress": False},
+        },
+    )
+
+    assert summary["status"] == "client_idle"
+    assert summary["api_client_state"] == "idle"
+    assert "Gateway socket 已就绪" in summary["status_label"]
+    assert "API客户端已断开" in summary["action"]
+
+
+def test_gateway_runtime_summary_keeps_gateway_start_action_for_unavailable_port() -> None:
+    summary = _build_gateway_runtime_summary(
+        {
+            "checks": [
+                {
+                    "name": "ibkr_port:127.0.0.1:4002",
+                    "status": "WARN",
+                    "detail": "127.0.0.1:4002 not_listening",
+                }
+            ]
+        },
+        {"service": {"status": "running"}, "actions": {}},
+    )
+
+    assert summary["status"] == "port_unavailable"
+    assert summary["api_client_state"] == "disconnected"
+    assert "先启动 IB Gateway" in summary["action"]
+
+
+def test_simple_gateway_runtime_text_explains_idle_client() -> None:
+    text = _simple_gateway_runtime_text(
+        {
+            "gateway_runtime_summary": {
+                "status_label": "Gateway socket 已就绪，量化客户端空闲",
+                "action": "需要执行时启动 supervisor 或点击 run_once。",
+            }
+        }
+    )
+
+    assert "量化客户端空闲" in text
+    assert "run_once" in text
 
 
 def test_simple_weekly_strategy_context_rows_include_no_trade_optimization_note() -> None:
@@ -227,6 +285,9 @@ def test_simple_ops_overview_rows_include_status_rollout_counts() -> None:
             "preflight_warn_count": 1,
             "preflight_fail_count": 0,
             "ibkr_port_warning_count": 1,
+            "gateway_runtime_summary": {
+                "status_label": "Gateway socket 已就绪，量化客户端空闲",
+            },
             "market_state_missing_count": 2,
             "stale_report_count": 1,
             "degraded_health_count": 1,
@@ -238,6 +299,7 @@ def test_simple_ops_overview_rows_include_status_rollout_counts() -> None:
     )
     assert any(row[0] == "市场状态缺口" and "2" in row[1] for row in rows)
     assert any(row[0] == "市场数据健康" and "研究Fallback" in row[1] for row in rows)
+    assert any(row[0] == "量化客户端" and "量化客户端空闲" in row[1] for row in rows)
 
 
 def test_build_ops_overview_surfaces_artifact_and_governance_alerts() -> None:
