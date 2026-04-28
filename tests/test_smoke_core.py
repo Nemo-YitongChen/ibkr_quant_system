@@ -25,6 +25,20 @@ def test_storage_initializes_and_persists_core_rows(tmp_path) -> None:
     storage.insert_signal_audit(
         {
             "symbol": "AAPL",
+            "bar_end_time": "2026-04-05T10:00:00Z",
+            "o": 1.0,
+            "h": 1.1,
+            "l": 0.9,
+            "c": 1.05,
+            "v": 1000.0,
+            "last3_close": "[1.0, 1.02, 1.05]",
+            "range20": 0.1,
+            "mr_sig": 0.2,
+            "bo_sig": 0.1,
+            "short_sig": 0.16,
+            "mid_scale": 0.5,
+            "total_sig": 0.12,
+            "threshold": 0.65,
             "should_trade": 1,
             "risk_allowed": 1,
             "action": "BUY",
@@ -50,13 +64,14 @@ def test_storage_initializes_and_persists_core_rows(tmp_path) -> None:
 
 def test_trading_engine_smoke_instantiation_keeps_critical_methods() -> None:
     engine = TradingEngine(
-        ib=object(),
-        universe_svc=SimpleNamespace(build=lambda: {}),
-        strategy=object(),
-        runner=SimpleNamespace(),
+        ib=SimpleNamespace(RequestTimeout=0.0),
+        universe_svc=SimpleNamespace(build=lambda: {"always_on": [], "short_candidates": []}),
+        strategy=SimpleNamespace(),
+        runner=SimpleNamespace(tick=lambda: None),
         cfg=EngineConfig(),
     )
 
     assert callable(engine._update_quality)
     assert callable(engine.run_forever)
     assert callable(engine._sleep_with_runner)
+    assert engine._states == {}
