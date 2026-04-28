@@ -23,6 +23,15 @@ def test_build_market_views_always_returns_us_hk_cn():
     assert views["CN"]["day_turnaround_allowed"] is False
 
 
+def test_market_views_empty_input_returns_all_markets():
+    views = build_market_views([])
+
+    assert set(views) == {"US", "HK", "CN"}
+    assert views["US"]["market"] == "US"
+    assert views["HK"]["portfolio_count"] == 0
+    assert views["CN"]["portfolios"] == []
+
+
 def test_build_market_views_counts_health_and_execution_modes():
     views = build_market_views(
         [
@@ -79,6 +88,42 @@ def test_build_market_views_counts_health_and_execution_modes():
     assert views["CN"]["paused_count"] == 1
 
 
+def test_market_views_counts_modes_and_health():
+    cards = [
+        {
+            "market": "US",
+            "exchange_open_raw": True,
+            "report_status": {"fresh": True},
+            "ops_health_rows": [{"status": "warn"}],
+            "dashboard_control": {
+                "portfolio": {"execution_control_mode": "REVIEW_ONLY"},
+            },
+            "execution_summary": {"submit_orders": False},
+        },
+        {
+            "market": "US",
+            "exchange_open_raw": False,
+            "report_status": {"fresh": False},
+            "ops_health_rows": [],
+            "dashboard_control": {
+                "portfolio": {"execution_control_mode": "PAUSED"},
+            },
+            "execution_summary": {"submit_orders": True},
+        },
+    ]
+
+    us = build_market_views(cards)["US"]
+
+    assert us["portfolio_count"] == 2
+    assert us["open_count"] == 1
+    assert us["fresh_report_count"] == 1
+    assert us["stale_report_count"] == 1
+    assert us["degraded_health_count"] == 1
+    assert us["review_only_count"] == 1
+    assert us["paused_count"] == 1
+    assert us["auto_submit_count"] == 1
+
+
 def test_build_weekly_attribution_waterfall_includes_residual_and_total():
     rows = build_weekly_attribution_waterfall(
         [
@@ -118,6 +163,40 @@ def test_build_weekly_attribution_waterfall_includes_residual_and_total():
     assert residual["contribution"] == pytest.approx(0.04)
 
 
+def test_waterfall_has_stable_components_and_residual():
+    cards = [
+        {
+            "market": "US",
+            "portfolio_id": "paper-us",
+            "watchlist": "core",
+            "weekly_attribution": {
+                "selection_contribution": 0.01,
+                "execution_contribution": -0.002,
+                "weekly_return": 0.02,
+            },
+        }
+    ]
+
+    rows = build_weekly_attribution_waterfall(cards)
+    components = [row["component"] for row in rows]
+
+    assert components[:8] == [
+        "selection",
+        "sizing",
+        "sector",
+        "market",
+        "execution",
+        "strategy_control",
+        "risk_overlay",
+        "execution_gate",
+    ]
+    assert components[-2:] == [
+        "residual_to_reported_return",
+        "reported_weekly_return",
+    ]
+    assert rows[-1]["running_end"] == 0.02
+
+
 def test_build_weekly_attribution_waterfall_handles_missing_fields_as_zero():
     rows = build_weekly_attribution_waterfall(
         [
@@ -152,3 +231,20 @@ def test_build_unified_evidence_overview_groups_by_market():
     assert by_market["US"]["row_count"] == 2
     assert by_market["HK"]["allowed_row_count"] == 1
     assert by_market["UNKNOWN"]["blocked_row_count"] == 1
+
+
+def test_unified_evidence_overview_counts_bool_and_string_flags():
+    rows = [
+        {"market": "US", "blocked_flag": "1", "allowed_flag": "0"},
+        {"market": "US", "blocked_flag": False, "allowed_flag": True},
+        {"market": "HK", "blocked_flag": "true", "allowed_flag": "false"},
+        {"market": "", "blocked_flag": "", "allowed_flag": ""},
+    ]
+
+    overview = build_unified_evidence_overview(rows)
+
+    assert overview["row_count"] == 4
+    assert overview["blocked_row_count"] == 2
+    assert overview["allowed_row_count"] == 1
+    markets = {row["market"] for row in overview["market_rows"]}
+    assert {"US", "HK", "UNKNOWN"} <= markets
