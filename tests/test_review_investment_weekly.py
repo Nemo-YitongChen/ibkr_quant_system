@@ -32,6 +32,7 @@ from src.tools.review_investment_weekly import (
     _build_trading_quality_evidence_rows,
     _build_unified_evidence_rows,
     _build_blocked_vs_allowed_expost_rows,
+    _build_candidate_model_review_rows,
     _build_weekly_calibration_patch_suggestion_rows,
     _build_weekly_edge_calibration_rows,
     _build_weekly_edge_realization_rows,
@@ -1882,6 +1883,53 @@ class ReviewInvestmentWeeklyTests(unittest.TestCase):
         self.assertEqual(int(unified_selected["allowed_flag"]), 0)
         self.assertEqual(int(unified_selected["blocked_flag"]), 0)
         self.assertAlmostEqual(float(unified_selected["realized_edge_delta_bps"]), 645.0, places=6)
+
+    def test_candidate_model_review_scores_no_trade_candidate_evidence(self):
+        rows = [
+            {
+                "market": "US",
+                "portfolio_id": "US:watchlist",
+                "candidate_snapshot_id": "RUN1|final|AAA",
+                "candidate_only_flag": 1,
+                "symbol": "AAA",
+                "signal_score": 0.90,
+                "expected_post_cost_edge_bps": 42.0,
+                "realized_edge_bps": 138.0,
+                "outcome_20d_bps": 150.0,
+            },
+            {
+                "market": "US",
+                "portfolio_id": "US:watchlist",
+                "candidate_snapshot_id": "RUN1|final|BBB",
+                "candidate_only_flag": 1,
+                "symbol": "BBB",
+                "signal_score": 0.70,
+                "expected_post_cost_edge_bps": 25.0,
+                "realized_edge_bps": 71.0,
+                "outcome_20d_bps": 80.0,
+            },
+            {
+                "market": "US",
+                "portfolio_id": "US:watchlist",
+                "candidate_snapshot_id": "RUN1|deep|CCC",
+                "candidate_only_flag": 1,
+                "symbol": "CCC",
+                "signal_score": 0.20,
+                "expected_post_cost_edge_bps": 10.0,
+                "realized_edge_bps": -39.0,
+                "outcome_20d_bps": -30.0,
+            },
+        ]
+
+        review_rows = _build_candidate_model_review_rows(rows)
+
+        self.assertEqual(len(review_rows), 1)
+        row = review_rows[0]
+        self.assertEqual(str(row["review_label"]), "SIGNAL_RANKING_WORKING")
+        self.assertEqual(int(row["candidate_only_count"]), 3)
+        self.assertEqual(int(row["labeled_candidate_count"]), 3)
+        self.assertAlmostEqual(float(row["top_minus_bottom_outcome_20d_bps"]), 180.0, places=6)
+        self.assertIn("没有成交", str(row["recommendation"]))
 
     def test_weekly_edge_slicing_and_risk_calibration_rows(self):
         with tempfile.TemporaryDirectory() as tmp:

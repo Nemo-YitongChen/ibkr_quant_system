@@ -759,6 +759,86 @@ def _build_blocked_vs_allowed_expost_rows(decision_evidence_rows: List[Dict[str,
     return out
 
 
+def _build_candidate_model_review_rows(unified_evidence_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    grouped: Dict[tuple[str, str], List[Dict[str, Any]]] = {}
+    for raw in list(unified_evidence_rows or []):
+        row = dict(raw or {})
+        market = resolve_market_code(str(row.get("market") or ""))
+        portfolio_id = str(row.get("portfolio_id") or "").strip()
+        if not market or not portfolio_id:
+            continue
+        if not str(row.get("candidate_snapshot_id") or "").strip() and not int(row.get("candidate_only_flag", 0) or 0):
+            continue
+        grouped.setdefault((market, portfolio_id), []).append(row)
+
+    out: List[Dict[str, Any]] = []
+    for (market, portfolio_id), rows in grouped.items():
+        labeled = [row for row in rows if row.get("outcome_20d_bps") not in (None, "")]
+        candidate_only_rows = [row for row in rows if int(row.get("candidate_only_flag", 0) or 0) > 0]
+        labeled_sorted = sorted(
+            labeled,
+            key=lambda row: (_safe_float(row.get("signal_score"), 0.0), str(row.get("symbol") or "")),
+            reverse=True,
+        )
+        bucket_size = max(1, (len(labeled_sorted) + 2) // 3) if labeled_sorted else 0
+        top_rows = labeled_sorted[:bucket_size] if bucket_size else []
+        bottom_rows = list(reversed(labeled_sorted[-bucket_size:])) if bucket_size else []
+        top_avg = _avg_from_rows(top_rows, "outcome_20d_bps")
+        bottom_avg = _avg_from_rows(bottom_rows, "outcome_20d_bps")
+        spread = float(top_avg - bottom_avg) if top_avg is not None and bottom_avg is not None else None
+        avg_expected_post_cost_edge = _avg_from_rows(labeled, "expected_post_cost_edge_bps")
+        avg_realized_edge = _avg_from_rows(labeled, "realized_edge_bps")
+        expected_realized_gap = (
+            float(avg_realized_edge - avg_expected_post_cost_edge)
+            if avg_expected_post_cost_edge is not None and avg_realized_edge is not None
+            else None
+        )
+        review_label = "INSUFFICIENT_CANDIDATE_OUTCOME_SAMPLE"
+        recommendation = "继续累计 candidate outcome，暂不据此改模型参数。"
+        if len(labeled) >= 3:
+            if spread is not None and spread <= -25.0:
+                review_label = "SIGNAL_RANKING_INVERTED"
+                recommendation = "高分候选事后弱于低分候选，优先复核 signal 权重和惩罚项。"
+            elif expected_realized_gap is not None and expected_realized_gap <= -75.0:
+                review_label = "EXPECTED_EDGE_OVERSTATED"
+                recommendation = "expected edge 明显高于事后 edge，优先下调 edge 映射或提高成本假设。"
+            elif spread is not None and spread >= 25.0:
+                review_label = "SIGNAL_RANKING_WORKING"
+                recommendation = "高分候选事后优于低分候选；没有成交时也可继续用 outcome 校准模型。"
+            else:
+                review_label = "MIXED_SIGNAL"
+                recommendation = "候选 outcome 信号混合，先维持参数并继续累计样本。"
+        out.append(
+            {
+                "market": market,
+                "portfolio_id": portfolio_id,
+                "candidate_evidence_count": int(len(rows)),
+                "candidate_only_count": int(len(candidate_only_rows)),
+                "labeled_candidate_count": int(len(labeled)),
+                "top_score_count": int(len(top_rows)),
+                "bottom_score_count": int(len(bottom_rows)),
+                "avg_signal_score": _avg_from_rows(labeled, "signal_score"),
+                "avg_expected_post_cost_edge_bps": avg_expected_post_cost_edge,
+                "avg_realized_edge_bps": avg_realized_edge,
+                "expected_to_realized_gap_bps": expected_realized_gap,
+                "top_score_avg_outcome_20d_bps": top_avg,
+                "bottom_score_avg_outcome_20d_bps": bottom_avg,
+                "top_minus_bottom_outcome_20d_bps": spread,
+                "review_label": review_label,
+                "recommendation": recommendation,
+                "no_trade_optimization_note": (
+                    "本行来自 candidate/outcome 证据；即使没有下单，也能校准 signal_score、expected_edge 和成本假设。"
+                ),
+                "top_symbols": ",".join(str(row.get("symbol") or "") for row in top_rows[:10] if str(row.get("symbol") or "")),
+                "bottom_symbols": ",".join(
+                    str(row.get("symbol") or "") for row in bottom_rows[:10] if str(row.get("symbol") or "")
+                ),
+            }
+        )
+    out.sort(key=lambda row: (str(row.get("market") or ""), str(row.get("portfolio_id") or "")))
+    return out
+
+
 def _persist_trading_quality_evidence(
     db_path: Path,
     rows: List[Dict[str, Any]],

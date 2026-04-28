@@ -116,19 +116,27 @@ def build_market_views_block(payload: Dict[str, Any]) -> Dict[str, Any]:
 def build_evidence_quality_block(payload: Dict[str, Any]) -> Dict[str, Any]:
     evidence_overview = _dict(payload.get("unified_evidence_overview"))
     blocked_review_rows = _rows(payload.get("blocked_vs_allowed_expost_review"), limit=20)
+    candidate_model_rows = _rows(payload.get("candidate_model_review"), limit=20)
     waterfall_rows = _rows(payload.get("weekly_attribution_waterfall"), limit=30)
     too_restrictive_count = sum(
         1
         for row in blocked_review_rows
         if str(row.get("review_label") or "").strip().upper() == "BLOCKED_OUTPERFORMED_ALLOWED"
     )
+    model_warning_count = sum(
+        1
+        for row in candidate_model_rows
+        if str(row.get("review_label") or "").strip().upper()
+        in {"SIGNAL_RANKING_INVERTED", "EXPECTED_EDGE_OVERSTATED"}
+    )
     return {
         "id": "evidence_quality",
         "title": "Trading Quality Evidence",
-        "status": "warn" if too_restrictive_count else "ok",
+        "status": "warn" if too_restrictive_count or model_warning_count else "ok",
         "summary": (
             f"evidence_rows={_int(evidence_overview.get('row_count'))} "
             f"candidate_only={_int(evidence_overview.get('candidate_only_row_count'))} "
+            f"model_reviews={len(candidate_model_rows)} "
             f"blocked_reviews={len(blocked_review_rows)}"
         ),
         "metrics": {
@@ -139,9 +147,12 @@ def build_evidence_quality_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "outcome_labeled_row_count": _int(evidence_overview.get("outcome_labeled_row_count")),
             "partial_join_row_count": _int(evidence_overview.get("partial_join_row_count")),
             "too_restrictive_count": too_restrictive_count,
+            "candidate_model_review_count": len(candidate_model_rows),
+            "candidate_model_warning_count": model_warning_count,
             "waterfall_row_count": len(waterfall_rows),
         },
         "rows": {
+            "candidate_model_review": candidate_model_rows,
             "blocked_vs_allowed": blocked_review_rows,
             "weekly_attribution_waterfall": waterfall_rows,
         },

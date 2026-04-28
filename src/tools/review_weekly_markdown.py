@@ -49,6 +49,7 @@ def write_weekly_review_markdown(
     control_timeseries_rows: List[Dict[str, Any]],
     window_label: str,
     decision_evidence_summary_rows: List[Dict[str, Any]] | None = None,
+    candidate_model_review_rows: List[Dict[str, Any]] | None = None,
     decision_evidence_history_overview_rows: List[Dict[str, Any]] | None = None,
     edge_calibration_rows: List[Dict[str, Any]] | None = None,
     slicing_calibration_rows: List[Dict[str, Any]] | None = None,
@@ -326,6 +327,26 @@ def write_weekly_review_markdown(
                 f"{float(row.get('decision_avg_outcome_20d_bps', 0.0) or 0.0):.1f}/"
                 f"{float(row.get('decision_avg_outcome_60d_bps', 0.0) or 0.0):.1f}bps"
             )
+
+    lines.append("")
+    lines.append("## Candidate Model Review")
+    if not candidate_model_review_rows:
+        lines.append("- (no candidate model review rows)")
+    else:
+        for row in candidate_model_review_rows:
+            lines.append(
+                f"- **{row['portfolio_id']}** market={row['market']} "
+                f"candidates={int(row.get('candidate_evidence_count', 0) or 0)} "
+                f"candidate_only={int(row.get('candidate_only_count', 0) or 0)} "
+                f"labeled={int(row.get('labeled_candidate_count', 0) or 0)} "
+                f"review={row.get('review_label', '-') or '-'}"
+            )
+            lines.append(
+                f"  模型校准: top-bottom20={float(row.get('top_minus_bottom_outcome_20d_bps', 0.0) or 0.0):.1f}bps "
+                f"expected_realized_gap={float(row.get('expected_to_realized_gap_bps', 0.0) or 0.0):.1f}bps "
+                f"avg_signal={float(row.get('avg_signal_score', 0.0) or 0.0):.3f}"
+            )
+            lines.append(f"  建议: {row.get('recommendation', '') or '-'}")
 
     lines.append("")
     lines.append("## Decision Evidence History")

@@ -40,6 +40,10 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
         "blocked_vs_allowed_expost_review": [
             {"review_label": "BLOCKING_HELPED", "block_reason": "EDGE_GATE"},
         ],
+        "candidate_model_review": [
+            {"review_label": "SIGNAL_RANKING_WORKING", "portfolio_id": "US:watchlist"},
+            {"review_label": "EXPECTED_EDGE_OVERSTATED", "portfolio_id": "HK:watchlist"},
+        ],
         "weekly_attribution_waterfall": [{"component": "selection"}],
     }
 
@@ -60,3 +64,6 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
     assert by_id["evidence_quality"]["metrics"]["evidence_row_count"] == 3
     assert by_id["evidence_quality"]["metrics"]["candidate_only_row_count"] == 1
     assert by_id["evidence_quality"]["metrics"]["outcome_labeled_row_count"] == 2
+    assert by_id["evidence_quality"]["metrics"]["candidate_model_review_count"] == 2
+    assert by_id["evidence_quality"]["metrics"]["candidate_model_warning_count"] == 1
+    assert by_id["evidence_quality"]["status"] == "warn"

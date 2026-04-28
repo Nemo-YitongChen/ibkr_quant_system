@@ -689,6 +689,14 @@ def _load_weekly_blocked_vs_allowed_expost_rows(review_dir: Path) -> List[Dict[s
     return _read_all_csv_rows(review_dir / "weekly_blocked_vs_allowed_expost.csv")
 
 
+def _load_weekly_candidate_model_review_rows(review_dir: Path) -> List[Dict[str, Any]]:
+    summary_json = _load_json(review_dir / "weekly_review_summary.json")
+    summary_rows = summary_json.get("candidate_model_review")
+    if isinstance(summary_rows, list) and summary_rows:
+        return [dict(row) for row in summary_rows if isinstance(row, dict)]
+    return _read_all_csv_rows(review_dir / "weekly_candidate_model_review.csv")
+
+
 def _load_weekly_risk_review_rows(review_dir: Path) -> List[Dict[str, Any]]:
     summary_json = _load_json(review_dir / "weekly_review_summary.json")
     summary_rows = summary_json.get("risk_review_summary")
@@ -7024,6 +7032,7 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
     }
     weekly_unified_evidence_rows = _load_weekly_unified_evidence_rows(weekly_review_dir)
     weekly_blocked_vs_allowed_expost_rows = _load_weekly_blocked_vs_allowed_expost_rows(weekly_review_dir)
+    weekly_candidate_model_review_rows = _load_weekly_candidate_model_review_rows(weekly_review_dir)
     weekly_risk_review_rows = _load_weekly_risk_review_rows(weekly_review_dir)
     weekly_risk_review_map: Dict[str, Dict[str, Any]] = {
         str(row.get("portfolio_id", "") or ""): dict(row)
@@ -7267,6 +7276,7 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
         "unified_evidence_overview": unified_evidence_overview,
         "unified_evidence_rows": weekly_unified_evidence_rows[:200],
         "blocked_vs_allowed_expost_review": weekly_blocked_vs_allowed_expost_rows,
+        "candidate_model_review": weekly_candidate_model_review_rows,
         "execution_cost_overview": _build_execution_cost_overview(trade_cards),
         "health_overview": _build_health_overview(trade_cards),
         "ops_health_rows": _build_health_overview(trade_cards),
@@ -8041,8 +8051,26 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
             str(int(row.get("row_count", 0) or 0)),
             str(int(row.get("allowed_row_count", 0) or 0)),
             str(int(row.get("blocked_row_count", 0) or 0)),
+            str(int(row.get("candidate_only_row_count", 0) or 0)),
+            str(int(row.get("outcome_labeled_row_count", 0) or 0)),
+            str(int(row.get("partial_join_row_count", 0) or 0)),
         ]
         for row in list(dict(payload.get("unified_evidence_overview", {}) or {}).get("market_rows", []) or [])
+        if isinstance(row, dict)
+    ]
+    candidate_model_review_rows = [
+        [
+            str(row.get("market", "") or ""),
+            str(row.get("portfolio_id", "") or ""),
+            str(int(row.get("candidate_evidence_count", 0) or 0)),
+            str(int(row.get("candidate_only_count", 0) or 0)),
+            str(int(row.get("labeled_candidate_count", 0) or 0)),
+            f"{_safe_float(row.get('top_minus_bottom_outcome_20d_bps'), 0.0):.2f}",
+            f"{_safe_float(row.get('expected_to_realized_gap_bps'), 0.0):.2f}",
+            str(row.get("review_label", "") or "-"),
+            str(row.get("recommendation", "") or "-"),
+        ]
+        for row in list(payload.get("candidate_model_review", []) or [])[:50]
         if isinstance(row, dict)
     ]
     blocked_expost_rows = [
@@ -9454,8 +9482,9 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     evidence_review_card = f"""
     <section class="card overview">
       <h2>Unified Evidence / Blocked vs Allowed</h2>
-      <div class="meta">这里消费 weekly review 生成的统一证据表，检查被挡订单事后是否真的弱于被允许订单。</div>
-      {_render_table(["market", "rows", "allowed", "blocked"], unified_evidence_market_rows) if unified_evidence_market_rows else '<div class="empty">当前还没有统一证据表市场汇总。</div>'}
+      <div class="meta">这里消费 weekly review 生成的统一证据表：没有成交时先用 candidate/outcome 校准模型，有成交后再检查 blocked vs allowed。</div>
+      {_render_table(["market", "rows", "allowed", "blocked", "candidate_only", "outcome_labeled", "partial_join"], unified_evidence_market_rows) if unified_evidence_market_rows else '<div class="empty">当前还没有统一证据表市场汇总。</div>'}
+      {_render_table(["market", "portfolio", "candidates", "candidate_only", "labeled", "top-bottom20", "edge_gap", "review", "recommendation"], candidate_model_review_rows) if candidate_model_review_rows else '<div class="empty">当前还没有 candidate model review 样本。</div>'}
       {_render_table(["market", "portfolio", "block_reason", "allowed", "blocked", "allowed_20d_bps", "blocked_20d_bps", "delta_bps", "review"], blocked_expost_rows) if blocked_expost_rows else '<div class="empty">当前还没有 blocked vs allowed 事后复盘样本。</div>'}
     </section>
     """

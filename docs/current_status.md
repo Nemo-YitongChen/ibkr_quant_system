@@ -81,6 +81,7 @@
 - `docs/change_archive_2026-04-29_alert_error_classification.md`
 - `docs/change_archive_2026-04-29_strategy_parameter_registry.md`
 - `docs/change_archive_2026-04-29_candidate_only_evidence.md`
+- `docs/change_archive_2026-04-29_candidate_model_review.md`
 
 ### 已合入的最近一轮关键建设
 
@@ -113,6 +114,7 @@
 - **策略参数建议已经开始配置化**
 - **adaptive strategy 已接入 layered config source 追踪**
 - **无成交周也能继续保留 candidate/outcome 证据**
+- **candidate-only evidence 已能生成模型/策略校准 review**
 
 ---
 

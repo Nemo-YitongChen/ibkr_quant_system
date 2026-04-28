@@ -3031,6 +3031,7 @@ from .review_weekly_governance_support import (
 from .review_weekly_decision_support import (
     _apply_market_profile_tuning_context,
     _build_blocked_vs_allowed_expost_rows,
+    _build_candidate_model_review_rows,
     _build_market_profile_patch_readiness,
     _build_trading_quality_evidence_rows,
     _build_unified_evidence_rows,
