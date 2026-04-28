@@ -28,6 +28,7 @@ from ..common.dashboard_evidence import (
     build_unified_evidence_overview as _build_unified_evidence_overview_support,
     build_weekly_attribution_waterfall as _build_weekly_attribution_waterfall_support,
 )
+from ..common.dashboard_rendering import render_dashboard_v2_blocks
 from ..common.governance_health import build_governance_health_summary
 from ..common.market_structure import load_market_structure, market_structure_summary
 from ..common.markets import market_config_path, resolve_market_code, symbol_matches_market
@@ -7791,16 +7792,6 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
         for row in reversed(list(control_actions.get("action_history", []) or [])[-20:])
         if isinstance(row, dict)
     ]
-    dashboard_v2_block_rows = [
-        [
-            str(row.get("id", "") or ""),
-            str(row.get("status", "") or ""),
-            _short_summary_text(str(row.get("summary", "") or "-"), max_len=120),
-            _short_summary_text(_dashboard_v2_block_metrics_text(row), max_len=140),
-        ]
-        for row in list(payload.get("dashboard_v2_blocks", []) or [])
-        if isinstance(row, dict)
-    ]
     market_view_rows = [
         [
             str(row.get("market", "") or ""),
@@ -9230,13 +9221,9 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
       <div class="empty">当前没有可展示的计划/实际执行成本对比数据。</div>
     </section>
     """
-    dashboard_v2_blocks_card = f"""
-    <section class="card overview">
-      <h2>Dashboard v2 Blocks</h2>
-      <div class="meta">这四块是后续 dashboard v2 的稳定 JSON builder 输出，先在专业模式里暴露结构和健康摘要。</div>
-      {_render_table(["block", "status", "summary", "metrics"], dashboard_v2_block_rows)}
-    </section>
-    """ if dashboard_v2_block_rows else ""
+    dashboard_v2_blocks_card = render_dashboard_v2_blocks(
+        [dict(row) for row in list(payload.get("dashboard_v2_blocks", []) or []) if isinstance(row, dict)]
+    )
     market_views_card = f"""
     <section class="card overview">
       <h2>US/HK/CN 市场视图</h2>
@@ -9316,6 +9303,13 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     .badge-mode {{ background: #e7ebf7; color: #334d8f; }}
     .badge-exec {{ background: #f3ebe2; color: #7a4f14; }}
     .badge-state {{ background: #e8f3de; color: #3d6b00; }}
+    .badge-status.ok {{ background: #e8f3de; color: #3d6b00; }}
+    .badge-status.warn {{ background: #fff2d2; color: #7a4f14; }}
+    .badge-status.fail {{ background: #ffe4de; color: #9a3428; }}
+    .dashboard-v2-grid {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }}
+    .dashboard-v2-card {{ border: 1px solid var(--line); border-radius: 14px; padding: 14px; background: #fffdf8; }}
+    .dashboard-v2-card h4 {{ margin: 12px 0 6px; font-size: 13px; color: var(--muted); }}
+    .dashboard-v2-card pre {{ white-space: pre-wrap; word-break: break-word; background: #f7f1e7; border: 1px solid var(--line); border-radius: 10px; padding: 8px; max-height: 180px; overflow: auto; font-size: 12px; }}
     .stats {{ min-width: 320px; display: grid; grid-template-columns: repeat(2, minmax(140px, 1fr)); gap: 10px; }}
     .stats div {{ border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; background: #fcfaf4; }}
     .stats strong {{ display: block; font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }}
