@@ -10,8 +10,10 @@ Date: 2026-04-29
 
 - Added `src/tools/review_weekly_common_support.py` for low-level weekly review helper functions.
 - Moved decision support imports for JSON parsing, numeric coercion, averaging, and portfolio row mapping to the new common support module.
+- Moved execution support imports for confidence, calibration, candidate-stage, timing, and numeric helpers to the new common support module.
 - Moved governance support `_safe_float` import to the new common support module.
 - Added `tests/test_review_weekly_support_imports.py` to keep direct imports of decision and feedback support guarded.
+- Extended the same import test to guard direct imports of execution support.
 
 ## Validation
 
@@ -22,9 +24,9 @@ PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_review_weekly
 Result:
 
 ```text
-63 passed
+64 passed
 ```
 
 ## Operational Impact
 
-No weekly review behavior changed. This reduces helper-module coupling and makes future splits of `review_investment_weekly.py` safer because domain support modules can now be imported and tested independently.
+No weekly review behavior changed. This reduces helper-module coupling and makes future splits of `review_investment_weekly.py` safer because decision, execution, and feedback support modules can now be imported and tested independently.
