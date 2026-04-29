@@ -85,6 +85,7 @@
 - `docs/change_archive_2026-04-29_pure_strategy_no_trade_tests.md`
 - `docs/change_archive_2026-04-29_weekly_support_import_boundary.md`
 - `docs/change_archive_2026-04-30_dashboard_client_disconnect.md`
+- `docs/change_archive_2026-04-30_supervisor_startup_visibility.md`
 
 ### 已合入的最近一轮关键建设
 
@@ -121,6 +122,7 @@
 - **纯策略 no-trade 闭环已有 focused test，确认无 IBKR/无订单/无 fill 时仍能用 outcome 校准模型**
 - **weekly review support 模块已开始解除循环导入，decision/execution/strategy/feedback support 可冷启动导入测试**
 - **dashboard control server 已忽略常见本地客户端提前断连噪声，避免 socketserver traceback 误导运维判断**
+- **supervisor 默认长驻模式已有启动日志，运行 `python -m src.app.supervisor` 时会立即显示配置、市场、poll interval 与退出提示**
 
 ---
 

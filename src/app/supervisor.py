@@ -4445,12 +4445,26 @@ class Supervisor:
             self._cycle_running = False
 
     def run_once(self) -> None:
+        log.info(
+            "Supervisor single cycle starting: config=%s markets=%s",
+            self.config_path,
+            ",".join(market.market_code for market in self.markets if market.enabled) or "-",
+        )
         self.run_cycle()
         self.trade_proc.stop()
+        log.info("Supervisor single cycle complete")
 
     def run_forever(self) -> None:
         self._setup_signal_handlers()
         self._start_dashboard_control_service()
+        log.info(
+            "Supervisor loop started: config=%s markets=%s poll_sec=%s dashboard_control=%s url=%s; press Ctrl+C to stop",
+            self.config_path,
+            ",".join(market.market_code for market in self.markets if market.enabled) or "-",
+            self.poll_sec,
+            bool(self._dashboard_control_enabled()),
+            self._dashboard_control_url() if self._dashboard_control_enabled() else "-",
+        )
         try:
             while not self._stopping:
                 self.run_cycle()
