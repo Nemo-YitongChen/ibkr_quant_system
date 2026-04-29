@@ -258,6 +258,10 @@ class Supervisor:
         self._dashboard_opened_once = False
         self._runtime_scope_cache: Dict[str, Any] = {}
         self._adaptive_strategy_cache: Dict[str, Any] = {}
+        self._weekly_review_summary_cache_path = ""
+        self._weekly_review_summary_cache_mtime_ns = -1
+        self._weekly_review_summary_cache_size = -1
+        self._weekly_review_summary_cache_payload: Dict[str, Any] = {}
         self._cycle_running = False
         self._dashboard_control_lock = threading.Lock()
         self._dashboard_control_poll_state_lock = threading.Lock()
@@ -2620,57 +2624,81 @@ class Supervisor:
             return bool(current_signature) and current_signature == confirmed_signature
         return bool(self.cfg.get("weekly_review_auto_apply_paper", True))
 
+    def _weekly_review_summary_payload(self) -> Dict[str, Any]:
+        path = self._weekly_review_output_dir() / "weekly_review_summary.json"
+        try:
+            stat = path.stat()
+        except FileNotFoundError:
+            self._weekly_review_summary_cache_path = ""
+            self._weekly_review_summary_cache_mtime_ns = -1
+            self._weekly_review_summary_cache_size = -1
+            self._weekly_review_summary_cache_payload = {}
+            return {}
+        cache_key = str(path)
+        if (
+            self._weekly_review_summary_cache_path == cache_key
+            and self._weekly_review_summary_cache_mtime_ns == int(stat.st_mtime_ns)
+            and self._weekly_review_summary_cache_size == int(stat.st_size)
+        ):
+            return self._weekly_review_summary_cache_payload
+        payload = _load_json_file(path)
+        self._weekly_review_summary_cache_path = cache_key
+        self._weekly_review_summary_cache_mtime_ns = int(stat.st_mtime_ns)
+        self._weekly_review_summary_cache_size = int(stat.st_size)
+        self._weekly_review_summary_cache_payload = dict(payload or {})
+        return self._weekly_review_summary_cache_payload
+
     def _weekly_feedback_rows(self) -> List[Dict[str, Any]]:
-        payload = _load_json_file(self._weekly_review_output_dir() / "weekly_review_summary.json")
+        payload = self._weekly_review_summary_payload()
         rows = payload.get("shadow_feedback_summary")
         if isinstance(rows, list):
             return [dict(row) for row in rows if isinstance(row, dict)]
         return []
 
     def _weekly_risk_feedback_rows(self) -> List[Dict[str, Any]]:
-        payload = _load_json_file(self._weekly_review_output_dir() / "weekly_review_summary.json")
+        payload = self._weekly_review_summary_payload()
         rows = payload.get("risk_feedback_summary")
         if isinstance(rows, list):
             return [dict(row) for row in rows if isinstance(row, dict)]
         return []
 
     def _weekly_execution_feedback_rows(self) -> List[Dict[str, Any]]:
-        payload = _load_json_file(self._weekly_review_output_dir() / "weekly_review_summary.json")
+        payload = self._weekly_review_summary_payload()
         rows = payload.get("execution_feedback_summary")
         if isinstance(rows, list):
             return [dict(row) for row in rows if isinstance(row, dict)]
         return []
 
     def _weekly_feedback_automation_rows(self) -> List[Dict[str, Any]]:
-        payload = _load_json_file(self._weekly_review_output_dir() / "weekly_review_summary.json")
+        payload = self._weekly_review_summary_payload()
         rows = payload.get("feedback_automation_summary")
         if isinstance(rows, list):
             return [dict(row) for row in rows if isinstance(row, dict)]
         return []
 
     def _weekly_feedback_threshold_suggestion_rows(self) -> List[Dict[str, Any]]:
-        payload = _load_json_file(self._weekly_review_output_dir() / "weekly_review_summary.json")
+        payload = self._weekly_review_summary_payload()
         rows = payload.get("feedback_threshold_suggestion_summary")
         if isinstance(rows, list):
             return [dict(row) for row in rows if isinstance(row, dict)]
         return []
 
     def _weekly_feedback_threshold_tuning_rows(self) -> List[Dict[str, Any]]:
-        payload = _load_json_file(self._weekly_review_output_dir() / "weekly_review_summary.json")
+        payload = self._weekly_review_summary_payload()
         rows = payload.get("feedback_threshold_tuning_summary")
         if isinstance(rows, list):
             return [dict(row) for row in rows if isinstance(row, dict)]
         return []
 
     def _weekly_market_profile_tuning_rows(self) -> List[Dict[str, Any]]:
-        payload = _load_json_file(self._weekly_review_output_dir() / "weekly_review_summary.json")
+        payload = self._weekly_review_summary_payload()
         rows = payload.get("market_profile_tuning_summary")
         if isinstance(rows, list):
             return [dict(row) for row in rows if isinstance(row, dict)]
         return []
 
     def _weekly_calibration_patch_suggestion_rows(self) -> List[Dict[str, Any]]:
-        payload = _load_json_file(self._weekly_review_output_dir() / "weekly_review_summary.json")
+        payload = self._weekly_review_summary_payload()
         rows = payload.get("calibration_patch_suggestions")
         if isinstance(rows, list):
             return [dict(row) for row in rows if isinstance(row, dict)]

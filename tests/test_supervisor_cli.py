@@ -84,6 +84,37 @@ class SupervisorCliTests(unittest.TestCase):
             registered[signal.SIGINT](signal.SIGINT, None)
         self.assertTrue(supervisor._stopping)
 
+    def test_weekly_review_summary_payload_is_cached_by_file_stat(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            weekly_dir = base / "reports_investment_weekly"
+            weekly_dir.mkdir(parents=True, exist_ok=True)
+            (weekly_dir / "weekly_review_summary.json").write_text("{}", encoding="utf-8")
+            cfg_path = base / "supervisor.yaml"
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        f'dashboard_weekly_review_dir: "{weekly_dir}"',
+                        "markets: []",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(cfg_path))
+            payload = {
+                "shadow_feedback_summary": [{"market": "US"}],
+                "execution_feedback_summary": [{"market": "US"}],
+                "market_profile_tuning_summary": [{"market": "US"}],
+            }
+            with patch("src.app.supervisor._load_json_file", return_value=payload) as loader:
+                self.assertEqual(supervisor._weekly_feedback_rows()[0]["market"], "US")
+                self.assertEqual(supervisor._weekly_execution_feedback_rows()[0]["market"], "US")
+                self.assertEqual(supervisor._weekly_market_profile_tuning_rows()[0]["market"], "US")
+
+            loader.assert_called_once()
+            self.assertEqual(Path(loader.call_args.args[0]).name, "weekly_review_summary.json")
+
     def test_first_version_rollout_keeps_cn_recommendation_only_and_enables_hk_submit(self):
         supervisor_cfg = yaml.safe_load((SUPERVISOR_BASE_DIR / "config" / "supervisor.yaml").read_text(encoding="utf-8"))
         markets = {str(item.get("market") or ""): dict(item) for item in list(supervisor_cfg.get("markets") or [])}

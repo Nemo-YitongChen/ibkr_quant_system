@@ -22,6 +22,7 @@ starts the supervisor as a foreground long-running scheduler. It does not return
 - Lightweight dashboard-control writes preserve previously persisted portfolios/artifacts when available, so restarting supervisor does not erase the dashboard's last known control context.
 - Due-report cycles now log `Starting due report workflow` and `Launching due report tasks` before invoking report subprocesses, making it clear whether the scheduler has reached the IBKR/report stage.
 - Disabled `short_safety_sync` no longer appears as an active pre-report sync step.
+- `weekly_review_summary.json` is now cached by path/mtime/size inside the supervisor, avoiding repeated JSON decode of very large weekly review summaries while building effective feedback configs for the same cycle.
 - The default loop log now includes:
   - config path
   - enabled markets
@@ -34,7 +35,7 @@ starts the supervisor as a foreground long-running scheduler. It does not return
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python -m py_compile src/app/supervisor.py
-PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_supervisor_cli.py::SupervisorCliTests::test_dashboard_control_start_writes_lightweight_state_without_portfolios tests/test_supervisor_cli.py::SupervisorCliTests::test_dashboard_control_poll_state_reuses_persisted_portfolios_without_rebuild tests/test_supervisor_cli.py::SupervisorCliTests::test_supervisor_signal_handler_interrupts_foreground_process tests/test_dashboard_control_service.py
+PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_supervisor_cli.py::SupervisorCliTests::test_weekly_review_summary_payload_is_cached_by_file_stat tests/test_supervisor_cli.py::SupervisorCliTests::test_dashboard_control_start_writes_lightweight_state_without_portfolios tests/test_supervisor_cli.py::SupervisorCliTests::test_dashboard_control_poll_state_reuses_persisted_portfolios_without_rebuild tests/test_supervisor_cli.py::SupervisorCliTests::test_supervisor_signal_handler_interrupts_foreground_process tests/test_dashboard_control_service.py
 ```
 
 Local startup/interrupt smoke test also passed with a minimal supervisor config:
@@ -48,6 +49,7 @@ Default-config startup/interrupt smoke test also passed:
 - `Supervisor starting` appeared immediately
 - dashboard control startup no longer blocked on full state generation
 - due-report workflow logged `Launching due report tasks` and `Running task generate_investment_report...` before the report subprocess attempted IBKR connection
+- main-dir short startup reached `Connected.` against local IB Gateway, confirming the API client connection stage is reached after the visibility/caching fixes
 - SIGINT interrupted the foreground process and left no supervisor/report child process behind
 
 ## Operator Notes
