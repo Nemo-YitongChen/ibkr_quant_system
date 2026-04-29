@@ -4103,6 +4103,8 @@ class Supervisor:
     def _setup_signal_handlers(self) -> None:
         def _handler(signum, frame):
             self._stopping = True
+            log.info("Supervisor stop requested: signal=%s", signum)
+            raise KeyboardInterrupt
         signal.signal(signal.SIGINT, _handler)
         signal.signal(signal.SIGTERM, _handler)
 
@@ -4456,19 +4458,22 @@ class Supervisor:
 
     def run_forever(self) -> None:
         self._setup_signal_handlers()
-        self._start_dashboard_control_service()
-        log.info(
-            "Supervisor loop started: config=%s markets=%s poll_sec=%s dashboard_control=%s url=%s; press Ctrl+C to stop",
-            self.config_path,
-            ",".join(market.market_code for market in self.markets if market.enabled) or "-",
-            self.poll_sec,
-            bool(self._dashboard_control_enabled()),
-            self._dashboard_control_url() if self._dashboard_control_enabled() else "-",
-        )
         try:
+            self._start_dashboard_control_service()
+            log.info(
+                "Supervisor loop started: config=%s markets=%s poll_sec=%s dashboard_control=%s url=%s; press Ctrl+C to stop",
+                self.config_path,
+                ",".join(market.market_code for market in self.markets if market.enabled) or "-",
+                self.poll_sec,
+                bool(self._dashboard_control_enabled()),
+                self._dashboard_control_url() if self._dashboard_control_enabled() else "-",
+            )
             while not self._stopping:
                 self.run_cycle()
                 time.sleep(self.poll_sec)
+        except KeyboardInterrupt:
+            self._stopping = True
+            log.info("Supervisor interrupted; shutting down")
         finally:
             self._stop_dashboard_control_service()
             self.trade_proc.stop()

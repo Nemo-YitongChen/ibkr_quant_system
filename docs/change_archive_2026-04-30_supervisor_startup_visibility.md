@@ -16,6 +16,7 @@ starts the supervisor as a foreground long-running scheduler. It does not return
 
 - Added an explicit startup log for default long-running mode.
 - Added explicit start/complete logs for `--once` mode.
+- Changed SIGINT/SIGTERM handling so foreground runs can be interrupted and cleaned up instead of only setting a stop flag.
 - The default loop log now includes:
   - config path
   - enabled markets
@@ -28,7 +29,14 @@ starts the supervisor as a foreground long-running scheduler. It does not return
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python -m py_compile src/app/supervisor.py
+PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_supervisor_cli.py::SupervisorCliTests::test_supervisor_signal_handler_interrupts_foreground_process tests/test_supervisor_cli.py::SupervisorCliTests::test_parse_args_accepts_once_and_config
 ```
+
+Local startup/interrupt smoke test also passed with a minimal supervisor config:
+
+- startup log appeared immediately
+- SIGINT printed `Supervisor stop requested`
+- process exited cleanly after `Supervisor interrupted; shutting down`
 
 ## Operator Notes
 

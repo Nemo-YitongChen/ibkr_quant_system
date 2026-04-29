@@ -122,7 +122,7 @@
 - **纯策略 no-trade 闭环已有 focused test，确认无 IBKR/无订单/无 fill 时仍能用 outcome 校准模型**
 - **weekly review support 模块已开始解除循环导入，decision/execution/strategy/feedback support 可冷启动导入测试**
 - **dashboard control server 已忽略常见本地客户端提前断连噪声，避免 socketserver traceback 误导运维判断**
-- **supervisor 默认长驻模式已有启动日志，运行 `python -m src.app.supervisor` 时会立即显示配置、市场、poll interval 与退出提示**
+- **supervisor 默认长驻模式已有启动日志与可中断信号处理，运行 `python -m src.app.supervisor` 会立即显示配置/市场/poll interval，Ctrl+C 会进入清理退出**
 
 ---
 

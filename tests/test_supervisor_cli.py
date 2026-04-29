@@ -11,6 +11,7 @@ import json
 import pytest
 import re
 import shutil
+import signal
 import time
 import yaml
 
@@ -65,6 +66,23 @@ class SupervisorCliTests(unittest.TestCase):
         args = parse_args(["--config", "config/supervisor.yaml", "--once"])
         self.assertEqual(args.config, "config/supervisor.yaml")
         self.assertTrue(args.once)
+
+    def test_supervisor_signal_handler_interrupts_foreground_process(self):
+        supervisor = Supervisor.__new__(Supervisor)
+        supervisor._stopping = False
+        registered = {}
+
+        def _capture(signum, handler):
+            registered[signum] = handler
+
+        with patch("src.app.supervisor.signal.signal", side_effect=_capture):
+            supervisor._setup_signal_handlers()
+
+        self.assertIn(signal.SIGINT, registered)
+        self.assertIn(signal.SIGTERM, registered)
+        with self.assertRaises(KeyboardInterrupt):
+            registered[signal.SIGINT](signal.SIGINT, None)
+        self.assertTrue(supervisor._stopping)
 
     def test_first_version_rollout_keeps_cn_recommendation_only_and_enables_hk_submit(self):
         supervisor_cfg = yaml.safe_load((SUPERVISOR_BASE_DIR / "config" / "supervisor.yaml").read_text(encoding="utf-8"))
