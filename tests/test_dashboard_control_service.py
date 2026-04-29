@@ -100,6 +100,36 @@ class DashboardControlServiceTests(unittest.TestCase):
                 handler.end_headers.assert_called_once()
                 handler.wfile.write.assert_called_once()
 
+    def test_handle_ignores_client_disconnect_before_request_dispatch(self):
+        service = self._build_service()
+        handler_cls = service._make_handler()
+        handler = handler_cls.__new__(handler_cls)
+
+        for error in (
+            BrokenPipeError(32, "Broken pipe"),
+            ConnectionResetError(54, "Connection reset by peer"),
+            ConnectionAbortedError(53, "Software caused connection abort"),
+        ):
+            with self.subTest(error=type(error).__name__), patch(
+                "src.app.dashboard_control.BaseHTTPRequestHandler.handle",
+                side_effect=error,
+            ) as base_handle:
+                handler.handle()
+
+                base_handle.assert_called_once()
+
+    def test_handle_reraises_unexpected_os_error(self):
+        service = self._build_service()
+        handler_cls = service._make_handler()
+        handler = handler_cls.__new__(handler_cls)
+
+        with patch(
+            "src.app.dashboard_control.BaseHTTPRequestHandler.handle",
+            side_effect=OSError("unexpected socket failure"),
+        ):
+            with self.assertRaises(OSError):
+                handler.handle()
+
     def test_send_json_reraises_unexpected_os_error(self):
         service = self._build_service()
         handler_cls = service._make_handler()

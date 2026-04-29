@@ -75,6 +75,14 @@ class DashboardControlService:
             def _is_client_disconnect(exc: BaseException) -> bool:
                 return isinstance(exc, (BrokenPipeError, ConnectionResetError, ConnectionAbortedError))
 
+            def handle(self) -> None:
+                try:
+                    super().handle()
+                except OSError as exc:
+                    if self._is_client_disconnect(exc):
+                        return
+                    raise
+
             def _send_json(self, status_code: int, payload: Dict[str, Any]) -> None:
                 body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
                 try:
