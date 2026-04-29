@@ -2290,6 +2290,45 @@ class SupervisorCliTests(unittest.TestCase):
                 supervisor._write_dashboard_control_state()
             self.assertIn("Failed to write dashboard control state", "\n".join(logs.output))
 
+    def test_dashboard_control_start_writes_lightweight_state_without_portfolios(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            cfg_path = base / "supervisor.yaml"
+            summary_dir = base / "reports_supervisor"
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        f'summary_out_dir: "{summary_dir}"',
+                        "dashboard_control_enabled: true",
+                        "dashboard_control_port: 0",
+                        "poll_sec: 30",
+                        "markets: []",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(cfg_path))
+            fake_service = unittest.mock.Mock()
+            fake_service.base_url = "http://127.0.0.1:0"
+
+            with patch("src.app.supervisor.DashboardControlService", return_value=fake_service), patch.object(
+                supervisor,
+                "_dashboard_control_portfolios",
+                side_effect=AssertionError("startup should not build full portfolio state"),
+            ), patch.object(supervisor, "_write_market_profile_manual_patch_artifacts") as market_patch, patch.object(
+                supervisor,
+                "_write_calibration_patch_artifacts",
+            ) as calibration_patch:
+                supervisor._start_dashboard_control_service()
+
+            fake_service.start.assert_called_once()
+            market_patch.assert_not_called()
+            calibration_patch.assert_not_called()
+            payload = json.loads((summary_dir / "dashboard_control_state.json").read_text(encoding="utf-8"))
+            self.assertEqual(payload["service"]["status"], "running")
+            self.assertEqual(payload["portfolios"], {})
+
     def test_dashboard_control_run_preflight_generates_report_and_refreshes_dashboard(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)

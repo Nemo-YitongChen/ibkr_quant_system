@@ -17,6 +17,7 @@ starts the supervisor as a foreground long-running scheduler. It does not return
 - Added an explicit startup log for default long-running mode.
 - Added explicit start/complete logs for `--once` mode.
 - Changed SIGINT/SIGTERM handling so foreground runs can be interrupted and cleaned up instead of only setting a stop flag.
+- Dashboard control startup/stop/error now writes a lightweight state file instead of building full portfolio/patch state before the first log line.
 - The default loop log now includes:
   - config path
   - enabled markets
@@ -37,6 +38,12 @@ Local startup/interrupt smoke test also passed with a minimal supervisor config:
 - startup log appeared immediately
 - SIGINT printed `Supervisor stop requested`
 - process exited cleanly after `Supervisor interrupted; shutting down`
+
+Default-config startup/interrupt smoke test also passed:
+
+- `Supervisor starting` appeared immediately
+- dashboard control startup no longer blocked on full state generation
+- SIGINT interrupted the foreground process and left no supervisor/report child process behind
 
 ## Operator Notes
 

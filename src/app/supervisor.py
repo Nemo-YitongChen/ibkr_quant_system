@@ -1401,6 +1401,15 @@ class Supervisor:
             portfolios=self._dashboard_control_portfolios(),
         )
 
+    def _dashboard_control_light_state_payload(self, *, service_status: str = "running") -> Dict[str, Any]:
+        return _dashboard_control_state_payload(
+            ts=datetime.now(self.tz).isoformat(),
+            service=self._dashboard_control_service_payload(service_status=service_status),
+            actions=self._dashboard_control_actions_payload(),
+            artifacts=self._dashboard_control_artifacts_payload(),
+            portfolios={},
+        )
+
     def _build_dashboard_control_artifact_payload(
         self,
         *,
@@ -1503,16 +1512,27 @@ class Supervisor:
             label="calibration patch",
         )
 
-    def _write_dashboard_control_state(self, *, service_status: str = "running") -> None:
+    def _write_dashboard_control_state(
+        self,
+        *,
+        service_status: str = "running",
+        include_portfolios: bool = True,
+        write_patch_artifacts: bool = True,
+    ) -> None:
         if not self._dashboard_control_enabled():
             return
         path = self._dashboard_control_state_path()
-        payload = self._dashboard_control_state_payload(service_status=service_status)
+        payload = (
+            self._dashboard_control_state_payload(service_status=service_status)
+            if bool(include_portfolios)
+            else self._dashboard_control_light_state_payload(service_status=service_status)
+        )
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-            self._write_market_profile_manual_patch_artifacts(payload)
-            self._write_calibration_patch_artifacts(payload)
+            if bool(write_patch_artifacts):
+                self._write_market_profile_manual_patch_artifacts(payload)
+                self._write_calibration_patch_artifacts(payload)
         except OSError as e:
             log.warning("Failed to write dashboard control state: path=%s error=%s", path, e)
 
@@ -1938,18 +1958,30 @@ class Supervisor:
                 status="failed",
                 error=f"{type(e).__name__}: {e}",
             )
-            self._write_dashboard_control_state(service_status="error")
+            self._write_dashboard_control_state(
+                service_status="error",
+                include_portfolios=False,
+                write_patch_artifacts=False,
+            )
             log.warning("Failed to start dashboard control service: %s %s", type(e).__name__, e)
             return
         self._dashboard_control_service = service
-        self._write_dashboard_control_state(service_status="running")
+        self._write_dashboard_control_state(
+            service_status="running",
+            include_portfolios=False,
+            write_patch_artifacts=False,
+        )
         log.info("Dashboard control service started -> %s", service.base_url)
 
     def _stop_dashboard_control_service(self) -> None:
         if self._dashboard_control_service is None:
             return
         try:
-            self._write_dashboard_control_state(service_status="stopped")
+            self._write_dashboard_control_state(
+                service_status="stopped",
+                include_portfolios=False,
+                write_patch_artifacts=False,
+            )
             self._dashboard_control_service.stop()
         finally:
             self._dashboard_control_service = None
@@ -4458,6 +4490,13 @@ class Supervisor:
 
     def run_forever(self) -> None:
         self._setup_signal_handlers()
+        log.info(
+            "Supervisor starting: config=%s markets=%s poll_sec=%s dashboard_control=%s; press Ctrl+C to stop",
+            self.config_path,
+            ",".join(market.market_code for market in self.markets if market.enabled) or "-",
+            self.poll_sec,
+            bool(self._dashboard_control_enabled()),
+        )
         try:
             self._start_dashboard_control_service()
             log.info(
