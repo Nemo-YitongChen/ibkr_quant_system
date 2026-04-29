@@ -2312,7 +2312,7 @@ class SupervisorCliTests(unittest.TestCase):
             fake_service = unittest.mock.Mock()
             fake_service.base_url = "http://127.0.0.1:0"
 
-            with patch("src.app.supervisor.DashboardControlService", return_value=fake_service), patch.object(
+            with patch("src.app.supervisor.DashboardControlService", return_value=fake_service) as service_cls, patch.object(
                 supervisor,
                 "_dashboard_control_portfolios",
                 side_effect=AssertionError("startup should not build full portfolio state"),
@@ -2321,6 +2321,7 @@ class SupervisorCliTests(unittest.TestCase):
                 "_write_calibration_patch_artifacts",
             ) as calibration_patch:
                 supervisor._start_dashboard_control_service()
+                poll_payload = service_cls.call_args.kwargs["get_state"]()
 
             fake_service.start.assert_called_once()
             market_patch.assert_not_called()
@@ -2328,6 +2329,54 @@ class SupervisorCliTests(unittest.TestCase):
             payload = json.loads((summary_dir / "dashboard_control_state.json").read_text(encoding="utf-8"))
             self.assertEqual(payload["service"]["status"], "running")
             self.assertEqual(payload["portfolios"], {})
+            self.assertEqual(poll_payload["state_scope"], "poll_cached")
+            self.assertEqual(poll_payload["portfolios"], {})
+
+    def test_dashboard_control_poll_state_reuses_persisted_portfolios_without_rebuild(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            cfg_path = base / "supervisor.yaml"
+            summary_dir = base / "reports_supervisor"
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        f'summary_out_dir: "{summary_dir}"',
+                        "dashboard_control_enabled: true",
+                        "dashboard_control_port: 0",
+                        "poll_sec: 30",
+                        "markets: []",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            state_path = summary_dir / "dashboard_control_state.json"
+            state_path.parent.mkdir(parents=True, exist_ok=True)
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "service": {"status": "stale"},
+                        "actions": {"last_action": "old"},
+                        "artifacts": {"market_profile_patch": {"status": "ready"}},
+                        "portfolios": {"US:watchlist": {"execution_control_mode": "REVIEW_ONLY"}},
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(cfg_path))
+            with patch.object(
+                supervisor,
+                "_dashboard_control_portfolios",
+                side_effect=AssertionError("poll state should not build full portfolio state"),
+            ):
+                payload = supervisor._dashboard_control_poll_state_payload(service_status="running")
+                supervisor._write_dashboard_control_state(include_portfolios=False, write_patch_artifacts=False)
+
+            self.assertEqual(payload["service"]["status"], "running")
+            self.assertEqual(payload["portfolios"]["US:watchlist"]["execution_control_mode"], "REVIEW_ONLY")
+            persisted = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(persisted["portfolios"]["US:watchlist"]["execution_control_mode"], "REVIEW_ONLY")
 
     def test_dashboard_control_run_preflight_generates_report_and_refreshes_dashboard(self):
         with tempfile.TemporaryDirectory() as tmp:

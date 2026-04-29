@@ -260,6 +260,9 @@ class Supervisor:
         self._adaptive_strategy_cache: Dict[str, Any] = {}
         self._cycle_running = False
         self._dashboard_control_lock = threading.Lock()
+        self._dashboard_control_poll_state_lock = threading.Lock()
+        self._dashboard_control_poll_state_cache: Dict[str, Any] = {}
+        self._dashboard_control_poll_state_cache_ts = 0.0
         self._dashboard_control_service: Optional[DashboardControlService] = None
         self._dashboard_control_run_once_in_progress = False
         self._dashboard_control_preflight_in_progress = False
@@ -1527,6 +1530,12 @@ class Supervisor:
             if bool(include_portfolios)
             else self._dashboard_control_light_state_payload(service_status=service_status)
         )
+        if not bool(include_portfolios):
+            existing_payload = self._read_dashboard_control_state_file()
+            if isinstance(existing_payload.get("portfolios"), dict) and existing_payload.get("portfolios"):
+                payload["portfolios"] = dict(existing_payload.get("portfolios") or {})
+            if isinstance(existing_payload.get("artifacts"), dict) and existing_payload.get("artifacts"):
+                payload["artifacts"] = dict(existing_payload.get("artifacts") or {})
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -1535,6 +1544,41 @@ class Supervisor:
                 self._write_calibration_patch_artifacts(payload)
         except OSError as e:
             log.warning("Failed to write dashboard control state: path=%s error=%s", path, e)
+        finally:
+            self._dashboard_control_poll_state_cache = {}
+            self._dashboard_control_poll_state_cache_ts = 0.0
+
+    def _read_dashboard_control_state_file(self) -> Dict[str, Any]:
+        path = self._dashboard_control_state_path()
+        if not path.exists():
+            return {}
+        max_bytes = int(self.cfg.get("dashboard_control_state_read_max_bytes", 5_000_000) or 5_000_000)
+        try:
+            if max_bytes > 0 and path.stat().st_size > max_bytes:
+                return {}
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        return dict(payload or {}) if isinstance(payload, dict) else {}
+
+    def _dashboard_control_poll_state_payload(self, *, service_status: str = "running") -> Dict[str, Any]:
+        now_ts = time.time()
+        cache_ttl_sec = float(self.cfg.get("dashboard_control_poll_state_cache_sec", 2.0) or 2.0)
+        with self._dashboard_control_poll_state_lock:
+            if self._dashboard_control_poll_state_cache and (now_ts - self._dashboard_control_poll_state_cache_ts) < max(0.1, cache_ttl_sec):
+                return copy.deepcopy(self._dashboard_control_poll_state_cache)
+
+            payload = self._dashboard_control_light_state_payload(service_status=service_status)
+            existing_payload = self._read_dashboard_control_state_file()
+            if isinstance(existing_payload.get("portfolios"), dict):
+                payload["portfolios"] = dict(existing_payload.get("portfolios") or {})
+            if isinstance(existing_payload.get("artifacts"), dict):
+                payload["artifacts"] = dict(existing_payload.get("artifacts") or {})
+            payload["state_scope"] = "poll_cached"
+
+            self._dashboard_control_poll_state_cache = copy.deepcopy(payload)
+            self._dashboard_control_poll_state_cache_ts = now_ts
+            return copy.deepcopy(payload)
 
     def _apply_dashboard_control_overrides(self) -> None:
         if not self._dashboard_control_enabled():
@@ -1939,7 +1983,7 @@ class Supervisor:
         service = DashboardControlService(
             self._dashboard_control_host(),
             self._dashboard_control_port(),
-            get_state=lambda: self._dashboard_control_state_payload(service_status="running"),
+            get_state=lambda: self._dashboard_control_poll_state_payload(service_status="running"),
             run_once=self._dashboard_control_run_once,
             run_preflight=self._dashboard_control_run_preflight,
             run_weekly_review=self._dashboard_control_run_weekly_review,
@@ -4174,6 +4218,7 @@ class Supervisor:
                     self._sync_short_safety(market, market_now, reason="scheduled")
 
                 has_due_reports = False
+                due_report_slugs: List[str] = []
                 for item in market.reports:
                     report_market = resolve_market_code(str(item.get("market", market.market_code)))
                     should_run, reason = self._report_action_reason(
@@ -4186,6 +4231,7 @@ class Supervisor:
                     slug = Path(str(item.get("watchlist_yaml", "") or report_market)).stem
                     if should_run:
                         has_due_reports = True
+                        due_report_slugs.append(slug)
                         state = f"due:{reason}"
                         if str(item.get("_last_logged_report_state", "") or "") != state:
                             log.info(
@@ -4208,8 +4254,20 @@ class Supervisor:
                             item["_last_logged_report_state"] = state
 
                 if has_due_reports:
-                    if bool(sync_cfg.get("run_before_report", True)):
+                    sync_before_report = bool(sync_cfg.get("enabled", False)) and bool(sync_cfg.get("run_before_report", True))
+                    log.info(
+                        "Starting due report workflow: market=%s watchlists=%s short_safety_pre_sync=%s",
+                        market.market_code,
+                        ",".join(due_report_slugs),
+                        sync_before_report,
+                    )
+                    if sync_before_report:
                         self._sync_short_safety(market, market_now, reason="pre_report")
+                    log.info(
+                        "Launching due report tasks: market=%s watchlists=%s",
+                        market.market_code,
+                        ",".join(due_report_slugs),
+                    )
                     report_days_before = {
                         id(item): str(item.get("_last_successful_report_day", "") or "")
                         for item in market.reports

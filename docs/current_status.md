@@ -123,6 +123,7 @@
 - **weekly review support 模块已开始解除循环导入，decision/execution/strategy/feedback support 可冷启动导入测试**
 - **dashboard control server 已忽略常见本地客户端提前断连噪声，避免 socketserver traceback 误导运维判断**
 - **supervisor 默认长驻模式已有启动日志、轻量 dashboard-control 启动 state 与可中断信号处理，运行 `python -m src.app.supervisor` 会先显示配置/市场/poll interval，Ctrl+C 会进入清理退出**
+- **dashboard control `/state` 轮询已改为轻量/持久化状态读取，不再在浏览器自动刷新时实时构建完整 portfolio evidence，避免阻塞 supervisor 主循环与报告启动**
 
 ---
 
