@@ -83,6 +83,7 @@
 - `docs/change_archive_2026-04-29_candidate_only_evidence.md`
 - `docs/change_archive_2026-04-29_candidate_model_review.md`
 - `docs/change_archive_2026-04-29_pure_strategy_no_trade_tests.md`
+- `docs/change_archive_2026-04-29_weekly_support_import_boundary.md`
 
 ### 已合入的最近一轮关键建设
 
@@ -117,6 +118,7 @@
 - **无成交周也能继续保留 candidate/outcome 证据**
 - **candidate-only evidence 已能生成模型/策略校准 review**
 - **纯策略 no-trade 闭环已有 focused test，确认无 IBKR/无订单/无 fill 时仍能用 outcome 校准模型**
+- **weekly review support 模块已开始解除循环导入，decision/feedback support 可直接导入测试**
 
 ---
 
@@ -190,6 +192,7 @@
 - degraded-input dashboard fallback
 - broker / reconcile artifact contract registry
 - weekly review support 模块按 execution / governance / strategy / decision 领域继续拆分
+- weekly review support import boundary regression tests
 
 ### P1：降低大文件复杂度
 

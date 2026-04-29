@@ -6,7 +6,7 @@ from typing import Dict, List
 
 from ..common.markets import resolve_market_code
 from ..common.storage import Storage
-from .review_weekly_feedback_support import _safe_float
+from .review_weekly_common_support import _safe_float
 
 
 def _weekly_tuning_history_trend_label(
