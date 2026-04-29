@@ -82,6 +82,7 @@
 - `docs/change_archive_2026-04-29_strategy_parameter_registry.md`
 - `docs/change_archive_2026-04-29_candidate_only_evidence.md`
 - `docs/change_archive_2026-04-29_candidate_model_review.md`
+- `docs/change_archive_2026-04-29_pure_strategy_no_trade_tests.md`
 
 ### 已合入的最近一轮关键建设
 
@@ -115,6 +116,7 @@
 - **adaptive strategy 已接入 layered config source 追踪**
 - **无成交周也能继续保留 candidate/outcome 证据**
 - **candidate-only evidence 已能生成模型/策略校准 review**
+- **纯策略 no-trade 闭环已有 focused test，确认无 IBKR/无订单/无 fill 时仍能用 outcome 校准模型**
 
 ---
 
@@ -183,6 +185,7 @@
 - execution audit persistence
 - fill/risk-event audit chain
 - dashboard helper regression tests
+- pure strategy no-trade loop tests
 - artifact contract / health / governance health
 - degraded-input dashboard fallback
 - broker / reconcile artifact contract registry
