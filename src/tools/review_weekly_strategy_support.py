@@ -10,7 +10,7 @@ from ..common.adaptive_strategy import (
 from ..common.account_profile import load_account_profiles, resolved_account_profile_summary
 from ..common.market_structure import load_market_structure, market_structure_summary
 from ..common.markets import resolve_market_code
-from .review_weekly_feedback_support import (
+from .review_weekly_common_support import (
     BASE_DIR,
     _attribution_control_split_text,
     _runtime_config_paths_for_market,

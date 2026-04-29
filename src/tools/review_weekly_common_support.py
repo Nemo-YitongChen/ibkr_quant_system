@@ -2,7 +2,14 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List
+
+from ..common.markets import market_config_path, resolve_market_code
+from ..common.runtime_paths import resolve_repo_path
+from .review_weekly_io import load_yaml_file as _load_yaml_file
+
+BASE_DIR = Path(__file__).resolve().parents[2]
 
 
 def _clamp(value: float, lo: float, hi: float) -> float:
@@ -277,3 +284,44 @@ def _preferred_snapshot_stages_for_order(row: Dict[str, Any]) -> List[str]:
     if target_weight < 0.0 or target_qty < 0.0:
         return ["short", "final", "deep", "broad"]
     return ["final", "deep", "broad", "short"]
+
+
+def _resolve_project_path(path_str: str) -> Path:
+    return resolve_repo_path(BASE_DIR, path_str)
+
+
+def _runtime_config_paths_for_market(market: str) -> Dict[str, Path]:
+    market_code = resolve_market_code(str(market or ""))
+    ibkr_cfg = _load_yaml_file(market_config_path(BASE_DIR, market_code)) if market_code else {}
+    return {
+        "market_structure": _resolve_project_path(
+            str(
+                ibkr_cfg.get(
+                    "market_structure_config",
+                    f"config/market_structure_{market_code.lower()}.yaml" if market_code else "config/market_structure.yaml",
+                )
+            )
+        ),
+        "account_profile": _resolve_project_path(
+            str(ibkr_cfg.get("account_profile_config", "config/account_profiles.yaml"))
+        ),
+        "adaptive_strategy": _resolve_project_path(
+            str(ibkr_cfg.get("adaptive_strategy_config", "config/adaptive_strategy_framework.yaml"))
+        ),
+        "investment_paper": _resolve_project_path(
+            str(
+                ibkr_cfg.get(
+                    "investment_paper_config",
+                    f"config/investment_paper_{market_code.lower()}.yaml" if market_code else "config/investment_paper.yaml",
+                )
+            )
+        ),
+        "investment_execution": _resolve_project_path(
+            str(
+                ibkr_cfg.get(
+                    "investment_execution_config",
+                    f"config/investment_execution_{market_code.lower()}.yaml" if market_code else "config/investment_execution.yaml",
+                )
+            )
+        ),
+    }

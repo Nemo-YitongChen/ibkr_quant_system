@@ -118,7 +118,7 @@
 - **无成交周也能继续保留 candidate/outcome 证据**
 - **candidate-only evidence 已能生成模型/策略校准 review**
 - **纯策略 no-trade 闭环已有 focused test，确认无 IBKR/无订单/无 fill 时仍能用 outcome 校准模型**
-- **weekly review support 模块已开始解除循环导入，decision/execution/feedback support 可直接导入测试**
+- **weekly review support 模块已开始解除循环导入，decision/execution/strategy/feedback support 可冷启动导入测试**
 
 ---
 
