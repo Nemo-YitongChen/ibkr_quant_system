@@ -7,6 +7,7 @@ from src.tools.generate_dashboard import (
     _build_health_overview,
     _build_market_data_health_overview,
     _build_gateway_runtime_summary,
+    _build_card_evidence_action_summary,
     _build_evidence_action_summary,
     _build_overview,
     _build_ops_overview,
@@ -106,6 +107,47 @@ def test_build_evidence_action_summary_handles_missing_block() -> None:
 
     assert summary["primary_action"] == ""
     assert summary["evidence_row_count"] == 0
+
+
+def test_build_card_evidence_action_summary_scopes_to_portfolio() -> None:
+    summary = _build_card_evidence_action_summary(
+        {"market": "US", "portfolio_id": "US:paper"},
+        unified_evidence_rows=[
+            {
+                "market": "US",
+                "portfolio_id": "US:paper",
+                "symbol": "AAPL",
+                "blocked_flag": 1,
+                "join_quality": "order_fill_outcome",
+            },
+            {
+                "market": "HK",
+                "portfolio_id": "HK:paper",
+                "symbol": "0700.HK",
+                "blocked_flag": 1,
+            },
+        ],
+        blocked_vs_allowed_rows=[
+            {
+                "market": "US",
+                "portfolio_id": "US:paper",
+                "review_label": "BLOCKED_OUTPERFORMED_ALLOWED",
+            },
+            {
+                "market": "HK",
+                "portfolio_id": "HK:paper",
+                "review_label": "BLOCKING_HELPED",
+            },
+        ],
+        candidate_model_rows=[],
+        waterfall_rows=[],
+    )
+
+    assert summary["scope"] == "portfolio"
+    assert summary["portfolio_id"] == "US:paper"
+    assert summary["primary_action"] == "review_gate_thresholds"
+    assert summary["evidence_row_count"] == 1
+    assert summary["too_restrictive_count"] == 1
 
 
 def test_simple_gateway_connected_treats_limited_permissions_as_connected() -> None:

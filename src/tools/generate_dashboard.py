@@ -35,7 +35,7 @@ from ..common.market_structure import load_market_structure, market_structure_su
 from ..common.markets import market_config_path, resolve_market_code, symbol_matches_market
 from ..common.runtime_paths import resolve_repo_path, resolve_scoped_runtime_path, scope_from_ibkr_config
 from ..common.storage import Storage
-from .dashboard_blocks import build_dashboard_v2_blocks
+from .dashboard_blocks import build_dashboard_v2_blocks, build_evidence_quality_block
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 CONTROL_BUTTON_LABELS: Dict[str, str] = {
@@ -4657,6 +4657,44 @@ def _build_evidence_action_summary(blocks: List[Dict[str, Any]]) -> Dict[str, An
     }
 
 
+def _evidence_row_matches_card(row: Dict[str, Any], card: Dict[str, Any]) -> bool:
+    row_portfolio = str(row.get("portfolio_id") or "").strip()
+    card_portfolio = str(card.get("portfolio_id") or "").strip()
+    if row_portfolio and card_portfolio:
+        return row_portfolio == card_portfolio
+    row_market = resolve_market_code(str(row.get("market") or ""))
+    card_market = resolve_market_code(str(card.get("market") or ""))
+    return bool(row_market and card_market and row_market == card_market)
+
+
+def _filter_evidence_rows_for_card(rows: List[Dict[str, Any]], card: Dict[str, Any]) -> List[Dict[str, Any]]:
+    return [dict(row) for row in list(rows or []) if isinstance(row, dict) and _evidence_row_matches_card(row, card)]
+
+
+def _build_card_evidence_action_summary(
+    card: Dict[str, Any],
+    *,
+    unified_evidence_rows: List[Dict[str, Any]],
+    blocked_vs_allowed_rows: List[Dict[str, Any]],
+    candidate_model_rows: List[Dict[str, Any]],
+    waterfall_rows: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    scoped_unified_rows = _filter_evidence_rows_for_card(unified_evidence_rows, card)
+    block = build_evidence_quality_block(
+        {
+            "unified_evidence_overview": _build_unified_evidence_overview(scoped_unified_rows),
+            "blocked_vs_allowed_expost_review": _filter_evidence_rows_for_card(blocked_vs_allowed_rows, card),
+            "candidate_model_review": _filter_evidence_rows_for_card(candidate_model_rows, card),
+            "weekly_attribution_waterfall": _filter_evidence_rows_for_card(waterfall_rows, card),
+        }
+    )
+    summary = _build_evidence_action_summary([block])
+    summary["scope"] = "portfolio" if str(card.get("portfolio_id") or "").strip() else "market"
+    summary["market"] = str(card.get("market") or "")
+    summary["portfolio_id"] = str(card.get("portfolio_id") or "")
+    return summary
+
+
 def _weekly_attribution_control_split_text(attribution: Dict[str, Any]) -> str:
     return str(dict(attribution or {}).get("control_split_text", "") or "").strip()
 
@@ -7362,7 +7400,14 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
         + list(payload.get("dry_run_cards", []) or [])
     ):
         if isinstance(card, dict):
-            card["evidence_action_summary"] = dict(payload["evidence_action_summary"])
+            card["global_evidence_action_summary"] = dict(payload["evidence_action_summary"])
+            card["evidence_action_summary"] = _build_card_evidence_action_summary(
+                card,
+                unified_evidence_rows=weekly_unified_evidence_rows,
+                blocked_vs_allowed_rows=weekly_blocked_vs_allowed_expost_rows,
+                candidate_model_rows=weekly_candidate_model_review_rows,
+                waterfall_rows=weekly_attribution_waterfall,
+            )
     return payload
 
 
