@@ -29,6 +29,26 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
             "HK": {"market": "HK", "portfolio_count": 1, "stale_report_count": 1},
             "CN": {"market": "CN", "portfolio_count": 0},
         },
+        "market_evidence_action_summary": {
+            "US": {
+                "primary_action": "review_gate_thresholds",
+                "action_label": "Review gate thresholds",
+                "basis_label": "Blocked outperformed allowed",
+                "evidence_row_count": 8,
+            },
+            "HK": {
+                "primary_action": "collect_more_outcome_samples",
+                "action_label": "Collect more outcome samples",
+                "basis_label": "Insufficient blocked-vs-allowed sample",
+                "evidence_row_count": 3,
+            },
+            "CN": {
+                "primary_action": "build_weekly_unified_evidence",
+                "action_label": "Build unified evidence",
+                "basis_label": "No unified evidence",
+                "evidence_row_count": 0,
+            },
+        },
         "unified_evidence_overview": {
             "row_count": 3,
             "allowed_row_count": 1,
@@ -61,6 +81,15 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
     assert by_id["dashboard_control_actions"]["metrics"]["transient_io_error_count"] == 1
     assert by_id["dashboard_control_actions"]["metrics"]["retryable_error_count"] == 1
     assert by_id["market_views"]["metrics"]["market_count"] == 3
+    assert by_id["market_views"]["metrics"]["evidence_action_market_count"] == 3
+    assert by_id["market_views"]["metrics"]["evidence_row_market_count"] == 2
+    assert by_id["market_views"]["metrics"]["evidence_attention_count"] == 2
+    assert by_id["market_views"]["metrics"]["gate_review_market_count"] == 1
+    assert by_id["market_views"]["metrics"]["missing_evidence_market_count"] == 1
+    assert by_id["market_views"]["metrics"]["sample_collection_market_count"] == 1
+    assert by_id["market_views"]["rows"][0]["evidence_primary_action"] == "build_weekly_unified_evidence"
+    assert by_id["market_views"]["status"] == "warn"
+    assert "evidence_attention=2" in by_id["market_views"]["summary"]
     assert by_id["evidence_quality"]["metrics"]["evidence_row_count"] == 3
     assert by_id["evidence_quality"]["metrics"]["candidate_only_row_count"] == 1
     assert by_id["evidence_quality"]["metrics"]["outcome_labeled_row_count"] == 2
@@ -125,3 +154,46 @@ def test_evidence_quality_block_keeps_insufficient_samples_non_warning():
     assert block["metrics"]["primary_action"] == "collect_more_outcome_samples"
     assert block["metrics"]["action_label"] == "Collect more outcome samples"
     assert "sample-starved" in block["metrics"]["action_note"]
+
+
+def test_market_views_block_keeps_sample_collection_non_warning():
+    payload = {
+        "market_views": {
+            "US": {
+                "market": "US",
+                "portfolio_count": 1,
+                "open_count": 1,
+                "evidence_action_label": "Collect more outcome samples",
+                "evidence_basis_label": "Insufficient blocked-vs-allowed sample",
+                "evidence_row_count": 4,
+            },
+        },
+    }
+
+    block = build_dashboard_v2_blocks(payload)[2]
+
+    assert block["status"] == "ok"
+    assert block["metrics"]["attention_count"] == 0
+    assert block["metrics"]["evidence_attention_count"] == 0
+    assert block["metrics"]["sample_collection_market_count"] == 1
+    assert block["rows"][0]["evidence_primary_action"] == "collect_more_outcome_samples"
+
+
+def test_market_views_block_handles_malformed_evidence_summary():
+    payload = {
+        "market_views": {
+            "US": {
+                "market": "US",
+                "portfolio_count": 1,
+                "evidence_action_label": "Review gate thresholds",
+                "evidence_row_count": 2,
+            },
+        },
+        "market_evidence_action_summary": {"US": "legacy bad summary"},
+    }
+
+    block = build_dashboard_v2_blocks(payload)[2]
+
+    assert block["status"] == "warn"
+    assert block["metrics"]["gate_review_market_count"] == 1
+    assert block["rows"][0]["evidence_primary_action"] == "review_gate_thresholds"

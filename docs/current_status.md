@@ -95,6 +95,7 @@
 - `docs/change_archive_2026-05-01_portfolio_scoped_evidence_action.md`
 - `docs/change_archive_2026-05-01_evidence_action_rationale.md`
 - `docs/change_archive_2026-05-01_market_evidence_action_summary.md`
+- `docs/change_archive_2026-05-01_market_evidence_v2_block_metrics.md`
 
 ### 已合入的最近一轮关键建设
 
@@ -144,6 +145,7 @@
 - **每个 dashboard card 已使用 portfolio/market scoped evidence action，避免某个市场的 blocked-vs-allowed 结论误显示到其他组合**
 - **`evidence_action_summary` 已补 `decision_basis / basis_label / rationale / blocked_label_summary`，simple dashboard 会显示建议依据，便于审计“为什么是这一步”**
 - **dashboard 已新增 `market_evidence_action_summary`，US/HK/CN 市场视图会显示每个市场的 evidence action、basis 和 rationale**
+- **dashboard v2 Market Views block 已新增 market-level evidence action metrics，能区分缺 evidence、gate 需复核、模型 edge 需复核与样本不足；样本不足只提示继续收集，不单独升级为告警**
 
 ---
 

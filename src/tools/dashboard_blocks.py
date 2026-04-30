@@ -135,6 +135,46 @@ def _block_status_from_rows(rows: List[Dict[str, Any]]) -> str:
     return "ok"
 
 
+ACTION_BY_LABEL = {
+    str(details.get("label") or "").strip().lower(): action
+    for action, details in EVIDENCE_ACTION_DETAILS.items()
+}
+
+
+def _market_evidence_summary(row: Dict[str, Any], summaries: Dict[str, Any]) -> Dict[str, Any]:
+    market = str(row.get("market") or "").strip().upper()
+    raw_summary = summaries.get(market) if market else {}
+    summary = dict(raw_summary) if isinstance(raw_summary, dict) else {}
+    action = str(summary.get("primary_action") or "").strip()
+    if not action:
+        action_label = str(row.get("evidence_action_label") or "").strip().lower()
+        action = ACTION_BY_LABEL.get(action_label, "")
+    return {
+        "primary_action": action,
+        "decision_basis": str(summary.get("decision_basis") or "").strip(),
+        "action_label": str(summary.get("action_label") or row.get("evidence_action_label") or ""),
+        "basis_label": str(summary.get("basis_label") or row.get("evidence_basis_label") or ""),
+        "rationale": str(summary.get("rationale") or row.get("evidence_rationale") or ""),
+        "evidence_row_count": _int(summary.get("evidence_row_count", row.get("evidence_row_count"))),
+    }
+
+
+def _enrich_market_view_row(row: Dict[str, Any], evidence: Dict[str, Any]) -> Dict[str, Any]:
+    enriched = dict(row)
+    if evidence.get("primary_action"):
+        enriched["evidence_primary_action"] = evidence.get("primary_action")
+    if evidence.get("decision_basis"):
+        enriched["evidence_decision_basis"] = evidence.get("decision_basis")
+    if evidence.get("action_label"):
+        enriched["evidence_action_label"] = evidence.get("action_label")
+    if evidence.get("basis_label"):
+        enriched["evidence_basis_label"] = evidence.get("basis_label")
+    if evidence.get("rationale"):
+        enriched["evidence_rationale"] = evidence.get("rationale")
+    enriched["evidence_row_count"] = evidence.get("evidence_row_count", 0)
+    return enriched
+
+
 def build_ops_health_block(payload: Dict[str, Any]) -> Dict[str, Any]:
     ops = _dict(payload.get("ops_overview"))
     artifact = _dict(payload.get("artifact_health_overview"))
@@ -196,22 +236,41 @@ def build_control_actions_block(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 def build_market_views_block(payload: Dict[str, Any]) -> Dict[str, Any]:
     market_views = _dict(payload.get("market_views"))
-    rows = [
-        dict(row)
-        for _, row in sorted(market_views.items(), key=lambda part: str(part[0]))
-        if isinstance(row, dict)
-    ]
+    evidence_summaries = _dict(payload.get("market_evidence_action_summary"))
+    rows = []
+    evidence_actions: List[str] = []
+    for _, row in sorted(market_views.items(), key=lambda part: str(part[0])):
+        if not isinstance(row, dict):
+            continue
+        evidence = _market_evidence_summary(row, evidence_summaries)
+        evidence_actions.append(str(evidence.get("primary_action") or ""))
+        rows.append(_enrich_market_view_row(dict(row), evidence))
     attention_count = sum(_int(row.get("stale_report_count")) + _int(row.get("degraded_health_count")) for row in rows)
+    missing_evidence_count = sum(1 for action in evidence_actions if action == "build_weekly_unified_evidence")
+    gate_review_count = sum(1 for action in evidence_actions if action == "review_gate_thresholds")
+    signal_review_count = sum(1 for action in evidence_actions if action == "review_signal_expected_edge")
+    sample_collection_count = sum(1 for action in evidence_actions if action == "collect_more_outcome_samples")
+    evidence_attention_count = missing_evidence_count + gate_review_count + signal_review_count
     return {
         "id": "market_views",
         "title": "US/HK/CN Market Views",
-        "status": "warn" if attention_count else "ok",
-        "summary": f"markets={len(rows)} attention={attention_count}",
+        "status": "warn" if attention_count or evidence_attention_count else "ok",
+        "summary": (
+            f"markets={len(rows)} attention={attention_count} "
+            f"evidence_attention={evidence_attention_count}"
+        ),
         "metrics": {
             "market_count": len(rows),
             "portfolio_count": sum(_int(row.get("portfolio_count")) for row in rows),
             "open_count": sum(_int(row.get("open_count")) for row in rows),
             "attention_count": attention_count,
+            "evidence_action_market_count": sum(1 for action in evidence_actions if action),
+            "evidence_row_market_count": sum(1 for row in rows if _int(row.get("evidence_row_count")) > 0),
+            "evidence_attention_count": evidence_attention_count,
+            "missing_evidence_market_count": missing_evidence_count,
+            "gate_review_market_count": gate_review_count,
+            "signal_review_market_count": signal_review_count,
+            "sample_collection_market_count": sample_collection_count,
         },
         "rows": rows,
     }
