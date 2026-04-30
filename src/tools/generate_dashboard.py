@@ -4642,18 +4642,61 @@ def _build_evidence_action_summary(blocks: List[Dict[str, Any]]) -> Dict[str, An
     def _metric_int(key: str) -> int:
         return int(_safe_float(metrics.get(key), 0.0))
 
+    label_summary = [
+        dict(row)
+        for row in list(dict(evidence_block.get("rows") or {}).get("blocked_vs_allowed_label_summary", []) or [])
+        if isinstance(row, dict)
+    ]
+    evidence_row_count = _metric_int("evidence_row_count")
+    blocked_review_count = _metric_int("blocked_review_count")
+    sample_ready_review_count = _metric_int("sample_ready_review_count")
+    insufficient_sample_count = _metric_int("insufficient_sample_count")
+    too_restrictive_count = _metric_int("too_restrictive_count")
+    candidate_model_warning_count = _metric_int("candidate_model_warning_count")
+    primary_action = str(metrics.get("primary_action") or "")
+    if evidence_row_count <= 0:
+        decision_basis = "no_unified_evidence"
+        basis_label = "No unified evidence"
+    elif too_restrictive_count > 0:
+        decision_basis = "blocked_outperformed_allowed"
+        basis_label = "Blocked outperformed allowed"
+    elif candidate_model_warning_count > 0:
+        decision_basis = "candidate_model_warning"
+        basis_label = "Candidate model warning"
+    elif blocked_review_count > 0 and insufficient_sample_count >= blocked_review_count:
+        decision_basis = "insufficient_blocked_vs_allowed_sample"
+        basis_label = "Insufficient blocked-vs-allowed sample"
+    elif _metric_int("mixed_review_count") > 0:
+        decision_basis = "mixed_blocked_vs_allowed_evidence"
+        basis_label = "Mixed blocked-vs-allowed evidence"
+    elif _metric_int("blocking_helped_count") > 0:
+        decision_basis = "blocking_helped_post_cost"
+        basis_label = "Blocking helped post-cost"
+    else:
+        decision_basis = "monitor_evidence"
+        basis_label = "Monitor evidence"
+    rationale = (
+        f"{basis_label}: evidence_rows={evidence_row_count}, "
+        f"blocked_reviews={blocked_review_count}, ready={sample_ready_review_count}, "
+        f"insufficient={insufficient_sample_count}, too_restrictive={too_restrictive_count}, "
+        f"candidate_model_warnings={candidate_model_warning_count}."
+    )
     return {
         "status": str(evidence_block.get("status") or ""),
         "summary": str(evidence_block.get("summary") or ""),
-        "primary_action": str(metrics.get("primary_action") or ""),
+        "primary_action": primary_action,
         "action_label": str(metrics.get("action_label") or ""),
         "action_note": str(metrics.get("action_note") or ""),
-        "evidence_row_count": _metric_int("evidence_row_count"),
-        "blocked_review_count": _metric_int("blocked_review_count"),
-        "sample_ready_review_count": _metric_int("sample_ready_review_count"),
-        "insufficient_sample_count": _metric_int("insufficient_sample_count"),
-        "too_restrictive_count": _metric_int("too_restrictive_count"),
-        "candidate_model_warning_count": _metric_int("candidate_model_warning_count"),
+        "decision_basis": decision_basis,
+        "basis_label": basis_label,
+        "rationale": rationale,
+        "blocked_label_summary": label_summary,
+        "evidence_row_count": evidence_row_count,
+        "blocked_review_count": blocked_review_count,
+        "sample_ready_review_count": sample_ready_review_count,
+        "insufficient_sample_count": insufficient_sample_count,
+        "too_restrictive_count": too_restrictive_count,
+        "candidate_model_warning_count": candidate_model_warning_count,
     }
 
 
@@ -7716,6 +7759,9 @@ def _simple_weekly_strategy_context_rows(card: Dict[str, Any]) -> List[List[str]
     evidence_action_note = str(evidence_action.get("action_note") or "").strip()
     if evidence_action_label:
         rows.append(["Evidence下一步", f"{evidence_action_label}：{evidence_action_note or '-'}"])
+    evidence_rationale = str(evidence_action.get("rationale") or "").strip()
+    if evidence_rationale:
+        rows.append(["Evidence依据", _short_summary_text(evidence_rationale, max_len=132)])
     if int(_safe_float(evidence_action.get("evidence_row_count"), 0.0)) > 0:
         rows.append(
             [

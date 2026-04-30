@@ -93,6 +93,7 @@
 - `docs/change_archive_2026-05-01_dashboard_evidence_action_top_level.md`
 - `docs/change_archive_2026-05-01_simple_dashboard_evidence_action.md`
 - `docs/change_archive_2026-05-01_portfolio_scoped_evidence_action.md`
+- `docs/change_archive_2026-05-01_evidence_action_rationale.md`
 
 ### 已合入的最近一轮关键建设
 
@@ -140,6 +141,7 @@
 - **dashboard JSON 已新增顶层 `evidence_action_summary`，HTML 的 Unified Evidence 区块会直接展示当前 evidence 下一步和样本状态**
 - **simple dashboard 的“一眼看懂 / 本周策略解释”已接入 `evidence_action_summary`，无成交或样本不足时会直接提示继续收集 outcome 样本，而不是误导为立刻调 gate**
 - **每个 dashboard card 已使用 portfolio/market scoped evidence action，避免某个市场的 blocked-vs-allowed 结论误显示到其他组合**
+- **`evidence_action_summary` 已补 `decision_basis / basis_label / rationale / blocked_label_summary`，simple dashboard 会显示建议依据，便于审计“为什么是这一步”**
 
 ---
 

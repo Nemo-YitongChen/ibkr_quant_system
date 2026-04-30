@@ -91,6 +91,15 @@ def test_build_evidence_action_summary_extracts_evidence_quality_block() -> None
                     "too_restrictive_count": 1,
                     "candidate_model_warning_count": 0,
                 },
+                "rows": {
+                    "blocked_vs_allowed_label_summary": [
+                        {
+                            "review_label": "BLOCKED_OUTPERFORMED_ALLOWED",
+                            "count": 1,
+                            "action": "review_gate_thresholds",
+                        }
+                    ]
+                },
             },
         ]
     )
@@ -98,6 +107,9 @@ def test_build_evidence_action_summary_extracts_evidence_quality_block() -> None
     assert summary["status"] == "warn"
     assert summary["primary_action"] == "review_gate_thresholds"
     assert summary["action_label"] == "Review gate thresholds"
+    assert summary["decision_basis"] == "blocked_outperformed_allowed"
+    assert "too_restrictive=1" in summary["rationale"]
+    assert summary["blocked_label_summary"][0]["review_label"] == "BLOCKED_OUTPERFORMED_ALLOWED"
     assert summary["evidence_row_count"] == 12
     assert summary["sample_ready_review_count"] == 2
 
@@ -106,6 +118,7 @@ def test_build_evidence_action_summary_handles_missing_block() -> None:
     summary = _build_evidence_action_summary([])
 
     assert summary["primary_action"] == ""
+    assert summary["decision_basis"] == "no_unified_evidence"
     assert summary["evidence_row_count"] == 0
 
 
@@ -146,6 +159,7 @@ def test_build_card_evidence_action_summary_scopes_to_portfolio() -> None:
     assert summary["scope"] == "portfolio"
     assert summary["portfolio_id"] == "US:paper"
     assert summary["primary_action"] == "review_gate_thresholds"
+    assert summary["decision_basis"] == "blocked_outperformed_allowed"
     assert summary["evidence_row_count"] == 1
     assert summary["too_restrictive_count"] == 1
 
@@ -302,6 +316,7 @@ def test_simple_weekly_strategy_context_rows_include_evidence_action() -> None:
                 "blocked_review_count": 2,
                 "sample_ready_review_count": 0,
                 "insufficient_sample_count": 2,
+                "rationale": "Insufficient blocked-vs-allowed sample: evidence_rows=8, blocked_reviews=2, ready=0, insufficient=2.",
             },
         }
     )
@@ -309,6 +324,10 @@ def test_simple_weekly_strategy_context_rows_include_evidence_action() -> None:
     assert [
         "Evidence下一步",
         "Collect more outcome samples：Blocked-vs-allowed evidence is sample-starved.",
+    ] in rows
+    assert [
+        "Evidence依据",
+        "Insufficient blocked-vs-allowed sample: evidence_rows=8, blocked_reviews=2, ready=0, insufficient=2.",
     ] in rows
     assert ["Evidence样本", "rows=8 / blocked_reviews=2 / ready=0 / insufficient=2"] in rows
 
