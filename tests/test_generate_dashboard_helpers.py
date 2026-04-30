@@ -7,6 +7,7 @@ from src.tools.generate_dashboard import (
     _build_health_overview,
     _build_market_data_health_overview,
     _build_gateway_runtime_summary,
+    _build_evidence_action_summary,
     _build_overview,
     _build_ops_overview,
     _dashboard_v2_block_metrics_text,
@@ -68,6 +69,43 @@ def test_dashboard_v2_block_metrics_text_renders_advanced_html_metrics() -> None
     assert "market_count=3" in text
     assert "portfolio_count=7" in text
     assert "nested" not in text
+
+
+def test_build_evidence_action_summary_extracts_evidence_quality_block() -> None:
+    summary = _build_evidence_action_summary(
+        [
+            {"id": "ops_health", "metrics": {"ignored": 1}},
+            {
+                "id": "evidence_quality",
+                "status": "warn",
+                "summary": "action=Review gate thresholds",
+                "metrics": {
+                    "primary_action": "review_gate_thresholds",
+                    "action_label": "Review gate thresholds",
+                    "action_note": "Blocked rows outperformed allowed rows.",
+                    "evidence_row_count": "12",
+                    "blocked_review_count": 3,
+                    "sample_ready_review_count": 2,
+                    "insufficient_sample_count": 1,
+                    "too_restrictive_count": 1,
+                    "candidate_model_warning_count": 0,
+                },
+            },
+        ]
+    )
+
+    assert summary["status"] == "warn"
+    assert summary["primary_action"] == "review_gate_thresholds"
+    assert summary["action_label"] == "Review gate thresholds"
+    assert summary["evidence_row_count"] == 12
+    assert summary["sample_ready_review_count"] == 2
+
+
+def test_build_evidence_action_summary_handles_missing_block() -> None:
+    summary = _build_evidence_action_summary([])
+
+    assert summary["primary_action"] == ""
+    assert summary["evidence_row_count"] == 0
 
 
 def test_simple_gateway_connected_treats_limited_permissions_as_connected() -> None:

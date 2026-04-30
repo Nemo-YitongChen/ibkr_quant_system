@@ -4629,6 +4629,34 @@ def _build_unified_evidence_overview(rows: List[Dict[str, Any]]) -> Dict[str, An
     return _build_unified_evidence_overview_support(rows)
 
 
+def _build_evidence_action_summary(blocks: List[Dict[str, Any]]) -> Dict[str, Any]:
+    evidence_block = next(
+        (
+            dict(block)
+            for block in list(blocks or [])
+            if isinstance(block, dict) and str(block.get("id") or "") == "evidence_quality"
+        ),
+        {},
+    )
+    metrics = dict(evidence_block.get("metrics") or {})
+    def _metric_int(key: str) -> int:
+        return int(_safe_float(metrics.get(key), 0.0))
+
+    return {
+        "status": str(evidence_block.get("status") or ""),
+        "summary": str(evidence_block.get("summary") or ""),
+        "primary_action": str(metrics.get("primary_action") or ""),
+        "action_label": str(metrics.get("action_label") or ""),
+        "action_note": str(metrics.get("action_note") or ""),
+        "evidence_row_count": _metric_int("evidence_row_count"),
+        "blocked_review_count": _metric_int("blocked_review_count"),
+        "sample_ready_review_count": _metric_int("sample_ready_review_count"),
+        "insufficient_sample_count": _metric_int("insufficient_sample_count"),
+        "too_restrictive_count": _metric_int("too_restrictive_count"),
+        "candidate_model_warning_count": _metric_int("candidate_model_warning_count"),
+    }
+
+
 def _weekly_attribution_control_split_text(attribution: Dict[str, Any]) -> str:
     return str(dict(attribution or {}).get("control_split_text", "") or "").strip()
 
@@ -7316,6 +7344,7 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
         "dashboard_control": dashboard_control,
     }
     payload["dashboard_v2_blocks"] = build_dashboard_v2_blocks(payload)
+    payload["evidence_action_summary"] = _build_evidence_action_summary(payload["dashboard_v2_blocks"])
     return payload
 
 
@@ -8114,6 +8143,17 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
         ]
         for row in list(payload.get("blocked_vs_allowed_expost_review", []) or [])[:50]
         if isinstance(row, dict)
+    ]
+    evidence_action_summary = dict(payload.get("evidence_action_summary", {}) or {})
+    evidence_action_rows = [
+        ["当前建议", str(evidence_action_summary.get("action_label") or "-")],
+        ["建议说明", str(evidence_action_summary.get("action_note") or "-")],
+        ["样本状态", (
+            f"evidence={int(evidence_action_summary.get('evidence_row_count', 0) or 0)} / "
+            f"blocked_reviews={int(evidence_action_summary.get('blocked_review_count', 0) or 0)} / "
+            f"ready={int(evidence_action_summary.get('sample_ready_review_count', 0) or 0)} / "
+            f"insufficient={int(evidence_action_summary.get('insufficient_sample_count', 0) or 0)}"
+        )],
     ]
     ops_alert_rows = [
         [
@@ -9510,6 +9550,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     <section class="card overview">
       <h2>Unified Evidence / Blocked vs Allowed</h2>
       <div class="meta">这里消费 weekly review 生成的统一证据表：没有成交时先用 candidate/outcome 校准模型，有成交后再检查 blocked vs allowed。</div>
+      {_render_table(["项目", "内容"], evidence_action_rows)}
       {_render_table(["market", "rows", "allowed", "blocked", "candidate_only", "outcome_labeled", "partial_join"], unified_evidence_market_rows) if unified_evidence_market_rows else '<div class="empty">当前还没有统一证据表市场汇总。</div>'}
       {_render_table(["market", "portfolio", "candidates", "candidate_only", "labeled", "top-bottom20", "edge_gap", "review", "recommendation"], candidate_model_review_rows) if candidate_model_review_rows else '<div class="empty">当前还没有 candidate model review 样本。</div>'}
       {_render_table(["market", "portfolio", "block_reason", "allowed", "blocked", "allowed_20d_bps", "blocked_20d_bps", "delta_bps", "review"], blocked_expost_rows) if blocked_expost_rows else '<div class="empty">当前还没有 blocked vs allowed 事后复盘样本。</div>'}

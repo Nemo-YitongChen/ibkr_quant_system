@@ -90,6 +90,7 @@
 - `docs/change_archive_2026-04-30_evidence_artifact_health_contracts.md`
 - `docs/change_archive_2026-04-30_dashboard_evidence_action_summary.md`
 - `docs/change_archive_2026-05-01_dashboard_evidence_action_labels.md`
+- `docs/change_archive_2026-05-01_dashboard_evidence_action_top_level.md`
 
 ### 已合入的最近一轮关键建设
 
@@ -134,6 +135,7 @@
 - **独立 evidence JSON 已纳入 artifact health registry，旧 summary 内嵌 rows 可作为兼容 fallback，dashboard 顶部健康汇总会显示 evidence artifact 缺失/过旧/兼容读取状态**
 - **dashboard v2 Trading Quality Evidence block 已增加 blocked-vs-allowed label 分布、样本就绪度与 `primary_action`，避免把“样本不足”误读成“需要立刻调 gate”**
 - **dashboard v2 Trading Quality Evidence block 已把 `primary_action` 映射为 `action_label/action_note`，advanced HTML 可直接显示可读操作建议**
+- **dashboard JSON 已新增顶层 `evidence_action_summary`，HTML 的 Unified Evidence 区块会直接展示当前 evidence 下一步和样本状态**
 
 ---
 

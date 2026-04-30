@@ -553,6 +553,8 @@ def test_investment_workflow_cli_smoke_generates_contract_artifacts(tmp_path, mo
     assert dashboard_payload["execution_weekly"]["portfolio_id"] == portfolio_id
     assert "control_split_text" in dashboard_payload["cards"][0]["weekly_attribution"]
     assert len(dashboard_payload["dashboard_v2_blocks"]) == 4
+    assert dashboard_payload["evidence_action_summary"]["action_label"]
+    assert "evidence_row_count" in dashboard_payload["evidence_action_summary"]
     assert "US" in dashboard_payload["market_views"]
     assert "unified_evidence_overview" in dashboard_payload
     assert "策略主动转入防守" in dashboard_payload["cards"][0]["weekly_strategy_context"]["strategy_effective_controls_note"]
