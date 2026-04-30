@@ -5,6 +5,38 @@ from typing import Any, Dict, List
 from ..common.alert_classification import summarize_error_classes
 
 
+EVIDENCE_ACTION_DETAILS = {
+    "build_weekly_unified_evidence": {
+        "label": "Build unified evidence",
+        "note": "Weekly evidence is missing; regenerate weekly review before changing parameters.",
+    },
+    "review_gate_thresholds": {
+        "label": "Review gate thresholds",
+        "note": "Blocked rows outperformed allowed rows; review edge floor, buffers, and market-rule handling.",
+    },
+    "review_signal_expected_edge": {
+        "label": "Review signal expected edge",
+        "note": "Candidate model warning is active; calibrate signal score to expected and realized edge first.",
+    },
+    "collect_more_outcome_samples": {
+        "label": "Collect more outcome samples",
+        "note": "Blocked-vs-allowed evidence is sample-starved; keep collecting candidate/outcome labels.",
+    },
+    "hold_parameters_collect_more_evidence": {
+        "label": "Hold parameters",
+        "note": "Evidence is mixed; avoid changing multiple gates until the sample stabilizes.",
+    },
+    "keep_gate_monitor_post_cost": {
+        "label": "Keep gate and monitor",
+        "note": "Blocking helped on post-cost outcomes; keep current gate and monitor future windows.",
+    },
+    "monitor_evidence": {
+        "label": "Monitor evidence",
+        "note": "No actionable warning yet; continue monitoring evidence quality and post-cost outcomes.",
+    },
+}
+
+
 def _dict(value: Any) -> Dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
@@ -60,6 +92,13 @@ def _blocked_review_label_action(label: str) -> str:
     if normalized in {"MIXED", "NEUTRAL"}:
         return "hold_parameters_collect_more_evidence"
     return "monitor_evidence"
+
+
+def _evidence_action_details(action: str) -> Dict[str, str]:
+    details = EVIDENCE_ACTION_DETAILS.get(str(action or ""))
+    if details:
+        return dict(details)
+    return dict(EVIDENCE_ACTION_DETAILS["monitor_evidence"])
 
 
 def _evidence_primary_action(
@@ -205,6 +244,7 @@ def build_evidence_quality_block(payload: Dict[str, Any]) -> Dict[str, Any]:
         blocking_helped_count=blocking_helped_count,
         mixed_review_count=mixed_review_count,
     )
+    action_details = _evidence_action_details(primary_action)
     return {
         "id": "evidence_quality",
         "title": "Trading Quality Evidence",
@@ -214,10 +254,12 @@ def build_evidence_quality_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             f"candidate_only={_int(evidence_overview.get('candidate_only_row_count'))} "
             f"model_reviews={len(candidate_model_rows)} "
             f"blocked_reviews={blocked_review_count} "
-            f"action={primary_action}"
+            f"action={action_details.get('label')}"
         ),
         "metrics": {
             "primary_action": primary_action,
+            "action_label": action_details.get("label"),
+            "action_note": action_details.get("note"),
             "evidence_row_count": evidence_row_count,
             "blocked_review_count": blocked_review_count,
             "sample_ready_review_count": sample_ready_review_count,

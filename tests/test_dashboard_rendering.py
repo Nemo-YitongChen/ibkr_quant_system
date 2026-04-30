@@ -35,12 +35,17 @@ def test_render_dashboard_v2_blocks_includes_metrics():
                 "title": "Execution Quality",
                 "status": "warning",
                 "summary": "Slippage elevated",
-                "metrics": {"avg_slippage_bps": 12.3},
+                "metrics": {
+                    "primary_action": "collect_more_outcome_samples",
+                    "action_label": "Collect more outcome samples",
+                    "avg_slippage_bps": 12.3,
+                },
             }
         ]
     )
 
     assert "Execution Quality" in html
+    assert "Collect more outcome samples" in html
     assert "avg_slippage_bps" in html
     assert "12.3" in html
     assert 'badge badge-status warn' in html

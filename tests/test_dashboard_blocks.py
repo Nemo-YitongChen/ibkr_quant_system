@@ -67,6 +67,9 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
     assert by_id["evidence_quality"]["metrics"]["blocked_review_count"] == 1
     assert by_id["evidence_quality"]["metrics"]["blocking_helped_count"] == 1
     assert by_id["evidence_quality"]["metrics"]["primary_action"] == "review_signal_expected_edge"
+    assert by_id["evidence_quality"]["metrics"]["action_label"] == "Review signal expected edge"
+    assert "Candidate model warning" in by_id["evidence_quality"]["metrics"]["action_note"]
+    assert "action=Review signal expected edge" in by_id["evidence_quality"]["summary"]
     assert by_id["evidence_quality"]["metrics"]["candidate_model_review_count"] == 2
     assert by_id["evidence_quality"]["metrics"]["candidate_model_warning_count"] == 1
     assert by_id["evidence_quality"]["status"] == "warn"
@@ -97,6 +100,7 @@ def test_evidence_quality_block_marks_gate_review_when_blocked_outperforms():
     assert block["metrics"]["too_restrictive_count"] == 1
     assert block["metrics"]["sample_ready_review_count"] == 1
     assert block["metrics"]["primary_action"] == "review_gate_thresholds"
+    assert block["metrics"]["action_label"] == "Review gate thresholds"
 
 
 def test_evidence_quality_block_keeps_insufficient_samples_non_warning():
@@ -119,3 +123,5 @@ def test_evidence_quality_block_keeps_insufficient_samples_non_warning():
     assert block["metrics"]["insufficient_sample_count"] == 1
     assert block["metrics"]["sample_ready_review_count"] == 0
     assert block["metrics"]["primary_action"] == "collect_more_outcome_samples"
+    assert block["metrics"]["action_label"] == "Collect more outcome samples"
+    assert "sample-starved" in block["metrics"]["action_note"]
