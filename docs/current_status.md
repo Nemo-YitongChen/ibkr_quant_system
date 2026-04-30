@@ -125,6 +125,7 @@
 - **supervisor 默认长驻模式已有启动日志、轻量 dashboard-control 启动 state 与可中断信号处理，运行 `python -m src.app.supervisor` 会先显示配置/市场/poll interval，Ctrl+C 会进入清理退出**
 - **dashboard control `/state` 轮询已改为轻量/持久化状态读取，不再在浏览器自动刷新时实时构建完整 portfolio evidence，避免阻塞 supervisor 主循环与报告启动**
 - **weekly review summary 在 supervisor 内已有 mtime/size 缓存，避免 500MB+ 周报 summary 在同一轮报告启动前被多次 JSON decode**
+- **weekly unified evidence / blocked-vs-allowed review 已补 common contract 层，`src/common/investment_evidence.py` 统一维护 evidence schema、row normalization、allowed/blocked 分类和 ex-post review 聚合**
 
 ---
 
