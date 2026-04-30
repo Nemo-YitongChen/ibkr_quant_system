@@ -53,6 +53,67 @@ def test_load_artifact_uses_weekly_review_section_fallback_for_governance_summar
     assert any("partial compatibility" in warning for warning in row["warnings"])
 
 
+def test_weekly_evidence_json_contracts_are_registered() -> None:
+    contracts = dashboard_artifact_contracts()
+
+    assert contracts["weekly_unified_evidence"].filename == "weekly_unified_evidence.json"
+    assert contracts["weekly_blocked_vs_allowed_expost"].filename == "weekly_blocked_vs_allowed_expost.json"
+    assert contracts["weekly_unified_evidence"].missing_status == "warning"
+    assert contracts["weekly_blocked_vs_allowed_expost"].fallback_section == "blocked_vs_allowed_expost_review"
+
+
+def test_weekly_unified_evidence_json_health_counts_rows(tmp_path: Path) -> None:
+    contract = dashboard_artifact_contracts()["weekly_unified_evidence"]
+    (tmp_path / "weekly_unified_evidence.json").write_text(
+        (
+            '{"generated_at":"2026-04-30T10:00:00+00:00","schema_version":"2026Q2.p0.v1",'
+            '"artifact_type":"weekly_unified_evidence","row_count":2,'
+            '"rows":[{"portfolio_id":"US:watchlist","market":"US","symbol":"AAPL"},'
+            '{"portfolio_id":"HK:watchlist","market":"HK","symbol":"0700.HK"}]}'
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = load_artifact(tmp_path, contract)
+    row = evaluate_artifact_health(contract, loaded, scope_label="GLOBAL")
+
+    assert loaded.row_count == 2
+    assert "portfolio_id" in loaded.columns
+    assert row["status"] == "ready"
+
+
+def test_weekly_unified_evidence_falls_back_to_summary_rows(tmp_path: Path) -> None:
+    weekly_summary = tmp_path / "weekly_review_summary.json"
+    weekly_summary.write_text(
+        (
+            '{"generated_at":"2026-04-30T10:00:00+00:00","schema_version":"2026Q2.p0.v1",'
+            '"window_start":"2026-04-24","window_end":"2026-04-30","portfolio_count":1,'
+            '"unified_evidence_rows":[{"portfolio_id":"US:watchlist","market":"US","symbol":"AAPL"}]}'
+        ),
+        encoding="utf-8",
+    )
+
+    contracts = dashboard_artifact_contracts()
+    loaded = load_artifact_set(
+        tmp_path,
+        {
+            "weekly_review_summary": contracts["weekly_review_summary"],
+            "weekly_unified_evidence": contracts["weekly_unified_evidence"],
+        },
+    )
+    row = evaluate_artifact_health(
+        contracts["weekly_unified_evidence"],
+        loaded["weekly_unified_evidence"],
+        scope_label="GLOBAL",
+    )
+
+    assert loaded["weekly_unified_evidence"].row_count == 1
+    assert loaded["weekly_unified_evidence"].source == "fallback:unified_evidence_rows"
+    assert row["status"] == "warning"
+    assert row["schema_version"] == "2026Q2.p0.v1"
+    assert any("partial compatibility" in warning for warning in row["warnings"])
+
+
 def test_load_artifact_uses_weekly_review_section_fallback_for_broker_positions(tmp_path: Path) -> None:
     weekly_summary = tmp_path / "weekly_review_summary.json"
     weekly_summary.write_text(

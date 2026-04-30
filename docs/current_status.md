@@ -87,6 +87,7 @@
 - `docs/change_archive_2026-04-30_dashboard_client_disconnect.md`
 - `docs/change_archive_2026-04-30_supervisor_startup_visibility.md`
 - `docs/change_archive_2026-04-30_weekly_evidence_json_artifacts.md`
+- `docs/change_archive_2026-04-30_evidence_artifact_health_contracts.md`
 
 ### 已合入的最近一轮关键建设
 
@@ -128,6 +129,7 @@
 - **weekly review summary 在 supervisor 内已有 mtime/size 缓存，避免 500MB+ 周报 summary 在同一轮报告启动前被多次 JSON decode**
 - **weekly unified evidence / blocked-vs-allowed review 已补 common contract 层，`src/common/investment_evidence.py` 统一维护 evidence schema、row normalization、allowed/blocked 分类和 ex-post review 聚合**
 - **weekly review 现在会同时输出独立的 `weekly_unified_evidence.json` 与 `weekly_blocked_vs_allowed_expost.json`，dashboard 优先消费这些轻量 evidence artifact，再 fallback 到 summary/CSV**
+- **独立 evidence JSON 已纳入 artifact health registry，旧 summary 内嵌 rows 可作为兼容 fallback，dashboard 顶部健康汇总会显示 evidence artifact 缺失/过旧/兼容读取状态**
 
 ---
 

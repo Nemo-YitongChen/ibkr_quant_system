@@ -1911,6 +1911,8 @@ def _build_review_artifact_health_rows(review_dir: Path) -> tuple[List[Dict[str,
         key: DASHBOARD_ARTIFACT_CONTRACTS[key]
         for key in (
             "weekly_review_summary",
+            "weekly_unified_evidence",
+            "weekly_blocked_vs_allowed_expost",
             "weekly_execution_summary",
             "weekly_broker_positions",
             "weekly_broker_comparison",

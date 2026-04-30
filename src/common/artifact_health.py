@@ -162,6 +162,8 @@ def build_artifact_consistency_rows(rows: Iterable[Mapping[str, Any]]) -> List[D
     checks: List[Dict[str, Any]] = []
     for peer_key in (
         "weekly_execution_summary",
+        "weekly_unified_evidence",
+        "weekly_blocked_vs_allowed_expost",
         "weekly_broker_positions",
         "weekly_broker_comparison",
         "weekly_risk_review_summary",

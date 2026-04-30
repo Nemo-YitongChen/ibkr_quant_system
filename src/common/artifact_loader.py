@@ -38,6 +38,11 @@ def _iso_from_ts(ts: float | None) -> str:
         return ""
 
 
+def _path_state(path: Path) -> tuple[str, str, float | None]:
+    mtime_ts = path.stat().st_mtime if path.exists() else None
+    return str(path), _iso_from_ts(mtime_ts), mtime_ts
+
+
 def _read_json_dict(path: Path) -> Dict[str, Any]:
     if not path.exists():
         return {}
@@ -61,6 +66,37 @@ def _read_csv_rows(path: Path) -> tuple[List[Dict[str, Any]], List[str]]:
     return rows, columns
 
 
+def _rows_columns(rows: List[Dict[str, Any]]) -> List[str]:
+    columns: List[str] = []
+    for row in rows:
+        for key in row.keys():
+            if str(key) not in columns:
+                columns.append(str(key))
+    return columns
+
+
+def _json_row_payload(section: List[Dict[str, Any]]) -> tuple[Dict[str, Any], List[str]]:
+    rows = [dict(row) for row in list(section or []) if isinstance(row, dict)]
+    return {"row_count": len(rows), "rows": rows}, _rows_columns(rows)
+
+
+def _payload_row_count(payload: Any) -> int:
+    if isinstance(payload, list):
+        return len(payload)
+    if not isinstance(payload, Mapping) or not payload:
+        return 0
+    rows = payload.get("rows")
+    if isinstance(rows, list):
+        return len(rows)
+    declared = payload.get("row_count")
+    try:
+        if declared not in (None, ""):
+            return int(float(declared))
+    except Exception:
+        pass
+    return 1
+
+
 def _pick_text_field(payload: Any, field_names: tuple[str, ...]) -> str:
     if not isinstance(payload, Mapping):
         return ""
@@ -80,6 +116,7 @@ def _load_fallback_section(
     loaded: Mapping[str, LoadedArtifact] | None = None,
 ) -> tuple[Any, List[str], bool, str, str, float | None]:
     fallback_path = base_dir / fallback_filename
+    path_text, fallback_mtime, fallback_mtime_ts = _path_state(fallback_path)
     fallback_payload = _read_json_dict(fallback_path)
     if loaded:
         for artifact in loaded.values():
@@ -89,17 +126,16 @@ def _load_fallback_section(
     section = fallback_payload.get(fallback_section)
     if format == "json":
         if isinstance(section, dict):
-            return dict(section), list(section.keys()), True, str(fallback_path), _iso_from_ts(fallback_path.stat().st_mtime if fallback_path.exists() else None), fallback_path.stat().st_mtime if fallback_path.exists() else None
-        return {}, [], False, str(fallback_path), _iso_from_ts(fallback_path.stat().st_mtime if fallback_path.exists() else None), fallback_path.stat().st_mtime if fallback_path.exists() else None
+            return dict(section), list(section.keys()), True, path_text, fallback_mtime, fallback_mtime_ts
+        if isinstance(section, list):
+            payload, columns = _json_row_payload(section)
+            return payload, columns, True, path_text, fallback_mtime, fallback_mtime_ts
+        return {}, [], False, path_text, fallback_mtime, fallback_mtime_ts
     if isinstance(section, list):
         rows = [dict(row) for row in section if isinstance(row, dict)]
-        columns: List[str] = []
-        for row in rows:
-            for key in row.keys():
-                if key not in columns:
-                    columns.append(str(key))
-        return rows, columns, True, str(fallback_path), _iso_from_ts(fallback_path.stat().st_mtime if fallback_path.exists() else None), fallback_path.stat().st_mtime if fallback_path.exists() else None
-    return [], [], False, str(fallback_path), _iso_from_ts(fallback_path.stat().st_mtime if fallback_path.exists() else None), fallback_path.stat().st_mtime if fallback_path.exists() else None
+        columns = _rows_columns(rows)
+        return rows, columns, True, path_text, fallback_mtime, fallback_mtime_ts
+    return [], [], False, path_text, fallback_mtime, fallback_mtime_ts
 
 
 def load_artifact(
@@ -158,13 +194,11 @@ def load_artifact(
             schema_version = str(inherited.schema_version or "")
             schema_version_source = f"inherited:{contract.inherit_schema_version_from}"
 
-    row_count = len(payload) if isinstance(payload, list) else (1 if isinstance(payload, Mapping) and payload else 0)
+    row_count = _payload_row_count(payload)
     if not columns and isinstance(payload, list):
-        for row in payload:
-            if isinstance(row, Mapping):
-                for key in row.keys():
-                    if str(key) not in columns:
-                        columns.append(str(key))
+        columns = _rows_columns([dict(row) for row in payload if isinstance(row, Mapping)])
+    if not columns and isinstance(payload, Mapping) and isinstance(payload.get("rows"), list):
+        columns = _rows_columns([dict(row) for row in list(payload.get("rows") or []) if isinstance(row, Mapping)])
 
     return LoadedArtifact(
         artifact_key=contract.artifact_key,
