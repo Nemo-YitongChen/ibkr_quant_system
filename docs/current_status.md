@@ -88,6 +88,7 @@
 - `docs/change_archive_2026-04-30_supervisor_startup_visibility.md`
 - `docs/change_archive_2026-04-30_weekly_evidence_json_artifacts.md`
 - `docs/change_archive_2026-04-30_evidence_artifact_health_contracts.md`
+- `docs/change_archive_2026-04-30_dashboard_evidence_action_summary.md`
 
 ### 已合入的最近一轮关键建设
 
@@ -130,6 +131,7 @@
 - **weekly unified evidence / blocked-vs-allowed review 已补 common contract 层，`src/common/investment_evidence.py` 统一维护 evidence schema、row normalization、allowed/blocked 分类和 ex-post review 聚合**
 - **weekly review 现在会同时输出独立的 `weekly_unified_evidence.json` 与 `weekly_blocked_vs_allowed_expost.json`，dashboard 优先消费这些轻量 evidence artifact，再 fallback 到 summary/CSV**
 - **独立 evidence JSON 已纳入 artifact health registry，旧 summary 内嵌 rows 可作为兼容 fallback，dashboard 顶部健康汇总会显示 evidence artifact 缺失/过旧/兼容读取状态**
+- **dashboard v2 Trading Quality Evidence block 已增加 blocked-vs-allowed label 分布、样本就绪度与 `primary_action`，避免把“样本不足”误读成“需要立刻调 gate”**
 
 ---
 

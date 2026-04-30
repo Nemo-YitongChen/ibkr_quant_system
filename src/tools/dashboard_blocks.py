@@ -22,6 +22,71 @@ def _int(value: Any) -> int:
         return 0
 
 
+def _blocked_review_label(row: Dict[str, Any]) -> str:
+    return str(row.get("review_label") or "").strip().upper()
+
+
+def _count_labels(rows: List[Dict[str, Any]], labels: set[str]) -> int:
+    return sum(1 for row in rows if _blocked_review_label(row) in labels)
+
+
+def _count_insufficient_sample(rows: List[Dict[str, Any]]) -> int:
+    return sum(1 for row in rows if _blocked_review_label(row).startswith("INSUFFICIENT"))
+
+
+def _blocked_review_label_summary(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    counts: Dict[str, int] = {}
+    for row in rows:
+        label = _blocked_review_label(row) or "UNKNOWN"
+        counts[label] = counts.get(label, 0) + 1
+    return [
+        {
+            "review_label": label,
+            "count": count,
+            "action": _blocked_review_label_action(label),
+        }
+        for label, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    ]
+
+
+def _blocked_review_label_action(label: str) -> str:
+    normalized = str(label or "").strip().upper()
+    if normalized == "BLOCKED_OUTPERFORMED_ALLOWED":
+        return "review_gate_thresholds"
+    if normalized in {"BLOCKING_HELPED", "GATE_OK"}:
+        return "keep_gate_monitor_post_cost"
+    if normalized.startswith("INSUFFICIENT"):
+        return "collect_more_outcome_samples"
+    if normalized in {"MIXED", "NEUTRAL"}:
+        return "hold_parameters_collect_more_evidence"
+    return "monitor_evidence"
+
+
+def _evidence_primary_action(
+    *,
+    evidence_row_count: int,
+    blocked_review_count: int,
+    too_restrictive_count: int,
+    model_warning_count: int,
+    insufficient_sample_count: int,
+    blocking_helped_count: int,
+    mixed_review_count: int,
+) -> str:
+    if evidence_row_count <= 0:
+        return "build_weekly_unified_evidence"
+    if too_restrictive_count > 0:
+        return "review_gate_thresholds"
+    if model_warning_count > 0:
+        return "review_signal_expected_edge"
+    if blocked_review_count > 0 and insufficient_sample_count >= blocked_review_count:
+        return "collect_more_outcome_samples"
+    if mixed_review_count > 0:
+        return "hold_parameters_collect_more_evidence"
+    if blocking_helped_count > 0:
+        return "keep_gate_monitor_post_cost"
+    return "monitor_evidence"
+
+
 def _block_status_from_rows(rows: List[Dict[str, Any]]) -> str:
     statuses = {str(row.get("status") or "").strip().lower() for row in rows}
     if "fail" in statuses or "error" in statuses:
@@ -118,40 +183,59 @@ def build_evidence_quality_block(payload: Dict[str, Any]) -> Dict[str, Any]:
     blocked_review_rows = _rows(payload.get("blocked_vs_allowed_expost_review"), limit=20)
     candidate_model_rows = _rows(payload.get("candidate_model_review"), limit=20)
     waterfall_rows = _rows(payload.get("weekly_attribution_waterfall"), limit=30)
-    too_restrictive_count = sum(
-        1
-        for row in blocked_review_rows
-        if str(row.get("review_label") or "").strip().upper() == "BLOCKED_OUTPERFORMED_ALLOWED"
-    )
+    evidence_row_count = _int(evidence_overview.get("row_count"))
+    too_restrictive_count = _count_labels(blocked_review_rows, {"BLOCKED_OUTPERFORMED_ALLOWED"})
+    blocking_helped_count = _count_labels(blocked_review_rows, {"BLOCKING_HELPED", "GATE_OK"})
+    insufficient_sample_count = _count_insufficient_sample(blocked_review_rows)
+    mixed_review_count = _count_labels(blocked_review_rows, {"MIXED", "NEUTRAL"})
+    blocked_review_count = len(blocked_review_rows)
+    sample_ready_review_count = max(0, blocked_review_count - insufficient_sample_count)
     model_warning_count = sum(
         1
         for row in candidate_model_rows
         if str(row.get("review_label") or "").strip().upper()
         in {"SIGNAL_RANKING_INVERTED", "EXPECTED_EDGE_OVERSTATED"}
     )
+    primary_action = _evidence_primary_action(
+        evidence_row_count=evidence_row_count,
+        blocked_review_count=blocked_review_count,
+        too_restrictive_count=too_restrictive_count,
+        model_warning_count=model_warning_count,
+        insufficient_sample_count=insufficient_sample_count,
+        blocking_helped_count=blocking_helped_count,
+        mixed_review_count=mixed_review_count,
+    )
     return {
         "id": "evidence_quality",
         "title": "Trading Quality Evidence",
         "status": "warn" if too_restrictive_count or model_warning_count else "ok",
         "summary": (
-            f"evidence_rows={_int(evidence_overview.get('row_count'))} "
+            f"evidence_rows={evidence_row_count} "
             f"candidate_only={_int(evidence_overview.get('candidate_only_row_count'))} "
             f"model_reviews={len(candidate_model_rows)} "
-            f"blocked_reviews={len(blocked_review_rows)}"
+            f"blocked_reviews={blocked_review_count} "
+            f"action={primary_action}"
         ),
         "metrics": {
-            "evidence_row_count": _int(evidence_overview.get("row_count")),
+            "primary_action": primary_action,
+            "evidence_row_count": evidence_row_count,
+            "blocked_review_count": blocked_review_count,
+            "sample_ready_review_count": sample_ready_review_count,
+            "insufficient_sample_count": insufficient_sample_count,
+            "too_restrictive_count": too_restrictive_count,
+            "blocking_helped_count": blocking_helped_count,
+            "mixed_review_count": mixed_review_count,
             "blocked_row_count": _int(evidence_overview.get("blocked_row_count")),
             "allowed_row_count": _int(evidence_overview.get("allowed_row_count")),
             "candidate_only_row_count": _int(evidence_overview.get("candidate_only_row_count")),
             "outcome_labeled_row_count": _int(evidence_overview.get("outcome_labeled_row_count")),
             "partial_join_row_count": _int(evidence_overview.get("partial_join_row_count")),
-            "too_restrictive_count": too_restrictive_count,
             "candidate_model_review_count": len(candidate_model_rows),
             "candidate_model_warning_count": model_warning_count,
             "waterfall_row_count": len(waterfall_rows),
         },
         "rows": {
+            "blocked_vs_allowed_label_summary": _blocked_review_label_summary(blocked_review_rows),
             "candidate_model_review": candidate_model_rows,
             "blocked_vs_allowed": blocked_review_rows,
             "weekly_attribution_waterfall": waterfall_rows,

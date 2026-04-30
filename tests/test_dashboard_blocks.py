@@ -64,6 +64,58 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
     assert by_id["evidence_quality"]["metrics"]["evidence_row_count"] == 3
     assert by_id["evidence_quality"]["metrics"]["candidate_only_row_count"] == 1
     assert by_id["evidence_quality"]["metrics"]["outcome_labeled_row_count"] == 2
+    assert by_id["evidence_quality"]["metrics"]["blocked_review_count"] == 1
+    assert by_id["evidence_quality"]["metrics"]["blocking_helped_count"] == 1
+    assert by_id["evidence_quality"]["metrics"]["primary_action"] == "review_signal_expected_edge"
     assert by_id["evidence_quality"]["metrics"]["candidate_model_review_count"] == 2
     assert by_id["evidence_quality"]["metrics"]["candidate_model_warning_count"] == 1
     assert by_id["evidence_quality"]["status"] == "warn"
+    assert by_id["evidence_quality"]["rows"]["blocked_vs_allowed_label_summary"][0] == {
+        "review_label": "BLOCKING_HELPED",
+        "count": 1,
+        "action": "keep_gate_monitor_post_cost",
+    }
+
+
+def test_evidence_quality_block_marks_gate_review_when_blocked_outperforms():
+    payload = {
+        "unified_evidence_overview": {"row_count": 10},
+        "blocked_vs_allowed_expost_review": [
+            {
+                "review_label": "BLOCKED_OUTPERFORMED_ALLOWED",
+                "block_reason": "EDGE_GATE",
+                "allowed_count": 6,
+                "blocked_count": 7,
+            },
+        ],
+        "candidate_model_review": [],
+    }
+
+    block = build_dashboard_v2_blocks(payload)[-1]
+
+    assert block["status"] == "warn"
+    assert block["metrics"]["too_restrictive_count"] == 1
+    assert block["metrics"]["sample_ready_review_count"] == 1
+    assert block["metrics"]["primary_action"] == "review_gate_thresholds"
+
+
+def test_evidence_quality_block_keeps_insufficient_samples_non_warning():
+    payload = {
+        "unified_evidence_overview": {"row_count": 4},
+        "blocked_vs_allowed_expost_review": [
+            {
+                "review_label": "INSUFFICIENT_OUTCOME_SAMPLE",
+                "block_reason": "MARKET_RULE_GATE",
+                "allowed_count": 1,
+                "blocked_count": 2,
+            },
+        ],
+        "candidate_model_review": [],
+    }
+
+    block = build_dashboard_v2_blocks(payload)[-1]
+
+    assert block["status"] == "ok"
+    assert block["metrics"]["insufficient_sample_count"] == 1
+    assert block["metrics"]["sample_ready_review_count"] == 0
+    assert block["metrics"]["primary_action"] == "collect_more_outcome_samples"
