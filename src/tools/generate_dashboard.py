@@ -4738,6 +4738,29 @@ def _build_card_evidence_action_summary(
     return summary
 
 
+def _build_market_evidence_action_summary(
+    markets: List[str],
+    *,
+    unified_evidence_rows: List[Dict[str, Any]],
+    blocked_vs_allowed_rows: List[Dict[str, Any]],
+    candidate_model_rows: List[Dict[str, Any]],
+    waterfall_rows: List[Dict[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
+    summaries: Dict[str, Dict[str, Any]] = {}
+    for raw_market in list(markets or []):
+        market = resolve_market_code(str(raw_market or ""))
+        if not market or market in summaries:
+            continue
+        summaries[market] = _build_card_evidence_action_summary(
+            {"market": market},
+            unified_evidence_rows=unified_evidence_rows,
+            blocked_vs_allowed_rows=blocked_vs_allowed_rows,
+            candidate_model_rows=candidate_model_rows,
+            waterfall_rows=waterfall_rows,
+        )
+    return summaries
+
+
 def _weekly_attribution_control_split_text(attribution: Dict[str, Any]) -> str:
     return str(dict(attribution or {}).get("control_split_text", "") or "").strip()
 
@@ -7329,6 +7352,19 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
     market_views = _build_market_views(trade_cards)
     weekly_attribution_waterfall = _build_weekly_attribution_waterfall(trade_cards)
     unified_evidence_overview = _build_unified_evidence_overview(weekly_unified_evidence_rows)
+    market_evidence_action_summary = _build_market_evidence_action_summary(
+        list(market_views.keys()),
+        unified_evidence_rows=weekly_unified_evidence_rows,
+        blocked_vs_allowed_rows=weekly_blocked_vs_allowed_expost_rows,
+        candidate_model_rows=weekly_candidate_model_review_rows,
+        waterfall_rows=weekly_attribution_waterfall,
+    )
+    for market, summary in market_evidence_action_summary.items():
+        if market in market_views:
+            market_views[market]["evidence_action_label"] = str(summary.get("action_label") or "")
+            market_views[market]["evidence_basis_label"] = str(summary.get("basis_label") or "")
+            market_views[market]["evidence_rationale"] = str(summary.get("rationale") or "")
+            market_views[market]["evidence_row_count"] = int(summary.get("evidence_row_count") or 0)
     dashboard_status_rollout_summary = _build_dashboard_status_rollout_summary(trade_cards)
     trade_execution_mode_recommendation_overview = _build_execution_mode_recommendation_overview(trade_cards)
     trade_execution_mode_recommendation_summary = _build_execution_mode_recommendation_summary(trade_execution_mode_recommendation_overview)
@@ -7421,6 +7457,7 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
         "dry_run_attribution_overview": _build_weekly_attribution_overview(dry_run_cards),
         "weekly_attribution_waterfall": weekly_attribution_waterfall,
         "unified_evidence_overview": unified_evidence_overview,
+        "market_evidence_action_summary": market_evidence_action_summary,
         "unified_evidence_rows": weekly_unified_evidence_rows[:200],
         "blocked_vs_allowed_expost_review": weekly_blocked_vs_allowed_expost_rows,
         "candidate_model_review": weekly_candidate_model_review_rows,
@@ -8201,6 +8238,9 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
             str(row.get("context_summary", "") or ""),
             str(row.get("primary_review_axis", "") or ""),
             ", ".join(str(item) for item in list(row.get("primary_risks", []) or [])[:4]),
+            str(row.get("evidence_action_label", "") or "-"),
+            str(row.get("evidence_basis_label", "") or "-"),
+            _short_summary_text(str(row.get("evidence_rationale", "") or "-"), max_len=96),
             str(int(row.get("portfolio_count", 0) or 0)),
             str(int(row.get("open_count", 0) or 0)),
             str(int(row.get("fresh_report_count", 0) or 0)),
@@ -9662,7 +9702,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     <section class="card overview">
       <h2>US/HK/CN 市场视图</h2>
       <div class="meta">按市场聚合开市、报告新鲜度、健康退化、数据关注和执行模式，避免只看全局平均。</div>
-      {_render_table(["market", "context", "review_axis", "primary_risks", "portfolios", "open", "fresh", "stale", "degraded", "data_attention", "auto", "review_only", "paused"], market_view_rows)}
+      {_render_table(["market", "context", "review_axis", "primary_risks", "evidence_action", "evidence_basis", "evidence_rationale", "portfolios", "open", "fresh", "stale", "degraded", "data_attention", "auto", "review_only", "paused"], market_view_rows)}
     </section>
     """ if market_view_rows else ""
     weekly_waterfall_card = f"""

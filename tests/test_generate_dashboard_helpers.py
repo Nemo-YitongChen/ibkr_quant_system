@@ -9,6 +9,7 @@ from src.tools.generate_dashboard import (
     _build_gateway_runtime_summary,
     _build_card_evidence_action_summary,
     _build_evidence_action_summary,
+    _build_market_evidence_action_summary,
     _build_overview,
     _build_ops_overview,
     _dashboard_v2_block_metrics_text,
@@ -162,6 +163,28 @@ def test_build_card_evidence_action_summary_scopes_to_portfolio() -> None:
     assert summary["decision_basis"] == "blocked_outperformed_allowed"
     assert summary["evidence_row_count"] == 1
     assert summary["too_restrictive_count"] == 1
+
+
+def test_build_market_evidence_action_summary_groups_by_market() -> None:
+    summary = _build_market_evidence_action_summary(
+        ["US", "HK"],
+        unified_evidence_rows=[
+            {"market": "US", "portfolio_id": "US:paper", "symbol": "AAPL", "blocked_flag": 1},
+            {"market": "HK", "portfolio_id": "HK:paper", "symbol": "0700.HK", "blocked_flag": 1},
+        ],
+        blocked_vs_allowed_rows=[
+            {"market": "US", "portfolio_id": "US:paper", "review_label": "BLOCKED_OUTPERFORMED_ALLOWED"},
+            {"market": "HK", "portfolio_id": "HK:paper", "review_label": "BLOCKING_HELPED"},
+        ],
+        candidate_model_rows=[],
+        waterfall_rows=[],
+    )
+
+    assert summary["US"]["scope"] == "market"
+    assert summary["US"]["primary_action"] == "review_gate_thresholds"
+    assert summary["US"]["decision_basis"] == "blocked_outperformed_allowed"
+    assert summary["HK"]["primary_action"] == "keep_gate_monitor_post_cost"
+    assert summary["HK"]["decision_basis"] == "blocking_helped_post_cost"
 
 
 def test_simple_gateway_connected_treats_limited_permissions_as_connected() -> None:
