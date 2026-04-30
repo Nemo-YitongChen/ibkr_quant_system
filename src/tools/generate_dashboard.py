@@ -5790,6 +5790,9 @@ def _simple_next_step_text(
     action_detail: str,
     recommendation_differs: bool,
     recommended_execution_mode_label: str,
+    evidence_primary_action: str = "",
+    evidence_action_label: str = "",
+    evidence_action_note: str = "",
 ) -> str:
     if mode == "research-only":
         return "当前市场只输出研究结果，不会提交交易。"
@@ -5803,6 +5806,10 @@ def _simple_next_step_text(
         return f"先把执行模式切到“{recommended_execution_mode_label}”。"
     if action_label and action_label != "观察":
         return action_detail or f"按“{action_label}”处理当前组合。"
+    if evidence_action_label and evidence_primary_action not in {"", "monitor_evidence"}:
+        if evidence_action_note:
+            return f"Evidence 建议：{evidence_action_label}。{evidence_action_note}"
+        return f"Evidence 建议：{evidence_action_label}。"
     if is_dry_run_view:
         return "继续看本地模拟账本和回标结果，再决定是否调整阈值。"
     if open_flag:
@@ -6856,6 +6863,7 @@ def _render_card(card: Dict[str, Any]) -> str:
     gateway_status_label = str(health.get("status", "OK") or "OK").strip() or "OK"
     gateway_status_text = _simple_gateway_status_text(health)
     gateway_connected = _simple_gateway_is_connected(health)
+    evidence_action_summary = dict(card.get("evidence_action_summary", {}) or {})
     market_structure_summary = dict(card.get("market_structure_summary", {}) or {})
     account_profile_summary = dict(card.get("account_profile_summary", {}) or {})
     simple_status_text = (
@@ -6883,6 +6891,9 @@ def _render_card(card: Dict[str, Any]) -> str:
         action_detail=action_detail,
         recommendation_differs=recommendation_differs,
         recommended_execution_mode_label=recommended_execution_mode_label,
+        evidence_primary_action=str(evidence_action_summary.get("primary_action") or ""),
+        evidence_action_label=str(evidence_action_summary.get("action_label") or ""),
+        evidence_action_note=str(evidence_action_summary.get("action_note") or ""),
     )
     simple_summary_section = f"""
       <div class="simple-card-summary simple-only">
@@ -7345,6 +7356,13 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
     }
     payload["dashboard_v2_blocks"] = build_dashboard_v2_blocks(payload)
     payload["evidence_action_summary"] = _build_evidence_action_summary(payload["dashboard_v2_blocks"])
+    for card in (
+        list(payload.get("cards", []) or [])
+        + list(payload.get("trade_cards", []) or [])
+        + list(payload.get("dry_run_cards", []) or [])
+    ):
+        if isinstance(card, dict):
+            card["evidence_action_summary"] = dict(payload["evidence_action_summary"])
     return payload
 
 
@@ -7622,6 +7640,7 @@ def _weekly_strategy_note_text(card: Dict[str, Any]) -> str:
 def _simple_weekly_strategy_context_rows(card: Dict[str, Any]) -> List[List[str]]:
     weekly_context = dict(card.get("weekly_strategy_context", {}) or {})
     control_portfolio = dict(card.get("dashboard_control", {}).get("portfolio", {}) or {})
+    evidence_action = dict(card.get("evidence_action_summary", {}) or {})
     market_structure = dict(card.get("market_structure_summary", {}) or {})
     profile_summary = dict(card.get("account_profile_summary", {}) or {})
     rows = [
@@ -7648,6 +7667,22 @@ def _simple_weekly_strategy_context_rows(card: Dict[str, Any]) -> List[List[str]
         rows.append(["调优方向", str(weekly_context.get("market_profile_tuning_note") or "").strip()])
     if str(weekly_context.get("no_trade_optimization_note") or "").strip():
         rows.append(["无成交优化", str(weekly_context.get("no_trade_optimization_note") or "").strip()])
+    evidence_action_label = str(evidence_action.get("action_label") or "").strip()
+    evidence_action_note = str(evidence_action.get("action_note") or "").strip()
+    if evidence_action_label:
+        rows.append(["Evidence下一步", f"{evidence_action_label}：{evidence_action_note or '-'}"])
+    if int(_safe_float(evidence_action.get("evidence_row_count"), 0.0)) > 0:
+        rows.append(
+            [
+                "Evidence样本",
+                (
+                    f"rows={int(_safe_float(evidence_action.get('evidence_row_count'), 0.0))} / "
+                    f"blocked_reviews={int(_safe_float(evidence_action.get('blocked_review_count'), 0.0))} / "
+                    f"ready={int(_safe_float(evidence_action.get('sample_ready_review_count'), 0.0))} / "
+                    f"insufficient={int(_safe_float(evidence_action.get('insufficient_sample_count'), 0.0))}"
+                ),
+            ]
+        )
     review_summary = str(
         control_portfolio.get("weekly_feedback_market_profile_review_summary")
         or weekly_context.get("market_profile_review_summary")

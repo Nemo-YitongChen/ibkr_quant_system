@@ -555,6 +555,7 @@ def test_investment_workflow_cli_smoke_generates_contract_artifacts(tmp_path, mo
     assert len(dashboard_payload["dashboard_v2_blocks"]) == 4
     assert dashboard_payload["evidence_action_summary"]["action_label"]
     assert "evidence_row_count" in dashboard_payload["evidence_action_summary"]
+    assert dashboard_payload["cards"][0]["evidence_action_summary"]["action_label"]
     assert "US" in dashboard_payload["market_views"]
     assert "unified_evidence_overview" in dashboard_payload
     assert "策略主动转入防守" in dashboard_payload["cards"][0]["weekly_strategy_context"]["strategy_effective_controls_note"]

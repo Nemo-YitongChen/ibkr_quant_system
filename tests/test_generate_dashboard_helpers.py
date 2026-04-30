@@ -157,6 +157,27 @@ def test_simple_gateway_disconnected_only_for_unresolved_connectivity_break() ->
     ) == "先启动 IB Gateway，并确认 paper/live 目标端口可连接。"
 
 
+def test_simple_next_step_uses_evidence_action_when_no_higher_priority_blocker() -> None:
+    text = _simple_next_step_text(
+        mode="paper-auto-submit",
+        is_dry_run_view=False,
+        open_flag=True,
+        report_fresh="fresh",
+        gateway_status_label="OK",
+        gateway_connected=True,
+        action_label="观察",
+        action_detail="",
+        recommendation_differs=False,
+        recommended_execution_mode_label="-",
+        evidence_primary_action="collect_more_outcome_samples",
+        evidence_action_label="Collect more outcome samples",
+        evidence_action_note="Blocked-vs-allowed evidence is sample-starved.",
+    )
+
+    assert "Evidence 建议：Collect more outcome samples" in text
+    assert "sample-starved" in text
+
+
 def test_gateway_runtime_summary_treats_listening_port_as_idle_client() -> None:
     summary = _build_gateway_runtime_summary(
         {
@@ -224,6 +245,30 @@ def test_simple_weekly_strategy_context_rows_include_no_trade_optimization_note(
     )
 
     assert ["无成交优化", "用候选快照和 shadow 回标继续校准。"] in rows
+
+
+def test_simple_weekly_strategy_context_rows_include_evidence_action() -> None:
+    rows = _simple_weekly_strategy_context_rows(
+        {
+            "weekly_strategy_context": {
+                "weekly_strategy_note": "本周没有成交。",
+            },
+            "evidence_action_summary": {
+                "action_label": "Collect more outcome samples",
+                "action_note": "Blocked-vs-allowed evidence is sample-starved.",
+                "evidence_row_count": 8,
+                "blocked_review_count": 2,
+                "sample_ready_review_count": 0,
+                "insufficient_sample_count": 2,
+            },
+        }
+    )
+
+    assert [
+        "Evidence下一步",
+        "Collect more outcome samples：Blocked-vs-allowed evidence is sample-starved.",
+    ] in rows
+    assert ["Evidence样本", "rows=8 / blocked_reviews=2 / ready=0 / insufficient=2"] in rows
 
 
 def test_build_health_overview_prefers_degraded_and_merges_summary() -> None:
