@@ -673,7 +673,25 @@ def _load_weekly_attribution_rows(review_dir: Path) -> List[Dict[str, Any]]:
     return _read_all_csv_rows(review_dir / "weekly_attribution_summary.csv")
 
 
+def _load_weekly_rows_json_artifact(path: Path, *row_keys: str) -> List[Dict[str, Any]] | None:
+    if not path.exists():
+        return None
+    payload = _load_json(path)
+    for key in ("rows", *row_keys):
+        rows = payload.get(key)
+        if isinstance(rows, list):
+            return [dict(row) for row in rows if isinstance(row, dict)]
+    return None
+
+
 def _load_weekly_unified_evidence_rows(review_dir: Path) -> List[Dict[str, Any]]:
+    artifact_rows = _load_weekly_rows_json_artifact(
+        review_dir / "weekly_unified_evidence.json",
+        "unified_evidence",
+        "unified_evidence_rows",
+    )
+    if artifact_rows is not None:
+        return artifact_rows
     summary_json = _load_json(review_dir / "weekly_review_summary.json")
     summary_rows = summary_json.get("unified_evidence_rows")
     if isinstance(summary_rows, list) and summary_rows:
@@ -682,6 +700,13 @@ def _load_weekly_unified_evidence_rows(review_dir: Path) -> List[Dict[str, Any]]
 
 
 def _load_weekly_blocked_vs_allowed_expost_rows(review_dir: Path) -> List[Dict[str, Any]]:
+    artifact_rows = _load_weekly_rows_json_artifact(
+        review_dir / "weekly_blocked_vs_allowed_expost.json",
+        "blocked_vs_allowed_expost_review",
+        "blocked_vs_allowed_expost_rows",
+    )
+    if artifact_rows is not None:
+        return artifact_rows
     summary_json = _load_json(review_dir / "weekly_review_summary.json")
     summary_rows = summary_json.get("blocked_vs_allowed_expost_review")
     if isinstance(summary_rows, list) and summary_rows:

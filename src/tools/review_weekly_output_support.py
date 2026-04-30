@@ -677,6 +677,28 @@ def build_weekly_tuning_dataset_payload(
     }
 
 
+def build_weekly_rows_artifact_payload(
+    *,
+    generated_at: str,
+    week_label: str,
+    window_start: str,
+    window_end: str,
+    artifact_type: str,
+    rows: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    artifact_rows = [dict(row) for row in list(rows or []) if isinstance(row, dict)]
+    return {
+        "generated_at": str(generated_at or ""),
+        "schema_version": ARTIFACT_SCHEMA_VERSION,
+        "week_label": str(week_label or ""),
+        "window_start": str(window_start or ""),
+        "window_end": str(window_end or ""),
+        "artifact_type": str(artifact_type or ""),
+        "row_count": len(artifact_rows),
+        "rows": artifact_rows,
+    }
+
+
 def build_weekly_review_summary_payload(
     *,
     generated_at: str,
@@ -1040,6 +1062,22 @@ def build_weekly_output_bundle(
         weekly_control_timeseries_rows=weekly_control_timeseries_rows,
         weekly_tuning_dataset_rows=weekly_tuning_dataset_rows,
     )
+    weekly_unified_evidence_payload = build_weekly_rows_artifact_payload(
+        generated_at=generated_at,
+        week_label=week_label,
+        window_start=window_start,
+        window_end=window_end,
+        artifact_type="weekly_unified_evidence",
+        rows=unified_evidence_rows,
+    )
+    weekly_blocked_vs_allowed_expost_payload = build_weekly_rows_artifact_payload(
+        generated_at=generated_at,
+        week_label=week_label,
+        window_start=window_start,
+        window_end=window_end,
+        artifact_type="weekly_blocked_vs_allowed_expost",
+        rows=blocked_vs_allowed_expost_rows,
+    )
     summary_payload = build_weekly_review_summary_payload(
         generated_at=generated_at,
         window_start=window_start,
@@ -1149,12 +1187,16 @@ def build_weekly_output_bundle(
     return {
         "csv_artifacts": csv_artifacts,
         "json_artifacts": {
+            "weekly_unified_evidence.json": weekly_unified_evidence_payload,
+            "weekly_blocked_vs_allowed_expost.json": weekly_blocked_vs_allowed_expost_payload,
             "weekly_tuning_dataset.json": weekly_tuning_dataset_payload,
             "weekly_review_summary.json": summary_payload,
         },
         "markdown_kwargs": markdown_kwargs,
         "summary_payload": summary_payload,
         "weekly_tuning_dataset_payload": weekly_tuning_dataset_payload,
+        "weekly_unified_evidence_payload": weekly_unified_evidence_payload,
+        "weekly_blocked_vs_allowed_expost_payload": weekly_blocked_vs_allowed_expost_payload,
         "summary_fields": summary_fields,
         "artifact_fields": artifact_fields,
     }

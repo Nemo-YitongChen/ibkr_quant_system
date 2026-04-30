@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from src.tools.generate_dashboard import (
     _build_dashboard_status_rollout_summary,
     _build_health_overview,
@@ -8,6 +10,8 @@ from src.tools.generate_dashboard import (
     _build_overview,
     _build_ops_overview,
     _dashboard_v2_block_metrics_text,
+    _load_weekly_blocked_vs_allowed_expost_rows,
+    _load_weekly_unified_evidence_rows,
     _simple_gateway_is_connected,
     _simple_gateway_runtime_text,
     _simple_next_step_text,
@@ -370,3 +374,45 @@ def test_build_ops_overview_classifies_preflight_gateway_port_alerts() -> None:
     assert alert["alert_severity"] == "warn"
     assert overview["alert_class_counts"]["gateway_port"] == 1
     assert overview["alert_severity_counts"]["warn"] == 1
+
+
+def test_weekly_unified_evidence_loader_prefers_standalone_json(tmp_path) -> None:
+    (tmp_path / "weekly_review_summary.json").write_text(
+        json.dumps({"unified_evidence_rows": [{"portfolio_id": "summary"}]}),
+        encoding="utf-8",
+    )
+    (tmp_path / "weekly_unified_evidence.json").write_text(
+        json.dumps(
+            {
+                "artifact_type": "weekly_unified_evidence",
+                "row_count": 1,
+                "rows": [{"portfolio_id": "standalone", "symbol": "AAPL"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rows = _load_weekly_unified_evidence_rows(tmp_path)
+
+    assert rows == [{"portfolio_id": "standalone", "symbol": "AAPL"}]
+
+
+def test_weekly_blocked_vs_allowed_loader_prefers_standalone_json(tmp_path) -> None:
+    (tmp_path / "weekly_review_summary.json").write_text(
+        json.dumps({"blocked_vs_allowed_expost_review": [{"portfolio_id": "summary"}]}),
+        encoding="utf-8",
+    )
+    (tmp_path / "weekly_blocked_vs_allowed_expost.json").write_text(
+        json.dumps(
+            {
+                "artifact_type": "weekly_blocked_vs_allowed_expost",
+                "row_count": 1,
+                "rows": [{"portfolio_id": "standalone", "horizon": "20d"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rows = _load_weekly_blocked_vs_allowed_expost_rows(tmp_path)
+
+    assert rows == [{"portfolio_id": "standalone", "horizon": "20d"}]

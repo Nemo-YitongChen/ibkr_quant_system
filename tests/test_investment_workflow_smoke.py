@@ -409,6 +409,8 @@ def test_investment_workflow_cli_smoke_generates_contract_artifacts(tmp_path, mo
     paper_summary_path = report_dir / "investment_paper_summary.json"
     execution_summary_path = report_dir / "investment_execution_summary.json"
     weekly_summary_path = weekly_dir / "weekly_review_summary.json"
+    weekly_unified_evidence_path = weekly_dir / "weekly_unified_evidence.json"
+    weekly_blocked_expost_path = weekly_dir / "weekly_blocked_vs_allowed_expost.json"
     reconcile_summary_path = reconcile_dir / "broker_reconciliation_summary.json"
     dashboard_json_path = dashboard_dir / "dashboard.json"
 
@@ -426,7 +428,9 @@ def test_investment_workflow_cli_smoke_generates_contract_artifacts(tmp_path, mo
         weekly_dir / "weekly_edge_realization_summary.csv",
         weekly_dir / "weekly_blocked_edge_attribution.csv",
         weekly_dir / "weekly_unified_evidence.csv",
+        weekly_unified_evidence_path,
         weekly_dir / "weekly_blocked_vs_allowed_expost.csv",
+        weekly_blocked_expost_path,
         weekly_dir / "weekly_trading_quality_evidence.csv",
         weekly_dir / "weekly_tuning_dataset.csv",
         weekly_dir / "weekly_tuning_dataset.json",
@@ -450,6 +454,8 @@ def test_investment_workflow_cli_smoke_generates_contract_artifacts(tmp_path, mo
     paper_summary = json.loads(paper_summary_path.read_text(encoding="utf-8"))
     execution_summary = json.loads(execution_summary_path.read_text(encoding="utf-8"))
     weekly_summary = json.loads(weekly_summary_path.read_text(encoding="utf-8"))
+    weekly_unified_evidence = json.loads(weekly_unified_evidence_path.read_text(encoding="utf-8"))
+    weekly_blocked_expost = json.loads(weekly_blocked_expost_path.read_text(encoding="utf-8"))
     reconcile_summary = json.loads(reconcile_summary_path.read_text(encoding="utf-8"))
     dashboard_payload = json.loads(dashboard_json_path.read_text(encoding="utf-8"))
 
@@ -494,7 +500,12 @@ def test_investment_workflow_cli_smoke_generates_contract_artifacts(tmp_path, mo
     assert weekly_summary["decision_evidence_history_overview"][0]["portfolio_id"] == portfolio_id
     assert weekly_summary["trading_quality_evidence"][0]["portfolio_id"] == portfolio_id
     assert weekly_summary["unified_evidence_rows"][0]["portfolio_id"] == portfolio_id
+    assert weekly_unified_evidence["artifact_type"] == "weekly_unified_evidence"
+    assert weekly_unified_evidence["row_count"] >= 1
+    assert weekly_unified_evidence["rows"][0]["portfolio_id"] == portfolio_id
     assert "blocked_vs_allowed_expost_review" in weekly_summary
+    assert weekly_blocked_expost["artifact_type"] == "weekly_blocked_vs_allowed_expost"
+    assert "rows" in weekly_blocked_expost
     assert weekly_summary["edge_calibration_summary"][0]["portfolio_id"] == portfolio_id
     assert weekly_summary["slicing_calibration_summary"][0]["portfolio_id"] == portfolio_id
     assert weekly_summary["risk_calibration_summary"][0]["portfolio_id"] == portfolio_id

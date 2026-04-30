@@ -86,6 +86,7 @@
 - `docs/change_archive_2026-04-29_weekly_support_import_boundary.md`
 - `docs/change_archive_2026-04-30_dashboard_client_disconnect.md`
 - `docs/change_archive_2026-04-30_supervisor_startup_visibility.md`
+- `docs/change_archive_2026-04-30_weekly_evidence_json_artifacts.md`
 
 ### 已合入的最近一轮关键建设
 
@@ -126,6 +127,7 @@
 - **dashboard control `/state` 轮询已改为轻量/持久化状态读取，不再在浏览器自动刷新时实时构建完整 portfolio evidence，避免阻塞 supervisor 主循环与报告启动**
 - **weekly review summary 在 supervisor 内已有 mtime/size 缓存，避免 500MB+ 周报 summary 在同一轮报告启动前被多次 JSON decode**
 - **weekly unified evidence / blocked-vs-allowed review 已补 common contract 层，`src/common/investment_evidence.py` 统一维护 evidence schema、row normalization、allowed/blocked 分类和 ex-post review 聚合**
+- **weekly review 现在会同时输出独立的 `weekly_unified_evidence.json` 与 `weekly_blocked_vs_allowed_expost.json`，dashboard 优先消费这些轻量 evidence artifact，再 fallback 到 summary/CSV**
 
 ---
 
