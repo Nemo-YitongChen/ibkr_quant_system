@@ -49,6 +49,29 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
                 "evidence_row_count": 0,
             },
         },
+        "evidence_focus_actions": [
+            {
+                "market": "US",
+                "primary_action": "review_gate_thresholds",
+                "action": "Review gate thresholds",
+                "basis": "Blocked outperformed allowed",
+                "priority_order": 10,
+            },
+            {
+                "market": "CN",
+                "primary_action": "build_weekly_unified_evidence",
+                "action": "Build unified evidence",
+                "basis": "No unified evidence",
+                "priority_order": 30,
+            },
+            {
+                "market": "HK",
+                "primary_action": "collect_more_outcome_samples",
+                "action": "Collect more outcome samples",
+                "basis": "Insufficient blocked-vs-allowed sample",
+                "priority_order": 60,
+            },
+        ],
         "unified_evidence_overview": {
             "row_count": 3,
             "allowed_row_count": 1,
@@ -74,6 +97,7 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
         "ops_health",
         "dashboard_control_actions",
         "market_views",
+        "evidence_focus_actions",
         "evidence_quality",
     ]
     assert by_id["ops_health"]["metrics"]["degraded_health_count"] == 1
@@ -90,6 +114,13 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
     assert by_id["market_views"]["rows"][0]["evidence_primary_action"] == "build_weekly_unified_evidence"
     assert by_id["market_views"]["status"] == "warn"
     assert "evidence_attention=2" in by_id["market_views"]["summary"]
+    assert by_id["evidence_focus_actions"]["status"] == "warn"
+    assert by_id["evidence_focus_actions"]["metrics"]["focus_action_count"] == 3
+    assert by_id["evidence_focus_actions"]["metrics"]["urgent_action_count"] == 2
+    assert by_id["evidence_focus_actions"]["metrics"]["gate_review_count"] == 1
+    assert by_id["evidence_focus_actions"]["metrics"]["missing_evidence_count"] == 1
+    assert by_id["evidence_focus_actions"]["metrics"]["sample_collection_count"] == 1
+    assert by_id["evidence_focus_actions"]["rows"][0]["market"] == "US"
     assert by_id["evidence_quality"]["metrics"]["evidence_row_count"] == 3
     assert by_id["evidence_quality"]["metrics"]["candidate_only_row_count"] == 1
     assert by_id["evidence_quality"]["metrics"]["outcome_labeled_row_count"] == 2
@@ -197,3 +228,24 @@ def test_market_views_block_handles_malformed_evidence_summary():
     assert block["status"] == "warn"
     assert block["metrics"]["gate_review_market_count"] == 1
     assert block["rows"][0]["evidence_primary_action"] == "review_gate_thresholds"
+
+
+def test_evidence_focus_actions_block_keeps_sample_collection_non_warning():
+    payload = {
+        "evidence_focus_actions": [
+            {
+                "market": "HK",
+                "primary_action": "collect_more_outcome_samples",
+                "priority_order": 60,
+            },
+            "legacy malformed row",
+        ]
+    }
+
+    block = build_dashboard_v2_blocks(payload)[3]
+
+    assert block["id"] == "evidence_focus_actions"
+    assert block["status"] == "ok"
+    assert block["metrics"]["focus_action_count"] == 1
+    assert block["metrics"]["urgent_action_count"] == 0
+    assert block["metrics"]["sample_collection_count"] == 1

@@ -276,6 +276,36 @@ def build_market_views_block(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def build_evidence_focus_actions_block(payload: Dict[str, Any]) -> Dict[str, Any]:
+    rows = _rows(payload.get("evidence_focus_actions"), limit=20)
+    gate_review_count = sum(1 for row in rows if str(row.get("primary_action") or "") == "review_gate_thresholds")
+    signal_review_count = sum(1 for row in rows if str(row.get("primary_action") or "") == "review_signal_expected_edge")
+    missing_evidence_count = sum(1 for row in rows if str(row.get("primary_action") or "") == "build_weekly_unified_evidence")
+    hold_review_count = sum(1 for row in rows if str(row.get("primary_action") or "") == "hold_parameters_collect_more_evidence")
+    sample_collection_count = sum(1 for row in rows if str(row.get("primary_action") or "") == "collect_more_outcome_samples")
+    urgent_count = sum(1 for row in rows if _int(row.get("priority_order")) < 60)
+    return {
+        "id": "evidence_focus_actions",
+        "title": "Evidence Focus Actions",
+        "status": "warn" if urgent_count else "ok",
+        "summary": (
+            f"actions={len(rows)} urgent={urgent_count} "
+            f"gate={gate_review_count} signal={signal_review_count} "
+            f"missing_evidence={missing_evidence_count} sample_collection={sample_collection_count}"
+        ),
+        "metrics": {
+            "focus_action_count": len(rows),
+            "urgent_action_count": urgent_count,
+            "gate_review_count": gate_review_count,
+            "signal_review_count": signal_review_count,
+            "missing_evidence_count": missing_evidence_count,
+            "hold_review_count": hold_review_count,
+            "sample_collection_count": sample_collection_count,
+        },
+        "rows": rows,
+    }
+
+
 def build_evidence_quality_block(payload: Dict[str, Any]) -> Dict[str, Any]:
     evidence_overview = _dict(payload.get("unified_evidence_overview"))
     blocked_review_rows = _rows(payload.get("blocked_vs_allowed_expost_review"), limit=20)
@@ -349,5 +379,6 @@ def build_dashboard_v2_blocks(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
         build_ops_health_block(payload),
         build_control_actions_block(payload),
         build_market_views_block(payload),
+        build_evidence_focus_actions_block(payload),
         build_evidence_quality_block(payload),
     ]

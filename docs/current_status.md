@@ -98,6 +98,7 @@
 - `docs/change_archive_2026-05-01_market_evidence_v2_block_metrics.md`
 - `docs/change_archive_2026-05-01_simple_market_evidence_actions.md`
 - `docs/change_archive_2026-05-01_evidence_focus_actions.md`
+- `docs/change_archive_2026-05-01_evidence_focus_v2_block.md`
 
 ### 已合入的最近一轮关键建设
 
@@ -150,6 +151,7 @@
 - **dashboard v2 Market Views block 已新增 market-level evidence action metrics，能区分缺 evidence、gate 需复核、模型 edge 需复核与样本不足；样本不足只提示继续收集，不单独升级为告警**
 - **simple dashboard 已新增市场级 Evidence 下一步表，首页可直接看到 US/HK/CN 各自是缺 evidence、样本不足、gate 复核还是 signal-edge 校准**
 - **dashboard 已新增只读 `evidence_focus_actions` 优先队列，把市场级 evidence work 排序到首页，跳过 monitor/keep 这类非行动项，不自动改参数**
+- **dashboard v2 已新增 `Evidence Focus Actions` block，把只读 evidence 优先队列纳入 advanced/v2 契约并统计 urgent/gate/signal/missing-evidence/sample-collection**
 
 ---
 
