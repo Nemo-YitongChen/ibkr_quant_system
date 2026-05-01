@@ -4,6 +4,7 @@ import json
 
 from src.tools.generate_dashboard import (
     _build_dashboard_status_rollout_summary,
+    _build_evidence_focus_actions,
     _build_health_overview,
     _build_market_data_health_overview,
     _build_gateway_runtime_summary,
@@ -186,6 +187,67 @@ def test_build_market_evidence_action_summary_groups_by_market() -> None:
     assert summary["US"]["decision_basis"] == "blocked_outperformed_allowed"
     assert summary["HK"]["primary_action"] == "keep_gate_monitor_post_cost"
     assert summary["HK"]["decision_basis"] == "blocking_helped_post_cost"
+
+
+def test_build_evidence_focus_actions_prioritizes_actionable_market_work() -> None:
+    rows = _build_evidence_focus_actions(
+        {
+            "US": {
+                "market": "US",
+                "primary_action": "review_signal_expected_edge",
+                "action_label": "Review signal expected edge",
+                "basis_label": "Candidate model warning",
+                "action_note": "Calibrate signal score to realized edge.",
+                "evidence_row_count": 8,
+            },
+            "HK": {
+                "market": "HK",
+                "primary_action": "review_gate_thresholds",
+                "action_label": "Review gate thresholds",
+                "basis_label": "Blocked outperformed allowed",
+                "action_note": "Review edge floor and buffers.",
+                "evidence_row_count": 12,
+            },
+            "CN": {
+                "market": "CN",
+                "primary_action": "build_weekly_unified_evidence",
+                "action_label": "Build unified evidence",
+                "basis_label": "No unified evidence",
+                "action_note": "Regenerate weekly evidence.",
+            },
+            "ASX": {
+                "market": "ASX",
+                "primary_action": "collect_more_outcome_samples",
+                "action_label": "Collect more outcome samples",
+                "basis_label": "Insufficient blocked-vs-allowed sample",
+                "action_note": "Keep collecting candidate outcomes.",
+            },
+        },
+        limit=3,
+    )
+
+    assert [row["market"] for row in rows] == ["HK", "US", "CN"]
+    assert [row["priority_order"] for row in rows] == [10, 20, 30]
+    assert rows[0]["evidence_row_count"] == 12
+
+
+def test_build_evidence_focus_actions_skips_monitor_only_markets() -> None:
+    rows = _build_evidence_focus_actions(
+        {
+            "US": {
+                "primary_action": "keep_gate_monitor_post_cost",
+                "action_label": "Keep gate and monitor",
+            },
+            "HK": {
+                "primary_action": "monitor_evidence",
+                "action_label": "Monitor evidence",
+            },
+            "bad": "legacy malformed summary",
+        }
+    )
+
+    assert rows == []
+    assert _build_evidence_focus_actions("legacy bad payload") == []
 
 
 def test_simple_gateway_connected_treats_limited_permissions_as_connected() -> None:

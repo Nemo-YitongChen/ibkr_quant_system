@@ -5222,6 +5222,60 @@ def _build_focus_actions(cards: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return focus
 
 
+EVIDENCE_FOCUS_ACTION_PRIORITY = {
+    "review_gate_thresholds": 10,
+    "review_signal_expected_edge": 20,
+    "build_weekly_unified_evidence": 30,
+    "hold_parameters_collect_more_evidence": 40,
+    "collect_more_outcome_samples": 60,
+    "keep_gate_monitor_post_cost": 90,
+    "monitor_evidence": 99,
+}
+
+
+def _build_evidence_focus_actions(
+    market_evidence_action_summary: Dict[str, Any],
+    *,
+    limit: int = 5,
+) -> List[Dict[str, Any]]:
+    summaries = dict(market_evidence_action_summary) if isinstance(market_evidence_action_summary, dict) else {}
+    rows: List[Dict[str, Any]] = []
+    for market_key, raw_summary in sorted(
+        summaries.items(),
+        key=lambda part: str(part[0]),
+    ):
+        if not isinstance(raw_summary, dict):
+            continue
+        summary = dict(raw_summary)
+        action = str(summary.get("primary_action") or "").strip()
+        priority = int(EVIDENCE_FOCUS_ACTION_PRIORITY.get(action, 99))
+        if priority >= 90:
+            continue
+        market = resolve_market_code(str(summary.get("market") or market_key or "")) or str(market_key or "").upper()
+        action_label = str(summary.get("action_label") or action or "").strip()
+        basis_label = str(summary.get("basis_label") or "").strip()
+        action_note = str(summary.get("action_note") or "").strip()
+        rationale = str(summary.get("rationale") or "").strip()
+        detail = action_note or rationale or basis_label or "-"
+        rows.append(
+            {
+                "market": market,
+                "action": action_label,
+                "primary_action": action,
+                "basis": basis_label,
+                "detail": detail,
+                "priority_order": priority,
+                "evidence_row_count": int(_safe_float(summary.get("evidence_row_count"), 0.0)),
+                "blocked_review_count": int(_safe_float(summary.get("blocked_review_count"), 0.0)),
+                "sample_ready_review_count": int(_safe_float(summary.get("sample_ready_review_count"), 0.0)),
+                "insufficient_sample_count": int(_safe_float(summary.get("insufficient_sample_count"), 0.0)),
+            }
+        )
+    rows.sort(key=lambda row: (int(row.get("priority_order", 99) or 99), str(row.get("market", ""))))
+    limit_int = max(0, int(limit))
+    return rows[:limit_int] if limit_int else []
+
+
 def _build_runtime_status(cards: List[Dict[str, Any]]) -> Dict[str, Any]:
     account_ids = sorted({str(card.get("account_id", "") or "").strip() for card in cards if str(card.get("account_id", "") or "").strip()})
     account_modes = sorted({str(card.get("account_mode", "") or "").strip() for card in cards if str(card.get("account_mode", "") or "").strip()})
@@ -7469,6 +7523,7 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
         "ops_health_rows": _build_health_overview(trade_cards),
         "stock_list_groups": stock_list_groups,
         "focus_actions": _build_focus_actions(trade_cards),
+        "evidence_focus_actions": _build_evidence_focus_actions(market_evidence_action_summary),
         "market_views": market_views,
         "cards": cards,
         "trade_cards": trade_cards,
@@ -8244,6 +8299,17 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
             </div>
             """
         )
+    simple_evidence_focus_rows = [
+        [
+            str(row.get("market", "") or "-"),
+            str(row.get("action", "") or "-"),
+            str(row.get("basis", "") or "-"),
+            str(row.get("priority_order", "") or "-"),
+            _short_summary_text(str(row.get("detail", "") or "-"), max_len=120),
+        ]
+        for row in list(payload.get("evidence_focus_actions", []) or [])
+        if isinstance(row, dict)
+    ]
     runtime_status = dict(payload.get("runtime_status", {}) or {})
     ops_overview = dict(payload.get("ops_overview", {}) or {})
     dashboard_control = dict(payload.get("dashboard_control", {}) or {})
@@ -9876,6 +9942,9 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
       <h2>今日最该关注的动作 / 研究</h2>
       <div class="simple-only" data-simple-section="focus-actions">
       {_render_table(["市场", "股票池", "动作", "说明"], simple_focus_rows) if simple_focus_rows else '<div class="empty">当前没有高优先级动作。</div>'}
+      </div>
+      <div class="simple-only" data-simple-section="evidence-focus-actions">
+      {_render_table(["市场", "Evidence动作", "依据", "优先级", "说明"], simple_evidence_focus_rows) if simple_evidence_focus_rows else '<div class="empty">当前没有需要优先处理的 evidence action。</div>'}
       </div>
       <div class="advanced-only">
       <div class="focus-grid">
