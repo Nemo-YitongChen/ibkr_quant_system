@@ -9,6 +9,10 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
             "summary_text": "ops ready",
             "preflight_fail_count": 0,
             "degraded_health_count": 1,
+            "evidence_focus_action_count": 3,
+            "evidence_focus_urgent_count": 2,
+            "evidence_focus_primary_market": "US",
+            "evidence_focus_primary_action": "Review gate thresholds",
             "alert_rows": [{"status": "warn", "name": "stale"}],
         },
         "artifact_health_overview": {"fail_count": 0, "warn_count": 1},
@@ -113,6 +117,10 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
         "evidence_quality",
     ]
     assert by_id["ops_health"]["metrics"]["degraded_health_count"] == 1
+    assert by_id["ops_health"]["metrics"]["evidence_focus_action_count"] == 3
+    assert by_id["ops_health"]["metrics"]["evidence_focus_urgent_count"] == 2
+    assert by_id["ops_health"]["metrics"]["evidence_focus_primary_market"] == "US"
+    assert by_id["ops_health"]["metrics"]["evidence_focus_primary_action"] == "Review gate thresholds"
     assert by_id["dashboard_control_actions"]["metrics"]["history_count"] == 3
     assert by_id["dashboard_control_actions"]["metrics"]["transient_io_error_count"] == 1
     assert by_id["dashboard_control_actions"]["metrics"]["retryable_error_count"] == 1

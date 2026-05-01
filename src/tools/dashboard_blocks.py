@@ -195,6 +195,10 @@ def build_ops_health_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "artifact_warn_count": _int(artifact.get("warn_count")),
             "governance_blocked_count": _int(governance.get("blocked_count")),
             "governance_warn_count": _int(governance.get("warn_count")),
+            "evidence_focus_action_count": _int(ops.get("evidence_focus_action_count")),
+            "evidence_focus_urgent_count": _int(ops.get("evidence_focus_urgent_count")),
+            "evidence_focus_primary_market": str(ops.get("evidence_focus_primary_market") or ""),
+            "evidence_focus_primary_action": str(ops.get("evidence_focus_primary_action") or ""),
         },
         "rows": alert_rows,
     }

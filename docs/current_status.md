@@ -102,6 +102,7 @@
 - `docs/change_archive_2026-05-01_evidence_focus_summary.md`
 - `docs/change_archive_2026-05-01_evidence_focus_v2_primary_summary.md`
 - `docs/change_archive_2026-05-01_evidence_focus_ops_health.md`
+- `docs/change_archive_2026-05-01_evidence_focus_ops_v2_metrics.md`
 
 ### 已合入的最近一轮关键建设
 
@@ -158,6 +159,7 @@
 - **dashboard 已新增只读 `evidence_focus_summary`，把 evidence 优先队列压缩成主市场、主动作、依据、urgent 计数和可读摘要，供 simple/advanced/review 消费**
 - **dashboard v2 `Evidence Focus Actions` block 已对齐 `evidence_focus_summary`，直接暴露 primary market/action/basis/read_only，并把 summary/actions 拆成结构化 rows**
 - **dashboard ops overview 已纳入 urgent evidence focus：gate/signal/缺 evidence 等紧急项会进入顶部 WARN，样本收集只显示继续收集、不触发告警**
+- **dashboard v2 `Ops Health` block 已补 evidence focus metrics，可直接显示 evidence focus count、urgent count、primary market/action**
 
 ---
 
