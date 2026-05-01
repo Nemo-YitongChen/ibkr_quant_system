@@ -72,6 +72,18 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
                 "priority_order": 60,
             },
         ],
+        "evidence_focus_summary": {
+            "status": "warn",
+            "summary_text": "US: Review gate thresholds; basis=Blocked outperformed allowed; urgent=2/3.",
+            "primary_market": "US",
+            "primary_action": "review_gate_thresholds",
+            "primary_action_label": "Review gate thresholds",
+            "primary_basis": "Blocked outperformed allowed",
+            "primary_detail": "Review edge floor and buffers.",
+            "focus_action_count": 3,
+            "urgent_action_count": 2,
+            "read_only": True,
+        },
         "unified_evidence_overview": {
             "row_count": 3,
             "allowed_row_count": 1,
@@ -120,7 +132,12 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
     assert by_id["evidence_focus_actions"]["metrics"]["gate_review_count"] == 1
     assert by_id["evidence_focus_actions"]["metrics"]["missing_evidence_count"] == 1
     assert by_id["evidence_focus_actions"]["metrics"]["sample_collection_count"] == 1
-    assert by_id["evidence_focus_actions"]["rows"][0]["market"] == "US"
+    assert by_id["evidence_focus_actions"]["metrics"]["primary_market"] == "US"
+    assert by_id["evidence_focus_actions"]["metrics"]["primary_action"] == "review_gate_thresholds"
+    assert by_id["evidence_focus_actions"]["metrics"]["read_only"] is True
+    assert by_id["evidence_focus_actions"]["rows"]["summary"]["primary_market"] == "US"
+    assert by_id["evidence_focus_actions"]["rows"]["actions"][0]["market"] == "US"
+    assert "US: Review gate thresholds" in by_id["evidence_focus_actions"]["summary"]
     assert by_id["evidence_quality"]["metrics"]["evidence_row_count"] == 3
     assert by_id["evidence_quality"]["metrics"]["candidate_only_row_count"] == 1
     assert by_id["evidence_quality"]["metrics"]["outcome_labeled_row_count"] == 2
@@ -249,3 +266,6 @@ def test_evidence_focus_actions_block_keeps_sample_collection_non_warning():
     assert block["metrics"]["focus_action_count"] == 1
     assert block["metrics"]["urgent_action_count"] == 0
     assert block["metrics"]["sample_collection_count"] == 1
+    assert block["metrics"]["primary_market"] == "HK"
+    assert block["rows"]["summary"]["primary_action"] == "collect_more_outcome_samples"
+    assert block["rows"]["actions"][0]["market"] == "HK"

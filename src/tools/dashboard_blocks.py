@@ -278,22 +278,35 @@ def build_market_views_block(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 def build_evidence_focus_actions_block(payload: Dict[str, Any]) -> Dict[str, Any]:
     rows = _rows(payload.get("evidence_focus_actions"), limit=20)
+    summary = _dict(payload.get("evidence_focus_summary"))
+    primary = rows[0] if rows else {}
     gate_review_count = sum(1 for row in rows if str(row.get("primary_action") or "") == "review_gate_thresholds")
     signal_review_count = sum(1 for row in rows if str(row.get("primary_action") or "") == "review_signal_expected_edge")
     missing_evidence_count = sum(1 for row in rows if str(row.get("primary_action") or "") == "build_weekly_unified_evidence")
     hold_review_count = sum(1 for row in rows if str(row.get("primary_action") or "") == "hold_parameters_collect_more_evidence")
     sample_collection_count = sum(1 for row in rows if str(row.get("primary_action") or "") == "collect_more_outcome_samples")
     urgent_count = sum(1 for row in rows if _int(row.get("priority_order")) < 60)
+    primary_market = str(summary.get("primary_market") or primary.get("market") or "")
+    primary_action = str(summary.get("primary_action") or primary.get("primary_action") or "")
+    primary_action_label = str(summary.get("primary_action_label") or primary.get("action") or "")
+    primary_basis = str(summary.get("primary_basis") or primary.get("basis") or "")
+    primary_detail = str(summary.get("primary_detail") or primary.get("detail") or "")
+    summary_text = str(summary.get("summary_text") or "").strip() or (
+        f"actions={len(rows)} urgent={urgent_count} "
+        f"gate={gate_review_count} signal={signal_review_count} "
+        f"missing_evidence={missing_evidence_count} sample_collection={sample_collection_count}"
+    )
+    status = str(summary.get("status") or "").strip().lower() or ("warn" if urgent_count else "ok")
     return {
         "id": "evidence_focus_actions",
         "title": "Evidence Focus Actions",
-        "status": "warn" if urgent_count else "ok",
-        "summary": (
-            f"actions={len(rows)} urgent={urgent_count} "
-            f"gate={gate_review_count} signal={signal_review_count} "
-            f"missing_evidence={missing_evidence_count} sample_collection={sample_collection_count}"
-        ),
+        "status": status,
+        "summary": summary_text,
         "metrics": {
+            "primary_market": primary_market,
+            "primary_action": primary_action,
+            "primary_action_label": primary_action_label,
+            "primary_basis": primary_basis,
             "focus_action_count": len(rows),
             "urgent_action_count": urgent_count,
             "gate_review_count": gate_review_count,
@@ -301,8 +314,20 @@ def build_evidence_focus_actions_block(payload: Dict[str, Any]) -> Dict[str, Any
             "missing_evidence_count": missing_evidence_count,
             "hold_review_count": hold_review_count,
             "sample_collection_count": sample_collection_count,
+            "read_only": bool(summary.get("read_only", True)),
         },
-        "rows": rows,
+        "rows": {
+            "summary": {
+                "primary_market": primary_market,
+                "primary_action": primary_action,
+                "primary_action_label": primary_action_label,
+                "primary_basis": primary_basis,
+                "primary_detail": primary_detail,
+                "summary_text": summary_text,
+                "read_only": bool(summary.get("read_only", True)),
+            },
+            "actions": rows,
+        },
     }
 
 
