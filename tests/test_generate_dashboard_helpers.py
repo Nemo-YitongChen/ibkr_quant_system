@@ -626,12 +626,17 @@ def test_simple_ops_overview_rows_include_status_rollout_counts() -> None:
             "data_attention_count": 0,
             "data_research_fallback_count": 1,
             "execution_mode_mismatch_count": 0,
+            "evidence_focus_action_count": 2,
+            "evidence_focus_urgent_count": 1,
+            "evidence_focus_primary_market": "HK",
+            "evidence_focus_primary_action": "Review gate thresholds",
             "control_service_status": "configured",
         }
     )
     assert any(row[0] == "市场状态缺口" and "2" in row[1] for row in rows)
     assert any(row[0] == "市场数据健康" and "研究Fallback" in row[1] for row in rows)
     assert any(row[0] == "量化客户端" and "量化客户端空闲" in row[1] for row in rows)
+    assert any(row[0] == "Evidence复核" and "HK Review gate thresholds" in row[1] for row in rows)
 
 
 def test_build_ops_overview_surfaces_artifact_and_governance_alerts() -> None:
@@ -668,6 +673,66 @@ def test_build_ops_overview_surfaces_artifact_and_governance_alerts() -> None:
     assert categories["GOVERNANCE"]["status"] == "WARN"
     assert categories["GOVERNANCE"]["alert_class"] == "governance"
     assert "pending governance" in categories["GOVERNANCE"]["detail"]
+
+
+def test_build_ops_overview_surfaces_urgent_evidence_focus_alert() -> None:
+    overview = _build_ops_overview(
+        [],
+        preflight_summary={"pass_count": 1, "warn_count": 0, "fail_count": 0, "checks": []},
+        control_payload={"service": {"status": "configured"}, "actions": {}},
+        execution_mode_summary={"mismatch_count": 0},
+        status_rollout_summary={
+            "market_state_missing_count": 0,
+            "data_attention_count": 0,
+            "data_research_fallback_count": 0,
+            "market_rows": [],
+        },
+        artifact_health_summary={"warning_count": 0, "degraded_count": 0},
+        governance_health_summary={"status": "ready"},
+        evidence_focus_summary={
+            "summary_text": "HK: Review gate thresholds; basis=Blocked outperformed allowed; urgent=1/2.",
+            "primary_market": "HK",
+            "primary_action_label": "Review gate thresholds",
+            "focus_action_count": 2,
+            "urgent_action_count": 1,
+        },
+    )
+
+    categories = {row["category"]: row for row in overview["alert_rows"]}
+    assert overview["evidence_focus_urgent_count"] == 1
+    assert overview["evidence_focus_primary_market"] == "HK"
+    assert categories["EVIDENCE"]["status"] == "WARN"
+    assert categories["EVIDENCE"]["alert_class"] == "evidence"
+    assert "Review gate thresholds" in categories["EVIDENCE"]["detail"]
+    assert overview["alert_class_counts"]["evidence"] == 1
+
+
+def test_build_ops_overview_keeps_sample_only_evidence_non_alerting() -> None:
+    overview = _build_ops_overview(
+        [],
+        preflight_summary={"pass_count": 1, "warn_count": 0, "fail_count": 0, "checks": []},
+        control_payload={"service": {"status": "configured"}, "actions": {}},
+        execution_mode_summary={"mismatch_count": 0},
+        status_rollout_summary={
+            "market_state_missing_count": 0,
+            "data_attention_count": 0,
+            "data_research_fallback_count": 0,
+            "market_rows": [],
+        },
+        artifact_health_summary={"warning_count": 0, "degraded_count": 0},
+        governance_health_summary={"status": "ready"},
+        evidence_focus_summary={
+            "summary_text": "HK: Collect more outcome samples; urgent=0/1.",
+            "primary_market": "HK",
+            "primary_action_label": "Collect more outcome samples",
+            "focus_action_count": 1,
+            "urgent_action_count": 0,
+        },
+    )
+
+    assert overview["evidence_focus_action_count"] == 1
+    assert overview["evidence_focus_urgent_count"] == 0
+    assert all(row["category"] != "EVIDENCE" for row in overview["alert_rows"])
 
 
 def test_build_ops_overview_classifies_preflight_gateway_port_alerts() -> None:

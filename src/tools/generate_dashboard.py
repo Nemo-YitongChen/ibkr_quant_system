@@ -5644,6 +5644,7 @@ def _build_ops_overview(
     status_rollout_summary: Dict[str, Any],
     artifact_health_summary: Dict[str, Any],
     governance_health_summary: Dict[str, Any],
+    evidence_focus_summary: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     # 运维总览只聚合“现在最值得先处理”的信号：preflight、报告新鲜度、组合健康度和执行模式偏差。
     checks = [dict(row) for row in list(preflight_summary.get("checks", []) or []) if isinstance(row, dict)]
@@ -5667,6 +5668,12 @@ def _build_ops_overview(
     artifact_warning_count = int(artifact_health_summary.get("warning_count", 0) or 0)
     artifact_degraded_count = int(artifact_health_summary.get("degraded_count", 0) or 0)
     governance_status = str(governance_health_summary.get("status", "ready") or "ready").strip().lower()
+    evidence_focus = dict(evidence_focus_summary or {})
+    evidence_focus_action_count = int(evidence_focus.get("focus_action_count", 0) or 0)
+    evidence_focus_urgent_count = int(evidence_focus.get("urgent_action_count", 0) or 0)
+    evidence_focus_primary_market = str(evidence_focus.get("primary_market", "") or "")
+    evidence_focus_primary_action = str(evidence_focus.get("primary_action_label", "") or "")
+    evidence_focus_summary_text = str(evidence_focus.get("summary_text", "") or "")
     gateway_runtime_summary = _build_gateway_runtime_summary(preflight_summary, control_payload)
     alert_rows: List[Dict[str, Any]] = []
     for row in warning_rows[:8]:
@@ -5722,6 +5729,16 @@ def _build_ops_overview(
             _build_artifact_governance_alert_rows(artifact_health_summary, governance_health_summary)
         )
     )
+    if evidence_focus_urgent_count > 0:
+        alert_rows.append(
+            _ops_alert_row(
+                "EVIDENCE",
+                evidence_focus_primary_market or "evidence_focus",
+                "WARN",
+                evidence_focus_summary_text
+                or f"urgent_evidence_focus={evidence_focus_urgent_count}",
+            )
+        )
     alert_class_counts: Dict[str, int] = {}
     alert_severity_counts: Dict[str, int] = {"fail": 0, "warn": 0, "ok": 0}
     for row in alert_rows:
@@ -5765,6 +5782,7 @@ def _build_ops_overview(
         f"artifact_warning={artifact_warning_count} | "
         f"artifact_degraded={artifact_degraded_count} | "
         f"data_attention={data_attention_count} | "
+        f"evidence_urgent={evidence_focus_urgent_count} | "
         f"mode_mismatch={execution_mismatch_count} | "
         f"gateway_runtime={gateway_runtime_summary.get('status', 'unknown')} | "
         f"governance={governance_status} | "
@@ -5789,6 +5807,11 @@ def _build_ops_overview(
         "governance_status": governance_status,
         "governance_status_label": str(governance_health_summary.get("status_label", "") or "已就绪"),
         "governance_summary_text": str(governance_health_summary.get("summary_text", "") or "-"),
+        "evidence_focus_action_count": evidence_focus_action_count,
+        "evidence_focus_urgent_count": evidence_focus_urgent_count,
+        "evidence_focus_primary_market": evidence_focus_primary_market,
+        "evidence_focus_primary_action": evidence_focus_primary_action,
+        "evidence_focus_summary_text": evidence_focus_summary_text,
         "control_service_status": str(service_state.get("status", "disabled") or "disabled"),
         "gateway_runtime_summary": gateway_runtime_summary,
         "gateway_runtime_status": str(gateway_runtime_summary.get("status", "") or ""),
@@ -7501,6 +7524,7 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
         status_rollout_summary=dashboard_status_rollout_summary,
         artifact_health_summary=artifact_health_overview,
         governance_health_summary=governance_health_summary,
+        evidence_focus_summary=evidence_focus_summary,
     )
     gateway_runtime_summary = dict(ops_overview.get("gateway_runtime_summary", {}) or {})
     for card in list(trade_cards) + list(dry_run_cards):
@@ -7671,6 +7695,20 @@ def _simple_ops_overview_rows(ops_overview: Dict[str, Any]) -> List[List[str]]:
     else:
         data_health_label = "已就绪 | 0"
 
+    evidence_focus_action_count = int(ops_overview.get("evidence_focus_action_count", 0) or 0)
+    evidence_focus_urgent_count = int(ops_overview.get("evidence_focus_urgent_count", 0) or 0)
+    evidence_primary_market = str(ops_overview.get("evidence_focus_primary_market", "") or "")
+    evidence_primary_action = str(ops_overview.get("evidence_focus_primary_action", "") or "")
+    if evidence_focus_urgent_count > 0:
+        evidence_focus_label = (
+            f"需处理 | {evidence_primary_market or '-'} "
+            f"{evidence_primary_action or ''}".strip()
+        )
+    elif evidence_focus_action_count > 0:
+        evidence_focus_label = f"继续收集 | {evidence_focus_action_count}"
+    else:
+        evidence_focus_label = "已就绪 | 0"
+
     return [
         [
             "Preflight",
@@ -7717,6 +7755,10 @@ def _simple_ops_overview_rows(ops_overview: Dict[str, Any]) -> List[List[str]]:
         [
             "治理健康",
             str(ops_overview.get("governance_status_label", "") or "已就绪"),
+        ],
+        [
+            "Evidence复核",
+            evidence_focus_label,
         ],
         [
             "执行模式偏差",
