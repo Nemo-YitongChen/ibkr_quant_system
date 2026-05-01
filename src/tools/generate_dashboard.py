@@ -5276,6 +5276,48 @@ def _build_evidence_focus_actions(
     return rows[:limit_int] if limit_int else []
 
 
+def _build_evidence_focus_summary(evidence_focus_actions: List[Dict[str, Any]]) -> Dict[str, Any]:
+    rows = [dict(row) for row in list(evidence_focus_actions or []) if isinstance(row, dict)]
+    urgent_count = sum(1 for row in rows if int(_safe_float(row.get("priority_order"), 99.0)) < 60)
+    sample_collection_count = sum(
+        1 for row in rows if str(row.get("primary_action") or "") == "collect_more_outcome_samples"
+    )
+    gate_review_count = sum(1 for row in rows if str(row.get("primary_action") or "") == "review_gate_thresholds")
+    signal_review_count = sum(1 for row in rows if str(row.get("primary_action") or "") == "review_signal_expected_edge")
+    missing_evidence_count = sum(
+        1 for row in rows if str(row.get("primary_action") or "") == "build_weekly_unified_evidence"
+    )
+    primary = rows[0] if rows else {}
+    primary_action = str(primary.get("primary_action") or "")
+    primary_label = str(primary.get("action") or "")
+    primary_market = str(primary.get("market") or "")
+    primary_basis = str(primary.get("basis") or "")
+    primary_detail = str(primary.get("detail") or "")
+    if not rows:
+        summary_text = "No actionable evidence focus work."
+    else:
+        summary_text = (
+            f"{primary_market or '-'}: {primary_label or primary_action or '-'}; "
+            f"basis={primary_basis or '-'}; urgent={urgent_count}/{len(rows)}."
+        )
+    return {
+        "status": "warn" if urgent_count else "ok",
+        "summary_text": summary_text,
+        "primary_market": primary_market,
+        "primary_action": primary_action,
+        "primary_action_label": primary_label,
+        "primary_basis": primary_basis,
+        "primary_detail": primary_detail,
+        "focus_action_count": len(rows),
+        "urgent_action_count": urgent_count,
+        "gate_review_count": gate_review_count,
+        "signal_review_count": signal_review_count,
+        "missing_evidence_count": missing_evidence_count,
+        "sample_collection_count": sample_collection_count,
+        "read_only": True,
+    }
+
+
 def _build_runtime_status(cards: List[Dict[str, Any]]) -> Dict[str, Any]:
     account_ids = sorted({str(card.get("account_id", "") or "").strip() for card in cards if str(card.get("account_id", "") or "").strip()})
     account_modes = sorted({str(card.get("account_mode", "") or "").strip() for card in cards if str(card.get("account_mode", "") or "").strip()})
@@ -7422,6 +7464,8 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
             market_views[market]["evidence_basis_label"] = str(summary.get("basis_label") or "")
             market_views[market]["evidence_rationale"] = str(summary.get("rationale") or "")
             market_views[market]["evidence_row_count"] = int(summary.get("evidence_row_count") or 0)
+    evidence_focus_actions = _build_evidence_focus_actions(market_evidence_action_summary)
+    evidence_focus_summary = _build_evidence_focus_summary(evidence_focus_actions)
     dashboard_status_rollout_summary = _build_dashboard_status_rollout_summary(trade_cards)
     trade_execution_mode_recommendation_overview = _build_execution_mode_recommendation_overview(trade_cards)
     trade_execution_mode_recommendation_summary = _build_execution_mode_recommendation_summary(trade_execution_mode_recommendation_overview)
@@ -7523,7 +7567,8 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
         "ops_health_rows": _build_health_overview(trade_cards),
         "stock_list_groups": stock_list_groups,
         "focus_actions": _build_focus_actions(trade_cards),
-        "evidence_focus_actions": _build_evidence_focus_actions(market_evidence_action_summary),
+        "evidence_focus_actions": evidence_focus_actions,
+        "evidence_focus_summary": evidence_focus_summary,
         "market_views": market_views,
         "cards": cards,
         "trade_cards": trade_cards,
@@ -8310,6 +8355,8 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
         for row in list(payload.get("evidence_focus_actions", []) or [])
         if isinstance(row, dict)
     ]
+    evidence_focus_summary = dict(payload.get("evidence_focus_summary", {}) or {})
+    evidence_focus_summary_text = str(evidence_focus_summary.get("summary_text") or "").strip()
     runtime_status = dict(payload.get("runtime_status", {}) or {})
     ops_overview = dict(payload.get("ops_overview", {}) or {})
     dashboard_control = dict(payload.get("dashboard_control", {}) or {})
@@ -8419,6 +8466,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     evidence_action_rows = [
         ["当前建议", str(evidence_action_summary.get("action_label") or "-")],
         ["建议说明", str(evidence_action_summary.get("action_note") or "-")],
+        ["优先队列", evidence_focus_summary_text or "-"],
         ["样本状态", (
             f"evidence={int(evidence_action_summary.get('evidence_row_count', 0) or 0)} / "
             f"blocked_reviews={int(evidence_action_summary.get('blocked_review_count', 0) or 0)} / "
@@ -9944,6 +9992,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
       {_render_table(["市场", "股票池", "动作", "说明"], simple_focus_rows) if simple_focus_rows else '<div class="empty">当前没有高优先级动作。</div>'}
       </div>
       <div class="simple-only" data-simple-section="evidence-focus-actions">
+      <div class="meta">{html.escape(evidence_focus_summary_text or '当前没有需要优先处理的 evidence action。')}</div>
       {_render_table(["市场", "Evidence动作", "依据", "优先级", "说明"], simple_evidence_focus_rows) if simple_evidence_focus_rows else '<div class="empty">当前没有需要优先处理的 evidence action。</div>'}
       </div>
       <div class="advanced-only">

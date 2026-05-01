@@ -5,6 +5,7 @@ import json
 from src.tools.generate_dashboard import (
     _build_dashboard_status_rollout_summary,
     _build_evidence_focus_actions,
+    _build_evidence_focus_summary,
     _build_health_overview,
     _build_market_data_health_overview,
     _build_gateway_runtime_summary,
@@ -248,6 +249,48 @@ def test_build_evidence_focus_actions_skips_monitor_only_markets() -> None:
 
     assert rows == []
     assert _build_evidence_focus_actions("legacy bad payload") == []
+
+
+def test_build_evidence_focus_summary_uses_top_ranked_action() -> None:
+    summary = _build_evidence_focus_summary(
+        [
+            {
+                "market": "HK",
+                "primary_action": "review_gate_thresholds",
+                "action": "Review gate thresholds",
+                "basis": "Blocked outperformed allowed",
+                "detail": "Review edge floor and buffers.",
+                "priority_order": 10,
+                "evidence_row_count": 12,
+            },
+            {
+                "market": "US",
+                "primary_action": "collect_more_outcome_samples",
+                "action": "Collect more outcome samples",
+                "basis": "Insufficient blocked-vs-allowed sample",
+                "priority_order": 60,
+            },
+        ]
+    )
+
+    assert summary["status"] == "warn"
+    assert summary["primary_market"] == "HK"
+    assert summary["primary_action"] == "review_gate_thresholds"
+    assert summary["focus_action_count"] == 2
+    assert summary["urgent_action_count"] == 1
+    assert summary["gate_review_count"] == 1
+    assert summary["sample_collection_count"] == 1
+    assert summary["read_only"] is True
+    assert "HK: Review gate thresholds" in summary["summary_text"]
+
+
+def test_build_evidence_focus_summary_handles_empty_input() -> None:
+    summary = _build_evidence_focus_summary([])
+
+    assert summary["status"] == "ok"
+    assert summary["primary_action"] == ""
+    assert summary["focus_action_count"] == 0
+    assert summary["summary_text"] == "No actionable evidence focus work."
 
 
 def test_simple_gateway_connected_treats_limited_permissions_as_connected() -> None:
