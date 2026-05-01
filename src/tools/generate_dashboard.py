@@ -7361,7 +7361,10 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
     )
     for market, summary in market_evidence_action_summary.items():
         if market in market_views:
+            market_views[market]["evidence_primary_action"] = str(summary.get("primary_action") or "")
+            market_views[market]["evidence_decision_basis"] = str(summary.get("decision_basis") or "")
             market_views[market]["evidence_action_label"] = str(summary.get("action_label") or "")
+            market_views[market]["evidence_action_note"] = str(summary.get("action_note") or "")
             market_views[market]["evidence_basis_label"] = str(summary.get("basis_label") or "")
             market_views[market]["evidence_rationale"] = str(summary.get("rationale") or "")
             market_views[market]["evidence_row_count"] = int(summary.get("evidence_row_count") or 0)
@@ -7878,6 +7881,38 @@ def _simple_weekly_strategy_context_rows(card: Dict[str, Any]) -> List[List[str]
     return rows
 
 
+def _simple_market_evidence_action_rows(
+    market_views: Dict[str, Any],
+    market_evidence_action_summary: Dict[str, Any] | None = None,
+) -> List[List[str]]:
+    summaries = dict(market_evidence_action_summary or {})
+    rows: List[List[str]] = []
+    for market_key, raw_row in sorted(dict(market_views or {}).items(), key=lambda part: str(part[0])):
+        if not isinstance(raw_row, dict):
+            continue
+        row = dict(raw_row)
+        market = str(row.get("market") or market_key or "").strip().upper() or "UNKNOWN"
+        raw_summary = summaries.get(market)
+        summary = dict(raw_summary) if isinstance(raw_summary, dict) else {}
+        action_label = str(summary.get("action_label") or row.get("evidence_action_label") or "").strip()
+        basis_label = str(summary.get("basis_label") or row.get("evidence_basis_label") or "").strip()
+        evidence_rows = int(_safe_float(summary.get("evidence_row_count", row.get("evidence_row_count")), 0.0))
+        rationale = str(summary.get("rationale") or row.get("evidence_rationale") or "").strip()
+        action_note = str(summary.get("action_note") or row.get("evidence_action_note") or "").strip()
+        if not any([action_label, basis_label, rationale, action_note, evidence_rows]):
+            continue
+        rows.append(
+            [
+                market,
+                action_label or "-",
+                basis_label or "-",
+                f"rows={evidence_rows}",
+                _short_summary_text(action_note or rationale or "-", max_len=132),
+            ]
+        )
+    return rows
+
+
 def _simple_market_structure_rows(card: Dict[str, Any]) -> List[List[str]]:
     summary = dict(card.get("market_structure_summary", {}) or {})
     profile_summary = dict(card.get("account_profile_summary", {}) or {})
@@ -8021,6 +8056,10 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
         ]
         for row in list(payload.get("overview", []) or [])
     ]
+    simple_market_evidence_rows = _simple_market_evidence_action_rows(
+        dict(payload.get("market_views", {}) or {}),
+        dict(payload.get("market_evidence_action_summary", {}) or {}),
+    )
     health_overview = list(payload.get("health_overview", []) or [])
     health_summary_text = _simple_gateway_health_text(health_overview)
     health_rows = [
@@ -9849,6 +9888,9 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
       <h2>市场总览</h2>
       <div class="simple-only" data-simple-section="market-overview">
       {_render_table(["市场", "股票池", "市场状态", "报告状态", "运维状态", "数据状态", "说明"], simple_overview_rows)}
+      </div>
+      <div class="simple-only" data-simple-section="market-evidence-actions">
+      {_render_table(["市场", "Evidence下一步", "依据", "样本", "说明"], simple_market_evidence_rows) if simple_market_evidence_rows else '<div class="empty">当前没有市场级 evidence action。</div>'}
       </div>
       <div class="advanced-only">
       {_render_table(["市场", "股票池", "模式", "是否开市", "优先级", "建议动作", "说明", "账户权益", "账户现金", "Gateway", "可立即入场", "继续等待", "执行中订单"], overview_rows)}

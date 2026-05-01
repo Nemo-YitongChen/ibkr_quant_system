@@ -17,6 +17,7 @@ from src.tools.generate_dashboard import (
     _load_weekly_unified_evidence_rows,
     _simple_gateway_is_connected,
     _simple_gateway_runtime_text,
+    _simple_market_evidence_action_rows,
     _simple_next_step_text,
     _simple_ops_overview_rows,
     _simple_weekly_strategy_context_rows,
@@ -353,6 +354,61 @@ def test_simple_weekly_strategy_context_rows_include_evidence_action() -> None:
         "Insufficient blocked-vs-allowed sample: evidence_rows=8, blocked_reviews=2, ready=0, insufficient=2.",
     ] in rows
     assert ["Evidence样本", "rows=8 / blocked_reviews=2 / ready=0 / insufficient=2"] in rows
+
+
+def test_simple_market_evidence_action_rows_use_market_summary() -> None:
+    rows = _simple_market_evidence_action_rows(
+        {
+            "US": {
+                "market": "US",
+                "evidence_action_label": "Monitor evidence",
+                "evidence_row_count": 2,
+            },
+        },
+        {
+            "US": {
+                "action_label": "Review gate thresholds",
+                "basis_label": "Blocked outperformed allowed",
+                "action_note": "Blocked rows outperformed allowed rows.",
+                "evidence_row_count": 8,
+            },
+        },
+    )
+
+    assert rows == [
+        [
+            "US",
+            "Review gate thresholds",
+            "Blocked outperformed allowed",
+            "rows=8",
+            "Blocked rows outperformed allowed rows.",
+        ]
+    ]
+
+
+def test_simple_market_evidence_action_rows_fallback_to_market_views() -> None:
+    rows = _simple_market_evidence_action_rows(
+        {
+            "HK": {
+                "market": "HK",
+                "evidence_action_label": "Collect more outcome samples",
+                "evidence_basis_label": "Insufficient blocked-vs-allowed sample",
+                "evidence_rationale": "Evidence sample is not ready yet.",
+                "evidence_row_count": 3,
+            },
+            "bad": "legacy malformed row",
+        }
+    )
+
+    assert rows == [
+        [
+            "HK",
+            "Collect more outcome samples",
+            "Insufficient blocked-vs-allowed sample",
+            "rows=3",
+            "Evidence sample is not ready yet.",
+        ]
+    ]
 
 
 def test_build_health_overview_prefers_degraded_and_merges_summary() -> None:
