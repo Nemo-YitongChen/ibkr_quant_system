@@ -153,6 +153,103 @@ def test_dashboard_degraded_inputs_supports_legacy_weekly_review_fallback(tmp_pa
     assert any("partial compatibility" in warning for warning in governance_row["warnings"])
 
 
+def test_dashboard_degraded_inputs_surfaces_weekly_quality_review_fallbacks(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "supervisor.yaml"
+    summary_dir = tmp_path / "reports_supervisor"
+    weekly_dir = tmp_path / "reports_investment_weekly"
+    preflight_dir = tmp_path / "reports_preflight"
+    report_root = tmp_path / "reports_investment"
+    report_dir = report_root / "watchlist"
+    _write_base_report_files(report_dir)
+    (report_dir / "investment_execution_summary.json").write_text(
+        json.dumps(
+            {
+                "generated_at": "2026-04-30T10:00:00+00:00",
+                "schema_version": "2026Q2.p0.v1",
+                "portfolio_id": "US:watchlist",
+                "market": "US",
+                "order_count": 1,
+                "blocked_order_count": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    weekly_dir.mkdir(parents=True, exist_ok=True)
+    preflight_dir.mkdir(parents=True, exist_ok=True)
+    (weekly_dir / "weekly_review_summary.json").write_text(
+        json.dumps(
+            {
+                "generated_at": "2026-04-30T10:00:00+00:00",
+                "schema_version": "2026Q2.p0.v1",
+                "window_start": "2026-04-24",
+                "window_end": "2026-04-30",
+                "portfolio_count": 1,
+                "trading_quality_evidence": [
+                    {
+                        "portfolio_id": "US:watchlist",
+                        "market": "US",
+                        "evidence_layer": "EDGE_GATE",
+                        "sample_count": 3,
+                    }
+                ],
+                "candidate_model_review": [
+                    {
+                        "portfolio_id": "US:watchlist",
+                        "market": "US",
+                        "review_label": "SIGNAL_RANKING_WORKING",
+                    }
+                ],
+                "attribution_summary": [
+                    {"portfolio_id": "US:watchlist", "market": "US", "weekly_return": 0.01}
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (weekly_dir / "weekly_execution_summary.csv").write_text(
+        "portfolio_id,market,execution_runs,submitted_order_rows\nUS:watchlist,US,1,1\n",
+        encoding="utf-8",
+    )
+    (weekly_dir / "weekly_risk_review_summary.csv").write_text(
+        "portfolio_id,market\nUS:watchlist,US\n",
+        encoding="utf-8",
+    )
+    (weekly_dir / "weekly_patch_governance_summary.csv").write_text(
+        "market,field,latest_status_label\nUS,min_expected_edge_bps,已批准\n",
+        encoding="utf-8",
+    )
+    (preflight_dir / "supervisor_preflight_summary.json").write_text(
+        json.dumps(
+            {
+                "generated_at": "2026-04-30T10:00:00+00:00",
+                "schema_version": "2026Q2.p0.v1",
+                "pass_count": 3,
+                "warn_count": 0,
+                "fail_count": 0,
+                "checks": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    _write_config(cfg_path, summary_dir=summary_dir, report_root=report_root, weekly_dir=weekly_dir, preflight_dir=preflight_dir)
+
+    payload = build_dashboard(str(cfg_path), str(summary_dir))
+    write_dashboard(payload, str(summary_dir))
+    rows = {row["artifact_key"]: row for row in payload["artifact_health_overview"]["rows"]}
+    html_text = (summary_dir / "dashboard.html").read_text(encoding="utf-8")
+
+    assert rows["weekly_trading_quality_evidence"]["source"] == "fallback:trading_quality_evidence"
+    assert rows["weekly_candidate_model_review"]["source"] == "fallback:candidate_model_review"
+    assert rows["weekly_attribution_summary"]["source"] == "fallback:attribution_summary"
+    assert rows["weekly_trading_quality_evidence"]["summary"] == "兼容模式读取"
+    assert rows["weekly_candidate_model_review"]["status"] == "warning"
+    assert rows["weekly_attribution_summary"]["row_count"] == 1
+    assert payload["artifact_health_overview"]["compatibility_warning_count"] >= 3
+    assert "Weekly Trading Quality Evidence" in html_text
+    assert "Weekly Candidate Model Review" in html_text
+    assert "Weekly Attribution Summary" in html_text
+
+
 def test_dashboard_degraded_inputs_surfaces_reconcile_contract_health(tmp_path: Path) -> None:
     cfg_path = tmp_path / "supervisor.yaml"
     summary_dir = tmp_path / "reports_supervisor"

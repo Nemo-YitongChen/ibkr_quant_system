@@ -160,6 +160,7 @@
 - **dashboard v2 `Evidence Focus Actions` block 已对齐 `evidence_focus_summary`，直接暴露 primary market/action/basis/read_only，并把 summary/actions 拆成结构化 rows**
 - **dashboard ops overview 已纳入 urgent evidence focus：gate/signal/缺 evidence 等紧急项会进入顶部 WARN，样本收集只显示继续收集、不触发告警**
 - **dashboard v2 `Ops Health` block 已补 evidence focus metrics，可直接显示 evidence focus count、urgent count、primary market/action**
+- **artifact health registry 已继续扩展到 trading quality evidence、candidate model review 与 attribution summary；这些 CSV 缺失时可从 `weekly_review_summary.json` 内嵌 section 兼容读取，并在 dashboard 顶部健康汇总显示为兼容/告警状态**
 
 ---
 

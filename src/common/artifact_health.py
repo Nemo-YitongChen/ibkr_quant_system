@@ -164,8 +164,11 @@ def build_artifact_consistency_rows(rows: Iterable[Mapping[str, Any]]) -> List[D
         "weekly_execution_summary",
         "weekly_unified_evidence",
         "weekly_blocked_vs_allowed_expost",
+        "weekly_trading_quality_evidence",
+        "weekly_candidate_model_review",
         "weekly_broker_positions",
         "weekly_broker_comparison",
+        "weekly_attribution_summary",
         "weekly_risk_review_summary",
         "weekly_patch_governance_summary",
     ):
