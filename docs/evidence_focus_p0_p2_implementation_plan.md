@@ -17,8 +17,20 @@
   - `build_weekly_attribution_waterfall`
   - `build_market_views`
   - `build_unified_evidence_overview`
+- `src/common/investment_evidence.py` 已存在，并已包含 unified evidence normalization 与 blocked-vs-allowed ex-post aggregation。
+- weekly review 已能输出 `weekly_unified_evidence` 与 `weekly_blocked_vs_allowed_expost` artifacts。
 
 因此，下一阶段不再继续堆展示字段，而是把 evidence focus 从“dashboard 可见”推进到“行动闭环 + 周度回看 + 交易质量验证”。
+
+## 本 PR 已落地的代码状态
+
+本 PR 不再只是计划文档，已完成 P0-1 的第一层代码落地：
+
+- 新增 `src/common/evidence_focus_actions.py`，集中维护 evidence focus action lifecycle schema。
+- 新增稳定 `action_id`、`status`、`urgency`、`linked_evidence_artifact`、`linked_evidence_key`、`read_only` 字段。
+- `src/tools/generate_dashboard.py` 的 `_build_evidence_focus_actions()` 与 `_build_evidence_focus_summary()` 已改为薄 wrapper，委托 common 模块。
+- 现有 dashboard JSON 字段保持兼容：`market`、`action`、`primary_action`、`basis`、`detail`、`priority_order` 仍保留。
+- 新增 `tests/test_evidence_focus_actions.py` 覆盖 lifecycle normalization、action id、ex-post action 生成与 summary priority。
 
 ---
 
@@ -778,9 +790,9 @@ test(strategy): add pure signal regression coverage
 
 ## 第一批：必须先做
 
-1. `feat(review): generate unified weekly evidence artifacts`
-2. `feat(review): add blocked-vs-allowed ex-post review`
-3. `feat(evidence): add evidence focus action lifecycle model`
+1. `feat(review): generate unified weekly evidence artifacts` - 已在 main 具备基础实现。
+2. `feat(review): add blocked-vs-allowed ex-post review` - 已在 main 具备基础实现。
+3. `feat(evidence): add evidence focus action lifecycle model` - 本 PR 已完成第一层 common 模块与 dashboard 接入。
 
 ## 第二批：闭环增强
 
@@ -816,26 +828,26 @@ test(strategy): add pure signal regression coverage
 
 # 当前最小下一步
 
-下一步建议直接实现：
+本 PR 完成后，下一步建议直接实现：
 
 ```text
-feat(review): generate unified weekly evidence artifacts
+feat(dashboard): link control audit to evidence actions
 ```
 
 最小范围：
 
 ```text
-src/common/investment_evidence.py
-tests/test_investment_evidence.py
-src/tools/review_investment_weekly.py
+src/common/dashboard_control_audit.py
+src/app/supervisor.py
+src/tools/generate_dashboard.py
+tests/test_dashboard_control_audit.py
 ```
 
 最小验收：
 
 ```bash
-python -m pytest tests/test_investment_evidence.py -q
-python -m pytest tests/test_review_weekly_helpers.py -q
-python -m compileall src tests
+python -m pytest tests/test_dashboard_control_audit.py tests/test_evidence_focus_actions.py -q
+python -m py_compile src/common/dashboard_control_audit.py src/common/evidence_focus_actions.py src/app/supervisor.py src/tools/generate_dashboard.py
 ```
 
-这一步完成后，dashboard evidence focus 才有稳定底层数据，而不是继续依赖 summary-level 字段。
+这一步完成后，dashboard control action history 才能回答“哪个 evidence action 被处理、处理结果是什么”，而不仅是展示建议队列。

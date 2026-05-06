@@ -30,6 +30,10 @@ from ..common.dashboard_evidence import (
     build_weekly_attribution_waterfall as _build_weekly_attribution_waterfall_support,
 )
 from ..common.dashboard_rendering import render_dashboard_v2_blocks
+from ..common.evidence_focus_actions import (
+    build_evidence_focus_actions_from_market_summaries,
+    summarize_evidence_focus_actions,
+)
 from ..common.governance_health import build_governance_health_summary
 from ..common.market_structure import load_market_structure, market_structure_summary
 from ..common.markets import market_config_path, resolve_market_code, symbol_matches_market
@@ -5222,100 +5226,21 @@ def _build_focus_actions(cards: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return focus
 
 
-EVIDENCE_FOCUS_ACTION_PRIORITY = {
-    "review_gate_thresholds": 10,
-    "review_signal_expected_edge": 20,
-    "build_weekly_unified_evidence": 30,
-    "hold_parameters_collect_more_evidence": 40,
-    "collect_more_outcome_samples": 60,
-    "keep_gate_monitor_post_cost": 90,
-    "monitor_evidence": 99,
-}
-
-
 def _build_evidence_focus_actions(
     market_evidence_action_summary: Dict[str, Any],
     *,
+    week: str = "",
     limit: int = 5,
 ) -> List[Dict[str, Any]]:
-    summaries = dict(market_evidence_action_summary) if isinstance(market_evidence_action_summary, dict) else {}
-    rows: List[Dict[str, Any]] = []
-    for market_key, raw_summary in sorted(
-        summaries.items(),
-        key=lambda part: str(part[0]),
-    ):
-        if not isinstance(raw_summary, dict):
-            continue
-        summary = dict(raw_summary)
-        action = str(summary.get("primary_action") or "").strip()
-        priority = int(EVIDENCE_FOCUS_ACTION_PRIORITY.get(action, 99))
-        if priority >= 90:
-            continue
-        market = resolve_market_code(str(summary.get("market") or market_key or "")) or str(market_key or "").upper()
-        action_label = str(summary.get("action_label") or action or "").strip()
-        basis_label = str(summary.get("basis_label") or "").strip()
-        action_note = str(summary.get("action_note") or "").strip()
-        rationale = str(summary.get("rationale") or "").strip()
-        detail = action_note or rationale or basis_label or "-"
-        rows.append(
-            {
-                "market": market,
-                "action": action_label,
-                "primary_action": action,
-                "basis": basis_label,
-                "detail": detail,
-                "priority_order": priority,
-                "evidence_row_count": int(_safe_float(summary.get("evidence_row_count"), 0.0)),
-                "blocked_review_count": int(_safe_float(summary.get("blocked_review_count"), 0.0)),
-                "sample_ready_review_count": int(_safe_float(summary.get("sample_ready_review_count"), 0.0)),
-                "insufficient_sample_count": int(_safe_float(summary.get("insufficient_sample_count"), 0.0)),
-            }
-        )
-    rows.sort(key=lambda row: (int(row.get("priority_order", 99) or 99), str(row.get("market", ""))))
-    limit_int = max(0, int(limit))
-    return rows[:limit_int] if limit_int else []
+    return build_evidence_focus_actions_from_market_summaries(
+        market_evidence_action_summary,
+        week=week,
+        limit=limit,
+    )
 
 
 def _build_evidence_focus_summary(evidence_focus_actions: List[Dict[str, Any]]) -> Dict[str, Any]:
-    rows = [dict(row) for row in list(evidence_focus_actions or []) if isinstance(row, dict)]
-    urgent_count = sum(1 for row in rows if int(_safe_float(row.get("priority_order"), 99.0)) < 60)
-    sample_collection_count = sum(
-        1 for row in rows if str(row.get("primary_action") or "") == "collect_more_outcome_samples"
-    )
-    gate_review_count = sum(1 for row in rows if str(row.get("primary_action") or "") == "review_gate_thresholds")
-    signal_review_count = sum(1 for row in rows if str(row.get("primary_action") or "") == "review_signal_expected_edge")
-    missing_evidence_count = sum(
-        1 for row in rows if str(row.get("primary_action") or "") == "build_weekly_unified_evidence"
-    )
-    primary = rows[0] if rows else {}
-    primary_action = str(primary.get("primary_action") or "")
-    primary_label = str(primary.get("action") or "")
-    primary_market = str(primary.get("market") or "")
-    primary_basis = str(primary.get("basis") or "")
-    primary_detail = str(primary.get("detail") or "")
-    if not rows:
-        summary_text = "No actionable evidence focus work."
-    else:
-        summary_text = (
-            f"{primary_market or '-'}: {primary_label or primary_action or '-'}; "
-            f"basis={primary_basis or '-'}; urgent={urgent_count}/{len(rows)}."
-        )
-    return {
-        "status": "warn" if urgent_count else "ok",
-        "summary_text": summary_text,
-        "primary_market": primary_market,
-        "primary_action": primary_action,
-        "primary_action_label": primary_label,
-        "primary_basis": primary_basis,
-        "primary_detail": primary_detail,
-        "focus_action_count": len(rows),
-        "urgent_action_count": urgent_count,
-        "gate_review_count": gate_review_count,
-        "signal_review_count": signal_review_count,
-        "missing_evidence_count": missing_evidence_count,
-        "sample_collection_count": sample_collection_count,
-        "read_only": True,
-    }
+    return summarize_evidence_focus_actions(evidence_focus_actions)
 
 
 def _build_runtime_status(cards: List[Dict[str, Any]]) -> Dict[str, Any]:
