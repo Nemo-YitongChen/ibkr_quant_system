@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from src.common.evidence_focus_actions import (
+    ACTION_STATUS_ACKNOWLEDGED,
+    ACTION_STATUS_APPLIED,
     ACTION_STATUS_SUGGESTED,
     URGENCY_SAMPLE_COLLECTION,
     URGENCY_URGENT,
+    apply_action_resolutions,
     build_action_id,
     build_evidence_focus_actions_from_expost,
     build_evidence_focus_actions_from_market_summaries,
@@ -123,3 +126,62 @@ def test_summarize_evidence_focus_actions_prioritizes_urgent() -> None:
     assert summary["urgent_action_count"] == 1
     assert summary["sample_collection_count"] == 1
     assert summary["actions"][0]["action_id"].startswith("2026W18-US-market-review_gate_thresholds")
+
+
+def test_apply_action_resolutions_marks_dashboard_control_status() -> None:
+    actions = [
+        normalize_evidence_focus_action(
+            {
+                "week": "2026W18",
+                "market": "US",
+                "primary_action": "review_gate_thresholds",
+                "basis": "Blocked outperformed allowed",
+            }
+        )
+    ]
+    action_id = actions[0]["action_id"]
+
+    resolved = apply_action_resolutions(
+        actions,
+        [
+            {
+                "ts": "2026-05-08T09:00:00+10:00",
+                "linked_evidence_action_id": action_id,
+                "resolution_status": ACTION_STATUS_ACKNOWLEDGED,
+                "resolution_note": "operator reviewed",
+            },
+            {
+                "ts": "2026-05-08T10:00:00+10:00",
+                "linked_evidence_action_id": action_id,
+                "resolution_status": ACTION_STATUS_APPLIED,
+                "resolution_note": "paper applied",
+            },
+        ],
+    )
+
+    assert resolved[0]["status"] == ACTION_STATUS_APPLIED
+    assert resolved[0]["resolved_at"] == "2026-05-08T10:00:00+10:00"
+    assert resolved[0]["resolution_source"] == "dashboard_control"
+    assert resolved[0]["resolution_note"] == "paper applied"
+    summary = summarize_evidence_focus_actions(resolved)
+    assert summary["status"] == "ok"
+    assert summary["urgent_action_count"] == 1
+    assert summary["open_urgent_action_count"] == 0
+
+
+def test_apply_action_resolutions_ignores_unknown_status() -> None:
+    action = normalize_evidence_focus_action(
+        {
+            "week": "2026W18",
+            "market": "HK",
+            "primary_action": "review_gate_thresholds",
+            "basis": "Blocked outperformed allowed",
+        }
+    )
+
+    resolved = apply_action_resolutions(
+        [action],
+        [{"linked_evidence_action_id": action["action_id"], "resolution_status": "UNKNOWN"}],
+    )
+
+    assert resolved[0]["status"] == ACTION_STATUS_SUGGESTED

@@ -26,18 +26,26 @@
 - `src/common/investment_evidence.py` 已存在，并已有 unified evidence normalization 与 blocked-vs-allowed aggregation 基础实现。
 - weekly review 已具备输出 `weekly_unified_evidence` 与 `weekly_blocked_vs_allowed_expost` artifacts 的基础能力。
 
+本 PR 继续落地了 P0 control audit linkage：
+
+- `src/common/dashboard_control_audit.py` 已承接 control action 脱敏、错误分类、evidence action link 抽取和 linked action 汇总。
+- `supervisor.py` 在 dashboard control action audit 中保留 `linked_evidence_action_id / resolution_status / resolution_note`。
+- `generate_dashboard.py` 会用 action audit history 回填 evidence focus action lifecycle status，并把未处理 urgent action 纳入 ops health。
+- dashboard v2 `Dashboard Control Actions` block 与 advanced HTML 已展示 linked action / resolution 证据。
+
 因此，下一阶段不应再把重点放在“生成 action”本身，而应推进：
 
-1. dashboard control action 与 evidence action 的关联。
-2. evidence action 的处理结果与周度效果回看。
-3. dashboard 首页/advanced 信息架构收敛。
-4. 后续策略配置和纯函数测试债务。
+1. evidence action 的处理结果与周度效果回看。
+2. dashboard 首页/advanced 信息架构收敛。
+3. 后续策略配置和纯函数测试债务。
 
 ---
 
 # 下一步优先级
 
 ## P0：Control Audit 关联 Evidence Action
+
+状态：本 PR 已完成代码级接入；后续只需要在真实操作样本上继续观察 resolution 覆盖率。
 
 ### 目标
 

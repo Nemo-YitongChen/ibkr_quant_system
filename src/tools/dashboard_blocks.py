@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 from ..common.alert_classification import summarize_error_classes
+from ..common.dashboard_control_audit import summarize_evidence_action_audit_links
 
 
 EVIDENCE_ACTION_DETAILS = {
@@ -208,9 +209,13 @@ def build_control_actions_block(payload: Dict[str, Any]) -> Dict[str, Any]:
     control = _dict(payload.get("dashboard_control"))
     service = _dict(control.get("service"))
     actions = _dict(control.get("actions"))
-    history = list(reversed(_rows(actions.get("action_history"), limit=50)))[:20]
+    raw_history = _rows(actions.get("action_history"), limit=50)
+    history = list(reversed(raw_history))[:20]
     failed_count = sum(1 for row in history if str(row.get("status") or "").lower() == "failed")
     error_summary = summarize_error_classes(history)
+    link_summary = _dict(actions.get("evidence_action_link_summary"))
+    if not link_summary:
+        link_summary = summarize_evidence_action_audit_links(raw_history)
     return {
         "id": "dashboard_control_actions",
         "title": "Dashboard Control Actions",
@@ -219,11 +224,16 @@ def build_control_actions_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             f"service={service.get('status') or 'disabled'} "
             f"last_action={actions.get('last_action') or '-'} "
             f"failed_recent={failed_count} "
-            f"primary_error={error_summary.get('primary_error_class') or 'none'}"
+            f"primary_error={error_summary.get('primary_error_class') or 'none'} "
+            f"linked_actions={_int(link_summary.get('linked_action_history_count'))} "
+            f"last_resolution={link_summary.get('last_resolution_status') or '-'}"
         ),
         "metrics": {
             "history_count": len(history),
             "failed_count": failed_count,
+            "linked_action_history_count": _int(link_summary.get("linked_action_history_count")),
+            "last_linked_evidence_action_id": str(link_summary.get("last_linked_evidence_action_id") or ""),
+            "last_resolution_status": str(link_summary.get("last_resolution_status") or ""),
             "retryable_error_count": _int(error_summary.get("retryable_count")),
             "validation_error_count": _int(dict(error_summary.get("class_counts") or {}).get("validation")),
             "permission_error_count": _int(dict(error_summary.get("class_counts") or {}).get("permission")),
@@ -290,6 +300,7 @@ def build_evidence_focus_actions_block(payload: Dict[str, Any]) -> Dict[str, Any
     hold_review_count = sum(1 for row in rows if str(row.get("primary_action") or "") == "hold_parameters_collect_more_evidence")
     sample_collection_count = sum(1 for row in rows if str(row.get("primary_action") or "") == "collect_more_outcome_samples")
     urgent_count = sum(1 for row in rows if _int(row.get("priority_order")) < 60)
+    open_urgent_count = _int(summary.get("open_urgent_action_count", urgent_count))
     primary_market = str(summary.get("primary_market") or primary.get("market") or "")
     primary_action = str(summary.get("primary_action") or primary.get("primary_action") or "")
     primary_action_label = str(summary.get("primary_action_label") or primary.get("action") or "")
@@ -313,6 +324,7 @@ def build_evidence_focus_actions_block(payload: Dict[str, Any]) -> Dict[str, Any
             "primary_basis": primary_basis,
             "focus_action_count": len(rows),
             "urgent_action_count": urgent_count,
+            "open_urgent_action_count": open_urgent_count,
             "gate_review_count": gate_review_count,
             "signal_review_count": signal_review_count,
             "missing_evidence_count": missing_evidence_count,

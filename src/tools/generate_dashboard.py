@@ -30,7 +30,9 @@ from ..common.dashboard_evidence import (
     build_weekly_attribution_waterfall as _build_weekly_attribution_waterfall_support,
 )
 from ..common.dashboard_rendering import render_dashboard_v2_blocks
+from ..common.dashboard_control_audit import summarize_evidence_action_audit_links
 from ..common.evidence_focus_actions import (
+    apply_action_resolutions,
     build_evidence_focus_actions_from_market_summaries,
     summarize_evidence_focus_actions,
 )
@@ -5595,7 +5597,9 @@ def _build_ops_overview(
     governance_status = str(governance_health_summary.get("status", "ready") or "ready").strip().lower()
     evidence_focus = dict(evidence_focus_summary or {})
     evidence_focus_action_count = int(evidence_focus.get("focus_action_count", 0) or 0)
-    evidence_focus_urgent_count = int(evidence_focus.get("urgent_action_count", 0) or 0)
+    evidence_focus_urgent_count = int(
+        evidence_focus.get("open_urgent_action_count", evidence_focus.get("urgent_action_count", 0)) or 0
+    )
     evidence_focus_primary_market = str(evidence_focus.get("primary_market", "") or "")
     evidence_focus_primary_action = str(evidence_focus.get("primary_action_label", "") or "")
     evidence_focus_summary_text = str(evidence_focus.get("summary_text", "") or "")
@@ -7412,8 +7416,21 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
             market_views[market]["evidence_basis_label"] = str(summary.get("basis_label") or "")
             market_views[market]["evidence_rationale"] = str(summary.get("rationale") or "")
             market_views[market]["evidence_row_count"] = int(summary.get("evidence_row_count") or 0)
-    evidence_focus_actions = _build_evidence_focus_actions(market_evidence_action_summary)
+    control_action_history = [
+        dict(row)
+        for row in list(dict(dashboard_control.get("actions", {}) or {}).get("action_history", []) or [])
+        if isinstance(row, dict)
+    ]
+    evidence_focus_actions = apply_action_resolutions(
+        _build_evidence_focus_actions(market_evidence_action_summary),
+        control_action_history,
+    )
     evidence_focus_summary = _build_evidence_focus_summary(evidence_focus_actions)
+    dashboard_control_actions = dict(dashboard_control.get("actions", {}) or {})
+    dashboard_control_actions["evidence_action_link_summary"] = summarize_evidence_action_audit_links(
+        control_action_history
+    )
+    dashboard_control["actions"] = dashboard_control_actions
     dashboard_status_rollout_summary = _build_dashboard_status_rollout_summary(trade_cards)
     trade_execution_mode_recommendation_overview = _build_execution_mode_recommendation_overview(trade_cards)
     trade_execution_mode_recommendation_summary = _build_execution_mode_recommendation_summary(trade_execution_mode_recommendation_overview)
@@ -8329,6 +8346,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     dashboard_control = dict(payload.get("dashboard_control", {}) or {})
     control_service = dict(dashboard_control.get("service", {}) or {})
     control_actions = dict(dashboard_control.get("actions", {}) or {})
+    control_action_link_summary = dict(control_actions.get("evidence_action_link_summary", {}) or {})
     control_enabled = bool(control_service.get("enabled", False))
     control_url = str(control_service.get("url", "") or "")
     control_status_text = _dashboard_control_status_text(
@@ -8343,6 +8361,9 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
             _dashboard_control_action_label(str(row.get("action", "") or "")),
             str(row.get("status", "") or ""),
             str(row.get("portfolio_id", "") or "-"),
+            str(row.get("linked_evidence_action_id", "") or "-"),
+            str(row.get("resolution_status", "") or "-"),
+            _short_summary_text(str(row.get("resolution_note", "") or "-"), max_len=96),
             str(row.get("error_class", "") or "-"),
             str(row.get("error_severity", "") or "-"),
             str(row.get("detail", "") or "-"),
@@ -8434,6 +8455,20 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
         ["当前建议", str(evidence_action_summary.get("action_label") or "-")],
         ["建议说明", str(evidence_action_summary.get("action_note") or "-")],
         ["优先队列", evidence_focus_summary_text or "-"],
+        [
+            "打开的 urgent actions",
+            str(
+                int(
+                    evidence_focus_summary.get(
+                        "open_urgent_action_count",
+                        evidence_focus_summary.get("urgent_action_count", 0),
+                    )
+                    or 0
+                )
+            ),
+        ],
+        ["最近审计链接", str(control_action_link_summary.get("last_linked_evidence_action_id") or "-")],
+        ["最近处理状态", str(control_action_link_summary.get("last_resolution_status") or "-")],
         ["样本状态", (
             f"evidence={int(evidence_action_summary.get('evidence_row_count', 0) or 0)} / "
             f"blocked_reviews={int(evidence_action_summary.get('blocked_review_count', 0) or 0)} / "
@@ -8538,7 +8573,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
       <div class="meta advanced-only" data-i18n-zh="这些按钮调用本机 supervisor control service；组合级开关会写入当前 summary 目录的 `dashboard_control_state.json`，并在下次启动 `python -m src.app.supervisor` 时自动恢复。">这些按钮调用本机 supervisor control service；组合级开关会写入当前 summary 目录的 `dashboard_control_state.json`，并在下次启动 `python -m src.app.supervisor` 时自动恢复。</div>
       <div class="advanced-only">
       <h3>控制操作审计</h3>
-      {_render_table(["ts", "action", "status", "portfolio", "error_class", "severity", "detail", "error"], control_action_history_rows) if control_action_history_rows else '<div class="empty">暂无控制操作审计记录。</div>'}
+      {_render_table(["ts", "action", "status", "portfolio", "linked_action", "resolution", "resolution_note", "error_class", "severity", "detail", "error"], control_action_history_rows) if control_action_history_rows else '<div class="empty">暂无控制操作审计记录。</div>'}
       </div>
     </section>
     """

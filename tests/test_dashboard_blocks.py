@@ -24,7 +24,13 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
                 "action_history": [
                     {"action": "run_once", "status": "completed"},
                     {"action": "refresh_dashboard", "status": "completed"},
-                    {"action": "run_preflight", "status": "failed", "error_class": "transient_io"},
+                    {
+                        "action": "run_preflight",
+                        "status": "failed",
+                        "error_class": "transient_io",
+                        "linked_evidence_action_id": "2026W18-US-market-review_gate_thresholds",
+                        "resolution_status": "ACKNOWLEDGED",
+                    },
                 ],
             },
         },
@@ -122,6 +128,12 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
     assert by_id["ops_health"]["metrics"]["evidence_focus_primary_market"] == "US"
     assert by_id["ops_health"]["metrics"]["evidence_focus_primary_action"] == "Review gate thresholds"
     assert by_id["dashboard_control_actions"]["metrics"]["history_count"] == 3
+    assert by_id["dashboard_control_actions"]["metrics"]["linked_action_history_count"] == 1
+    assert (
+        by_id["dashboard_control_actions"]["metrics"]["last_linked_evidence_action_id"]
+        == "2026W18-US-market-review_gate_thresholds"
+    )
+    assert by_id["dashboard_control_actions"]["metrics"]["last_resolution_status"] == "ACKNOWLEDGED"
     assert by_id["dashboard_control_actions"]["metrics"]["transient_io_error_count"] == 1
     assert by_id["dashboard_control_actions"]["metrics"]["retryable_error_count"] == 1
     assert by_id["market_views"]["metrics"]["market_count"] == 3

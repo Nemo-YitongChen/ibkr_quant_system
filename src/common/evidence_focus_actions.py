@@ -157,6 +157,9 @@ def normalize_evidence_focus_action(raw: Dict[str, Any] | None) -> Dict[str, Any
         "read_only": bool(source.get("read_only", True)),
         "summary": str(source.get("summary") or detail),
         "detail": detail,
+        "resolved_at": str(source.get("resolved_at") or "").strip(),
+        "resolution_source": str(source.get("resolution_source") or "").strip(),
+        "resolution_note": str(source.get("resolution_note") or "").strip(),
         "priority_order": priority_order,
         "evidence_row_count": _safe_int(source.get("evidence_row_count")),
         "blocked_review_count": _safe_int(source.get("blocked_review_count")),
@@ -266,6 +269,12 @@ def build_evidence_focus_actions_from_market_summaries(
 def summarize_evidence_focus_actions(actions: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
     rows = [normalize_evidence_focus_action(row) for row in list(actions or []) if isinstance(row, dict)]
     urgent_count = sum(1 for row in rows if str(row.get("urgency") or "") == URGENCY_URGENT)
+    open_urgent_count = sum(
+        1
+        for row in rows
+        if str(row.get("urgency") or "") == URGENCY_URGENT
+        and str(row.get("status") or ACTION_STATUS_SUGGESTED) == ACTION_STATUS_SUGGESTED
+    )
     sample_collection_count = sum(1 for row in rows if str(row.get("urgency") or "") == URGENCY_SAMPLE_COLLECTION)
     gate_review_count = sum(1 for row in rows if str(row.get("primary_action") or "") == "review_gate_thresholds")
     signal_review_count = sum(
@@ -285,10 +294,10 @@ def summarize_evidence_focus_actions(actions: Iterable[Dict[str, Any]]) -> Dict[
     else:
         summary_text = (
             f"{primary_market or '-'}: {primary_label or primary_action or '-'}; "
-            f"basis={primary_basis or '-'}; urgent={urgent_count}/{len(rows)}."
+            f"basis={primary_basis or '-'}; urgent={open_urgent_count}/{len(rows)}."
         )
     return {
-        "status": "warn" if urgent_count else "ok",
+        "status": "warn" if open_urgent_count else "ok",
         "summary_text": summary_text,
         "primary_market": primary_market,
         "primary_action": primary_action,
@@ -299,6 +308,7 @@ def summarize_evidence_focus_actions(actions: Iterable[Dict[str, Any]]) -> Dict[
         "action_count": len(rows),
         "urgent_action_count": urgent_count,
         "urgent_count": urgent_count,
+        "open_urgent_action_count": open_urgent_count,
         "gate_review_count": gate_review_count,
         "signal_review_count": signal_review_count,
         "missing_evidence_count": missing_evidence_count,
@@ -315,3 +325,46 @@ def _basis_counts(rows: List[Dict[str, Any]]) -> Dict[str, int]:
         basis = str(row.get("basis") or "").strip() or "unknown"
         counts[basis] = counts.get(basis, 0) + 1
     return counts
+
+
+def apply_action_resolutions(
+    actions: Iterable[Dict[str, Any]],
+    audit_rows: Iterable[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    normalized_actions = [normalize_evidence_focus_action(row) for row in list(actions or []) if isinstance(row, dict)]
+    latest_by_action_id: Dict[str, tuple[int, str, Dict[str, Any]]] = {}
+    for idx, raw in enumerate(list(audit_rows or [])):
+        if not isinstance(raw, dict):
+            continue
+        row = dict(raw)
+        action_id = str(row.get("linked_evidence_action_id") or "").strip()
+        if not action_id:
+            continue
+        status = str(row.get("resolution_status") or "").strip().upper()
+        if status not in {
+            ACTION_STATUS_ACKNOWLEDGED,
+            ACTION_STATUS_APPLIED,
+            ACTION_STATUS_REJECTED,
+            ACTION_STATUS_SUPERSEDED,
+        }:
+            continue
+        ts = str(row.get("ts") or row.get("timestamp") or row.get("updated_at") or "").strip()
+        existing = latest_by_action_id.get(action_id)
+        if existing is None or (ts, idx) >= (existing[1], existing[0]):
+            latest_by_action_id[action_id] = (idx, ts, row)
+
+    resolved: List[Dict[str, Any]] = []
+    for action in normalized_actions:
+        action_id = str(action.get("action_id") or "").strip()
+        match = latest_by_action_id.get(action_id)
+        if not match:
+            resolved.append(action)
+            continue
+        _, ts, audit = match
+        updated = dict(action)
+        updated["status"] = str(audit.get("resolution_status") or ACTION_STATUS_ACKNOWLEDGED).strip().upper()
+        updated["resolved_at"] = ts
+        updated["resolution_source"] = "dashboard_control"
+        updated["resolution_note"] = str(audit.get("resolution_note") or "").strip()
+        resolved.append(updated)
+    return resolved

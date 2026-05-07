@@ -103,6 +103,7 @@
 - `docs/change_archive_2026-05-01_evidence_focus_v2_primary_summary.md`
 - `docs/change_archive_2026-05-01_evidence_focus_ops_health.md`
 - `docs/change_archive_2026-05-01_evidence_focus_ops_v2_metrics.md`
+- `docs/change_archive_2026-05-08_evidence_control_audit_linkage.md`
 
 ### 已合入的最近一轮关键建设
 
@@ -161,6 +162,7 @@
 - **dashboard ops overview 已纳入 urgent evidence focus：gate/signal/缺 evidence 等紧急项会进入顶部 WARN，样本收集只显示继续收集、不触发告警**
 - **dashboard v2 `Ops Health` block 已补 evidence focus metrics，可直接显示 evidence focus count、urgent count、primary market/action**
 - **evidence focus action lifecycle 已抽到 `src/common/evidence_focus_actions.py`，现有 dashboard action 队列保留兼容字段，同时新增稳定 `action_id/status/urgency/linked_evidence_*`，为后续 control audit linkage 与 effectiveness review 做准备**
+- **dashboard control action audit 已接入 evidence focus lifecycle：控制操作可携带 `evidence_action_id/resolution_status/resolution_note`，dashboard JSON/v2/advanced HTML 会显示 linked action，并用 audit history 回填 open urgent action 状态**
 
 ---
 

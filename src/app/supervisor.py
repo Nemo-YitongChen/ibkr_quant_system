@@ -31,6 +31,7 @@ from ..enrichment.providers import EnrichmentProviders
 from .dashboard_control import DashboardControlService
 from .dashboard_control_audit import (
     append_dashboard_control_action_audit as _append_dashboard_control_action_audit,
+    attach_evidence_action_link as _attach_evidence_action_link,
     redact_dashboard_control_text as _redact_dashboard_control_text,
     sanitize_dashboard_control_action as _sanitize_dashboard_control_action,
 )
@@ -1222,8 +1223,14 @@ class Supervisor:
         action: str,
         action_ts: str,
         refresh_dashboard: bool = True,
+        control_payload: Dict[str, Any] | None = None,
     ) -> None:
-        self._record_dashboard_control_action(action=action, action_ts=action_ts, status="completed")
+        self._record_dashboard_control_action(
+            action=action,
+            action_ts=action_ts,
+            status="completed",
+            control_payload=control_payload,
+        )
         self._write_dashboard_control_state()
         if refresh_dashboard:
             self._refresh_dashboard()
@@ -1237,9 +1244,10 @@ class Supervisor:
         portfolio_id: str = "",
         detail: str = "",
         error: str = "",
+        control_payload: Dict[str, Any] | None = None,
     ) -> None:
         ts = str(action_ts or datetime.now(self.tz).isoformat())
-        row = _sanitize_dashboard_control_action(
+        raw_row = _attach_evidence_action_link(
             {
                 "ts": ts,
                 "action": action,
@@ -1247,8 +1255,10 @@ class Supervisor:
                 "portfolio_id": portfolio_id,
                 "detail": detail,
                 "error": error,
-            }
+            },
+            control_payload,
         )
+        row = _sanitize_dashboard_control_action(raw_row)
         self._dashboard_control_last_action = str(row.get("action") or "")
         self._dashboard_control_last_action_ts = ts
         self._dashboard_control_last_error = str(row.get("error") or "")
@@ -1621,7 +1631,14 @@ class Supervisor:
                     item[field] = bool(row.get(field, False))
             item.update(_dashboard_control_override_fields(row))
 
-    def _set_dashboard_control_flag(self, *, portfolio_id: str, field: str, value: bool) -> Dict[str, Any]:
+    def _set_dashboard_control_flag(
+        self,
+        *,
+        portfolio_id: str,
+        field: str,
+        value: bool,
+        control_payload: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
         target_portfolio = str(portfolio_id or "").strip()
         target_field = str(field or "").strip()
         if not target_portfolio:
@@ -1639,6 +1656,7 @@ class Supervisor:
                 status="completed",
                 portfolio_id=target_portfolio,
                 detail=f"{target_field}={int(bool(value))}",
+                control_payload=control_payload,
             )
             self._write_dashboard_control_state()
             return {
@@ -1649,7 +1667,13 @@ class Supervisor:
             }
         return {"ok": False, "error": "portfolio_not_found", "portfolio_id": target_portfolio}
 
-    def _set_dashboard_execution_mode(self, *, portfolio_id: str, mode: str) -> Dict[str, Any]:
+    def _set_dashboard_execution_mode(
+        self,
+        *,
+        portfolio_id: str,
+        mode: str,
+        control_payload: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
         target_portfolio = str(portfolio_id or "").strip()
         target_mode = str(mode or "").strip().upper() or "AUTO"
         if not target_portfolio:
@@ -1667,6 +1691,7 @@ class Supervisor:
                 status="completed",
                 portfolio_id=target_portfolio,
                 detail=f"mode={target_mode}",
+                control_payload=control_payload,
             )
             self._write_dashboard_control_state()
             return {
@@ -1676,7 +1701,8 @@ class Supervisor:
             }
         return {"ok": False, "error": "portfolio_not_found", "portfolio_id": target_portfolio}
 
-    def _dashboard_control_run_once(self, _: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    def _dashboard_control_run_once(self, payload: Dict[str, Any] | None = None) -> Dict[str, Any]:
+        control_payload = dict(payload or {})
         with self._dashboard_control_lock:
             if (
                 self._dashboard_control_run_once_in_progress
@@ -1686,7 +1712,11 @@ class Supervisor:
             ):
                 return {"ok": False, "status": "busy"}
             self._dashboard_control_run_once_in_progress = True
-            self._record_dashboard_control_action(action="run_once", status="accepted")
+            self._record_dashboard_control_action(
+                action="run_once",
+                status="accepted",
+                control_payload=control_payload,
+            )
             self._write_dashboard_control_state()
 
         def _worker() -> None:
@@ -1698,9 +1728,14 @@ class Supervisor:
                     action="run_once",
                     status="failed",
                     error=f"{type(e).__name__}: {e}",
+                    control_payload=control_payload,
                 )
             else:
-                self._record_dashboard_control_action(action="run_once", status="completed")
+                self._record_dashboard_control_action(
+                    action="run_once",
+                    status="completed",
+                    control_payload=control_payload,
+                )
             finally:
                 with self._dashboard_control_lock:
                     self._dashboard_control_run_once_in_progress = False
@@ -1709,7 +1744,8 @@ class Supervisor:
         threading.Thread(target=_worker, name="dashboard-control-run-once", daemon=True).start()
         return {"ok": True, "status": "accepted"}
 
-    def _dashboard_control_run_preflight(self, _: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    def _dashboard_control_run_preflight(self, payload: Dict[str, Any] | None = None) -> Dict[str, Any]:
+        control_payload = dict(payload or {})
         with self._dashboard_control_lock:
             if (
                 self._dashboard_control_run_once_in_progress
@@ -1719,7 +1755,11 @@ class Supervisor:
             ):
                 return {"ok": False, "status": "busy"}
             self._dashboard_control_preflight_in_progress = True
-            self._record_dashboard_control_action(action="run_preflight", status="accepted")
+            self._record_dashboard_control_action(
+                action="run_preflight",
+                status="accepted",
+                control_payload=control_payload,
+            )
             self._write_dashboard_control_state()
 
         def _worker() -> None:
@@ -1738,9 +1778,14 @@ class Supervisor:
                     action="run_preflight",
                     status="failed",
                     error=f"{type(e).__name__}: {e}",
+                    control_payload=control_payload,
                 )
             else:
-                self._record_dashboard_control_action(action="run_preflight", status="completed")
+                self._record_dashboard_control_action(
+                    action="run_preflight",
+                    status="completed",
+                    control_payload=control_payload,
+                )
             finally:
                 with self._dashboard_control_lock:
                     self._dashboard_control_preflight_in_progress = False
@@ -1749,7 +1794,8 @@ class Supervisor:
         threading.Thread(target=_worker, name="dashboard-control-preflight", daemon=True).start()
         return {"ok": True, "status": "accepted"}
 
-    def _dashboard_control_run_weekly_review(self, _: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    def _dashboard_control_run_weekly_review(self, payload: Dict[str, Any] | None = None) -> Dict[str, Any]:
+        control_payload = dict(payload or {})
         with self._dashboard_control_lock:
             if (
                 self._dashboard_control_run_once_in_progress
@@ -1759,7 +1805,11 @@ class Supervisor:
             ):
                 return {"ok": False, "status": "busy"}
             self._dashboard_control_weekly_review_in_progress = True
-            self._record_dashboard_control_action(action="run_weekly_review", status="accepted")
+            self._record_dashboard_control_action(
+                action="run_weekly_review",
+                status="accepted",
+                control_payload=control_payload,
+            )
             self._write_dashboard_control_state()
 
         def _worker() -> None:
@@ -1772,16 +1822,22 @@ class Supervisor:
                         action="run_weekly_review",
                         status="failed",
                         error="weekly_review_failed",
+                        control_payload=control_payload,
                     )
             except Exception as e:
                 self._record_dashboard_control_action(
                     action="run_weekly_review",
                     status="failed",
                     error=f"{type(e).__name__}: {e}",
+                    control_payload=control_payload,
                 )
             else:
                 if ok:
-                    self._record_dashboard_control_action(action="run_weekly_review", status="completed")
+                    self._record_dashboard_control_action(
+                        action="run_weekly_review",
+                        status="completed",
+                        control_payload=control_payload,
+                    )
             finally:
                 with self._dashboard_control_lock:
                     self._dashboard_control_weekly_review_in_progress = False
@@ -1790,12 +1846,14 @@ class Supervisor:
         threading.Thread(target=_worker, name="dashboard-control-weekly-review", daemon=True).start()
         return {"ok": True, "status": "accepted"}
 
-    def _dashboard_control_refresh_dashboard(self, _: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    def _dashboard_control_refresh_dashboard(self, payload: Dict[str, Any] | None = None) -> Dict[str, Any]:
+        control_payload = dict(payload or {})
         ok = self._refresh_dashboard()
         self._record_dashboard_control_action(
             action="refresh_dashboard",
             status="completed" if ok else "failed",
             error="" if ok else "dashboard_refresh_failed",
+            control_payload=control_payload,
         )
         self._write_dashboard_control_state()
         return {"ok": bool(ok)}
@@ -1809,7 +1867,12 @@ class Supervisor:
         else:
             state = self._dashboard_control_portfolios().get(portfolio_id, {})
             value = not bool(state.get(field, False))
-        result = self._set_dashboard_control_flag(portfolio_id=portfolio_id, field=field, value=value)
+        result = self._set_dashboard_control_flag(
+            portfolio_id=portfolio_id,
+            field=field,
+            value=value,
+            control_payload=row,
+        )
         if bool(result.get("ok", False)):
             self._refresh_dashboard()
         return result
@@ -1818,7 +1881,11 @@ class Supervisor:
         row = dict(payload or {})
         portfolio_id = str(row.get("portfolio_id", "") or "").strip()
         mode = str(row.get("mode", "") or "").strip().upper()
-        result = self._set_dashboard_execution_mode(portfolio_id=portfolio_id, mode=mode)
+        result = self._set_dashboard_execution_mode(
+            portfolio_id=portfolio_id,
+            mode=mode,
+            control_payload=row,
+        )
         if bool(result.get("ok", False)):
             self._refresh_dashboard()
         return result
@@ -1873,6 +1940,7 @@ class Supervisor:
         self._finalize_dashboard_control_action(
             action=f"review_market_profile_patch:{target_portfolio}:{decision.lower()}",
             action_ts=reviewed_ts,
+            control_payload=row,
         )
         return self._patch_review_result(
             portfolio_id=target_portfolio,
@@ -1929,6 +1997,7 @@ class Supervisor:
         self._finalize_dashboard_control_action(
             action=f"review_calibration_patch:{target_portfolio}:{decision.lower()}",
             action_ts=reviewed_ts,
+            control_payload=row,
         )
         return self._patch_review_result(
             portfolio_id=target_portfolio,
@@ -1968,6 +2037,7 @@ class Supervisor:
         self._finalize_dashboard_control_action(
             action=f"apply_weekly_feedback:{target_portfolio}",
             action_ts=confirmed_ts,
+            control_payload=row,
         )
         return self._weekly_feedback_apply_result(
             portfolio_id=target_portfolio,
