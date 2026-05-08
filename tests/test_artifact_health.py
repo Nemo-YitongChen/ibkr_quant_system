@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 from src.common.artifact_contracts import dashboard_artifact_contracts
@@ -155,6 +156,54 @@ def test_missing_broker_reconciliation_summary_is_warning_contract(tmp_path: Pat
 
     assert row["status"] == "warning"
     assert "缺失 broker_reconciliation_summary.json" in row["summary"]
+
+
+def test_weekly_review_summary_health_uses_fixed_now_for_ready_status(tmp_path: Path) -> None:
+    contract = dashboard_artifact_contracts()["weekly_review_summary"]
+    (tmp_path / "weekly_review_summary.json").write_text(
+        (
+            '{"generated_at":"2026-04-30T10:00:00+00:00",'
+            '"schema_version":"2026Q2.p0.v1",'
+            '"window_start":"2026-04-20","window_end":"2026-04-26","portfolio_count":1}'
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = load_artifact(tmp_path, contract)
+    row = evaluate_artifact_health(
+        contract,
+        loaded,
+        scope_label="GLOBAL",
+        now=datetime(2026, 5, 1, 10, 0, tzinfo=timezone.utc),
+    )
+
+    assert row["status"] == "ready"
+    assert row["age_hours"] == 24.0
+    assert row["warnings"] == []
+
+
+def test_weekly_review_summary_health_warns_when_stale(tmp_path: Path) -> None:
+    contract = dashboard_artifact_contracts()["weekly_review_summary"]
+    (tmp_path / "weekly_review_summary.json").write_text(
+        (
+            '{"generated_at":"2026-04-30T10:00:00+00:00",'
+            '"schema_version":"2026Q2.p0.v1",'
+            '"window_start":"2026-04-20","window_end":"2026-04-26","portfolio_count":1}'
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = load_artifact(tmp_path, contract)
+    row = evaluate_artifact_health(
+        contract,
+        loaded,
+        scope_label="GLOBAL",
+        now=datetime(2026, 5, 10, 10, 0, tzinfo=timezone.utc),
+    )
+
+    assert row["status"] == "warning"
+    assert row["age_hours"] == 240.0
+    assert any(str(warning).startswith("stale artifact") for warning in row["warnings"])
 
 
 def test_build_artifact_consistency_rows_warns_when_weekly_bundle_drifts(tmp_path: Path) -> None:

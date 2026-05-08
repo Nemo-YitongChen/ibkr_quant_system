@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from src.common.governance_health import build_governance_health_summary
 
 
@@ -33,12 +35,60 @@ def test_governance_health_summary_warns_on_pending_actions() -> None:
         }
     ]
 
-    summary = build_governance_health_summary(cards, overview_rows)
+    summary = build_governance_health_summary(
+        cards,
+        overview_rows,
+        now=datetime(2026, 4, 24, 10, 0, tzinfo=timezone.utc),
+    )
 
     assert summary["status"] == "warning"
     assert summary["pending_action_count"] == 1
     assert summary["approved_not_applied_count"] == 1
     assert summary["ready_for_manual_apply_count"] == 1
+    assert summary["oldest_pending_days"] == 4.0
+
+
+def test_governance_health_summary_degrades_on_stale_approved_not_applied() -> None:
+    cards = [
+        {
+            "market": "US",
+            "watchlist": "watchlist",
+            "dashboard_control": {
+                "portfolio": {
+                    "weekly_feedback_patch_governance_action_label": "优先处理已批准未应用 patch",
+                    "weekly_feedback_market_profile_review_status": "APPROVED",
+                    "weekly_feedback_market_profile_review_evidence_summary": "",
+                    "weekly_feedback_market_profile_ready_for_manual_apply": True,
+                }
+            },
+            "patch_review_history_rows": [
+                {
+                    "patch_kind": "market_profile",
+                    "review_status": "APPROVED",
+                    "ts": "2026-04-20T10:00:00+00:00",
+                }
+            ],
+        }
+    ]
+    overview_rows = [
+        {
+            "rejection_rate": 0.0,
+            "review_cycle_count": 1,
+            "approved_not_applied_count": 1,
+        }
+    ]
+
+    summary = build_governance_health_summary(
+        cards,
+        overview_rows,
+        now=datetime(2026, 5, 8, 10, 0, tzinfo=timezone.utc),
+    )
+
+    assert summary["status"] == "degraded"
+    assert summary["pending_action_count"] == 1
+    assert summary["approved_not_applied_count"] == 1
+    assert summary["ready_for_manual_apply_count"] == 1
+    assert summary["oldest_pending_days"] == 18.0
 
 
 def test_governance_health_summary_degrades_on_applied_without_evidence() -> None:
