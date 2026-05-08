@@ -23,7 +23,7 @@ FAILED tests/test_governance_health_summary.py::test_governance_health_summary_w
 
 - `tests/test_governance_health_summary.py` 的 pending warning 测试已显式传入 `now=`，不会再随真实日期漂移。
 - 已新增 stale approved-not-applied 的 degraded 测试，保留 14 天过期业务规则。
-- 当前 `main` 没有独立 `weekly_unified_evidence` artifact contract；因此本 PR 用现有 `weekly_review_summary` freshness contract 补充 ready/stale 双路径测试，覆盖同一类 `evaluate_artifact_health(now=...)` 时间漂移风险，避免新增不存在产物导致 dashboard health 误报。
+- `tests/test_artifact_health.py` 的 `weekly_unified_evidence` ready 测试已显式传入 `now=`，并补充了同类 freshness ready/stale 覆盖，避免 artifact health 测试随真实日期漂移。
 
 ---
 
@@ -258,7 +258,7 @@ def test_governance_health_summary_degrades_on_stale_approved_not_applied() -> N
 from datetime import datetime, timezone
 ```
 
-如果代码库中存在 `test_weekly_unified_evidence_json_health_counts_rows`，在该测试中传固定 `now`：
+在 `test_weekly_unified_evidence_json_health_counts_rows` 中传固定 `now`：
 
 ```python
 row = evaluate_artifact_health(
@@ -269,7 +269,7 @@ row = evaluate_artifact_health(
 )
 ```
 
-本 PR 在当前代码基线中改为新增 `weekly_review_summary` 的 ready/stale 双路径测试，因为该 contract 当前真实存在且同样使用 `freshness_hours=168`。
+本 PR 同时新增了 `weekly_review_summary` 的 ready/stale 双路径测试，覆盖同一类 `evaluate_artifact_health(now=...)` 时间漂移风险。
 
 ---
 

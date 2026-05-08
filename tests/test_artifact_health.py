@@ -76,11 +76,17 @@ def test_weekly_unified_evidence_json_health_counts_rows(tmp_path: Path) -> None
     )
 
     loaded = load_artifact(tmp_path, contract)
-    row = evaluate_artifact_health(contract, loaded, scope_label="GLOBAL")
+    row = evaluate_artifact_health(
+        contract,
+        loaded,
+        scope_label="GLOBAL",
+        now=datetime(2026, 5, 1, 10, 0, tzinfo=timezone.utc),
+    )
 
     assert loaded.row_count == 2
     assert "portfolio_id" in loaded.columns
     assert row["status"] == "ready"
+    assert row["age_hours"] == 24.0
 
 
 def test_weekly_unified_evidence_falls_back_to_summary_rows(tmp_path: Path) -> None:
