@@ -11,6 +11,24 @@ paper_timeout_sec: 300
 execution_timeout_sec: 300
 guard_timeout_sec: 240
 short_safety_timeout_sec: 300
+ibkr_task_min_gap_sec: 2.0
+ibkr_gateway_budgets:
+  enabled: true
+  default_weekly_gateway_request_budget: 1500
+  stale_telemetry_warning_hours: 72
+  over_budget_degraded_ratio: 1.5
+  missing_telemetry_status: "warning"
+  markets:
+    US:
+      weekly_gateway_request_budget: 2000
+    HK:
+      weekly_gateway_request_budget: 1500
+    ASX:
+      weekly_gateway_request_budget: 1000
+    XETRA:
+      weekly_gateway_request_budget: 800
+    CN:
+      weekly_gateway_request_budget: 500
 dashboard_enabled: true
 dashboard_auto_open: true
 dashboard_timeout_sec: 120

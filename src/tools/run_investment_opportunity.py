@@ -156,6 +156,7 @@ def main(argv: list[str] | None = None) -> None:
             opportunity_cfg=opportunity_cfg,
             market_structure=market_structure,
             adaptive_strategy=adaptive_strategy,
+            market_data_cfg=ibkr_cfg,
         )
         try:
             result = engine.run(report_dir=str(report_dir))

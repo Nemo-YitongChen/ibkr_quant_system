@@ -22,8 +22,8 @@ from ..common.market_structure import MarketStructureConfig, market_structure_su
 from ..common.storage import Storage
 from ..common.user_explanations import annotate_opportunity_user_explanation
 from ..data import MarketDataAdapter
-from ..ibkr.market_data import MarketDataService, OHLCVBar
-from ..offhours.ib_setup import register_contracts, set_delayed_frozen
+from ..ibkr.market_data import OHLCVBar
+from ..offhours.ib_setup import market_data_service_from_config, register_contracts, set_delayed_frozen
 from ..portfolio.investment_allocator import InvestmentExecutionConfig
 from ..analysis.investment_portfolio import InvestmentPaperConfig
 
@@ -103,6 +103,7 @@ class InvestmentOpportunityEngine:
         opportunity_cfg: InvestmentOpportunityConfig,
         market_structure: MarketStructureConfig | None = None,
         adaptive_strategy: AdaptiveStrategyConfig | None = None,
+        market_data_cfg: Dict[str, Any] | None = None,
     ):
         self.ib = ib
         self.storage = storage
@@ -127,7 +128,7 @@ class InvestmentOpportunityEngine:
             execution_cfg=execution_cfg,
             market_structure=self.market_structure,
         )
-        self.md = MarketDataService(ib)
+        self.md = market_data_service_from_config(ib, market_data_cfg)
         self.data_adapter = MarketDataAdapter(
             self.md,
             prefer_yfinance_daily=bool(self.prefer_external_market_data),

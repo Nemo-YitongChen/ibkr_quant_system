@@ -63,15 +63,7 @@ def _render_rows(rows: Any) -> str:
     return ""
 
 
-def render_dashboard_v2_blocks(blocks: List[Dict[str, Any]]) -> str:
-    if not blocks:
-        return (
-            '<section class="card overview dashboard-v2-blocks">'
-            "<h2>Dashboard v2 Evidence Blocks</h2>"
-            '<div class="empty">No dashboard v2 blocks available.</div>'
-            "</section>"
-        )
-
+def _render_block_cards(blocks: List[Dict[str, Any]]) -> str:
     cards = []
     for block in blocks:
         if not isinstance(block, dict):
@@ -82,23 +74,60 @@ def render_dashboard_v2_blocks(blocks: List[Dict[str, Any]]) -> str:
         cls = _status_class(status)
         metrics = dict(block.get("metrics") or block.get("headline") or {})
         rows_html = _render_rows(block.get("rows"))
+        details_html = f'<div class="advanced-only">{rows_html}</div>' if rows_html else ""
         cards.append(
             '<div class="dashboard-v2-card">'
             f'<h3>{title} <span class="badge badge-status {cls}">{escape(status)}</span></h3>'
             f"<p>{summary}</p>"
             f"{_render_metrics(metrics)}"
-            f"{rows_html}"
+            f"{details_html}"
             "</div>"
         )
+    return "".join(cards)
 
-    if not cards:
+
+def render_dashboard_v2_blocks(blocks: List[Dict[str, Any]]) -> str:
+    clean_blocks = [dict(block) for block in list(blocks or []) if isinstance(block, dict)]
+    if not clean_blocks:
+        return (
+            '<section class="card overview dashboard-v2-blocks">'
+            "<h2>Dashboard v2 Evidence Blocks</h2>"
+            '<div class="empty">No dashboard v2 blocks available.</div>'
+            "</section>"
+        )
+
+    home_blocks = [
+        block
+        for block in clean_blocks
+        if str(block.get("category") or "home") == "home" and not bool(block.get("advanced_only", False))
+    ]
+    advanced_blocks = [
+        block
+        for block in clean_blocks
+        if str(block.get("category") or "") == "advanced" or bool(block.get("advanced_only", False))
+    ]
+    home_cards = _render_block_cards(home_blocks)
+    advanced_cards = _render_block_cards(advanced_blocks)
+
+    if not home_cards and not advanced_cards:
         return render_dashboard_v2_blocks([])
+    advanced_section = (
+        '<div class="advanced-only dashboard-v2-advanced">'
+        "<h3>Advanced Evidence Blocks</h3>"
+        '<div class="dashboard-v2-grid">'
+        f"{advanced_cards}"
+        "</div>"
+        "</div>"
+        if advanced_cards
+        else ""
+    )
     return (
         '<section class="card overview dashboard-v2-blocks">'
         "<h2>Dashboard v2 Evidence Blocks</h2>"
-        '<div class="meta">Structured evidence block summaries rendered from the dashboard v2 JSON payload.</div>'
+        '<div class="meta">Home shows Ops Health, Evidence Focus, Execution Quality, and Governance / Control Actions. Advanced mode expands market, waterfall, unified evidence, blocked-vs-allowed, and action history blocks.</div>'
         '<div class="dashboard-v2-grid">'
-        + "".join(cards)
+        + home_cards
         + "</div>"
-        "</section>"
+        + advanced_section
+        + "</section>"
     )

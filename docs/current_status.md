@@ -104,6 +104,16 @@
 - `docs/change_archive_2026-05-01_evidence_focus_ops_health.md`
 - `docs/change_archive_2026-05-01_evidence_focus_ops_v2_metrics.md`
 - `docs/change_archive_2026-05-08_evidence_control_audit_linkage.md`
+- `docs/change_archive_2026-05-08_evidence_focus_effectiveness.md`
+- `docs/change_archive_2026-05-08_blocked_vs_allowed_action_mapping.md`
+- `docs/change_archive_2026-05-08_dashboard_v2_information_architecture.md`
+- `docs/change_archive_2026-05-08_strategy_config_pure_signal_regression.md`
+- `docs/evidence_focus_lifecycle_technical_path_2026-05-08.md`
+- `docs/evidence_focus_lifecycle_path_assessment_2026-05-09.md`
+- `docs/development_report_2026-05-09.md`
+- `docs/change_archive_2026-05-09_strategy_parameter_suggestions.md`
+- `docs/change_archive_2026-05-09_strategy_suggestion_control_audit.md`
+- `docs/change_archive_2026-05-09_strategy_suggestion_effectiveness.md`
 
 ### 已合入的最近一轮关键建设
 
@@ -163,6 +173,15 @@
 - **dashboard v2 `Ops Health` block 已补 evidence focus metrics，可直接显示 evidence focus count、urgent count、primary market/action**
 - **evidence focus action lifecycle 已抽到 `src/common/evidence_focus_actions.py`，现有 dashboard action 队列保留兼容字段，同时新增稳定 `action_id/status/urgency/linked_evidence_*`，为后续 control audit linkage 与 effectiveness review 做准备**
 - **dashboard control action audit 已接入 evidence focus lifecycle：控制操作可携带 `evidence_action_id/resolution_status/resolution_note`，dashboard JSON/v2/advanced HTML 会显示 linked action，并用 audit history 回填 open urgent action 状态**
+- **weekly review 已新增 `evidence_focus_effectiveness`，会统计 evidence focus action 的 new/urgent/resolved/stale urgent/avg resolution hours，并在 markdown 中渲染 Evidence Focus Effectiveness section**
+- **blocked-vs-allowed 到 evidence action 的映射已补测试护栏：gate 过紧会触发 urgent gate review，样本不足只做 sample collection，GATE_OK/BLOCKING_HELPED 不触发 urgent，缺 artifact 会生成缺 evidence fallback**
+- **dashboard v2 blocks 已完成 home / advanced 信息架构收敛：首页只保留 Ops Health、Evidence Focus、Execution Quality、Governance / Control Actions，高级模式展开 market views、waterfall、unified evidence、blocked-vs-allowed 与 control history**
+- **策略技术债第一批已收口：MR/BO primary signal weights、mid regime sizing 和 fusion weights 已配置化，默认行为不变，并补 pure signal regression 覆盖 breakout 上下突破、short disabled 与高波动/深回撤收缩**
+- **Evidence Focus Lifecycle 路径已完成 2026-05-09 复核：Step 1-7 方向正确且已落地，下一阶段不应重复补基础链路，而应推进 weekly review 基于 evidence 生成单一 primary strategy parameter 建议，继续保持只建议、不自动生效**
+- **后续开发报告已补充到 `docs/development_report_2026-05-09.md`：下一步明确为 evidence-driven single strategy parameter suggestions，后续再推进 dashboard/weekly 大文件拆分、config defaults+overrides、walk-forward acceptance rules、execution quality evidence 和 live 变更四件套**
+- **weekly review 已新增 read-only `strategy_parameter_suggestions` 产物：当 candidate model review 出现 `SIGNAL_RANKING_INVERTED` 且样本足够时，每个 market/portfolio/week 只生成一个 primary strategy field 建议，带 linked evidence、acceptance rule、rollback note 和 `auto_apply=0`**
+- **dashboard control audit 已能关联 strategy parameter suggestions：控制 payload 可携带 `strategy_parameter_suggestion_id/primary_field/config_path/resolution_status/resolution_note`，审计历史和 dashboard v2 Governance block 会展示 linked strategy suggestion 与处理状态，但仍不自动写配置**
+- **strategy parameter suggestion 已新增 effectiveness summary：weekly summary、tuning dataset 和 markdown 会统计 open/handled/resolved/stale、resolution mix、avg resolution hours 与 `auto_apply` 违规，dashboard control audit 可通过 `linked_strategy_parameter_suggestion_id` 回填处理状态**
 
 ---
 
@@ -237,6 +256,7 @@
 - broker / reconcile artifact contract registry
 - weekly review support 模块按 execution / governance / strategy / decision 领域继续拆分
 - weekly review support import boundary regression tests
+- weekly review evidence-driven single-parameter suggestions
 
 ### P1：降低大文件复杂度
 

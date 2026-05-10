@@ -5,6 +5,14 @@ port: 4001
 client_id: 201
 account_id: "LIVE_ACCOUNT_ID"
 timezone: "Australia/Sydney"
+market_data:
+  request_timeout_sec: 12.0
+  hist_retry_attempts: 2
+  hist_retry_backoff_sec: 1.5
+  hist_5m_cache_ttl_sec: 90
+  hist_5m_cache_stale_fallback_sec: 900
+  hist_daily_cache_ttl_sec: 21600
+  hist_daily_cache_stale_fallback_sec: 604800
 risk_config: "config/risk_us.yaml"
 strategy_config: "config/strategy_defaults_us.yaml"
 report_config: "config/report_scoring_us.yaml"

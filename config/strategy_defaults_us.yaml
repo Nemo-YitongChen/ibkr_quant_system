@@ -3,6 +3,13 @@ orders:
   default_take_profit_pct: 0.004
   default_stop_loss_pct: 0.006
 
+engine:
+  mr_weight: 0.60
+  bo_weight: 0.40
+  mid_soft_floor: 0.0
+  mid_qty_min: 0.25
+  mid_qty_max: 1.25
+
 mid_regime:
   ma_fast: 24
   ma_slow: 72

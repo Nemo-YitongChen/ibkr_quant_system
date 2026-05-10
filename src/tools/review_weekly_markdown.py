@@ -55,7 +55,13 @@ def write_weekly_review_markdown(
     slicing_calibration_rows: List[Dict[str, Any]] | None = None,
     risk_calibration_rows: List[Dict[str, Any]] | None = None,
     calibration_patch_suggestion_rows: List[Dict[str, Any]] | None = None,
+    strategy_parameter_suggestion_rows: List[Dict[str, Any]] | None = None,
+    strategy_parameter_suggestion_followup_rows: List[Dict[str, Any]] | None = None,
     patch_governance_rows: List[Dict[str, Any]] | None = None,
+    evidence_focus_effectiveness_summary: Dict[str, Any] | None = None,
+    strategy_parameter_suggestion_effectiveness_summary: Dict[str, Any] | None = None,
+    ibkr_gateway_budget_summary: Dict[str, Any] | None = None,
+    ibkr_gateway_budget_rows: List[Dict[str, Any]] | None = None,
 ) -> None:
     lines = [
         "# Weekly Investment Review",
@@ -328,6 +334,116 @@ def write_weekly_review_markdown(
                 f"{float(row.get('decision_avg_outcome_60d_bps', 0.0) or 0.0):.1f}bps"
             )
 
+    evidence_focus_effectiveness = dict(evidence_focus_effectiveness_summary or {})
+    lines.append("")
+    lines.append("## Evidence Focus Effectiveness")
+    if not evidence_focus_effectiveness:
+        lines.append("- (no evidence focus effectiveness summary)")
+    else:
+        lines.append(
+            f"- New actions: {int(evidence_focus_effectiveness.get('new_action_count', 0) or 0)} "
+            f"urgent={int(evidence_focus_effectiveness.get('urgent_action_count', 0) or 0)} "
+            f"open_urgent={int(evidence_focus_effectiveness.get('open_urgent_action_count', 0) or 0)} "
+            f"resolved={int(evidence_focus_effectiveness.get('resolved_action_count', 0) or 0)} "
+            f"stale_urgent={int(evidence_focus_effectiveness.get('stale_urgent_action_count', 0) or 0)}"
+        )
+        lines.append(
+            f"  Resolution mix: acknowledged={int(evidence_focus_effectiveness.get('acknowledged_action_count', 0) or 0)} "
+            f"applied={int(evidence_focus_effectiveness.get('applied_action_count', 0) or 0)} "
+            f"rejected={int(evidence_focus_effectiveness.get('rejected_action_count', 0) or 0)} "
+            f"superseded={int(evidence_focus_effectiveness.get('superseded_action_count', 0) or 0)} "
+            f"avg_resolution_hours={float(evidence_focus_effectiveness.get('avg_resolution_hours', 0.0) or 0.0):.2f}"
+        )
+        stale_ids = list(evidence_focus_effectiveness.get("stale_urgent_action_ids") or [])
+        if stale_ids:
+            lines.append(f"  Stale urgent action ids: {', '.join(str(item) for item in stale_ids[:5])}")
+
+    strategy_suggestion_effectiveness = dict(strategy_parameter_suggestion_effectiveness_summary or {})
+    lines.append("")
+    lines.append("## Strategy Parameter Suggestion Effectiveness")
+    if not strategy_suggestion_effectiveness:
+        lines.append("- (no strategy parameter suggestion effectiveness summary)")
+    else:
+        lines.append(
+            f"- Suggestions: {int(strategy_suggestion_effectiveness.get('suggestion_count', 0) or 0)} "
+            f"open={int(strategy_suggestion_effectiveness.get('open_suggestion_count', 0) or 0)} "
+            f"handled={int(strategy_suggestion_effectiveness.get('handled_suggestion_count', 0) or 0)} "
+            f"resolved={int(strategy_suggestion_effectiveness.get('resolved_suggestion_count', 0) or 0)} "
+            f"stale={int(strategy_suggestion_effectiveness.get('stale_suggestion_count', 0) or 0)} "
+            f"auto_apply={int(strategy_suggestion_effectiveness.get('auto_apply_count', 0) or 0)}"
+        )
+        lines.append(
+            f"  Resolution mix: acknowledged={int(strategy_suggestion_effectiveness.get('acknowledged_suggestion_count', 0) or 0)} "
+            f"applied={int(strategy_suggestion_effectiveness.get('applied_suggestion_count', 0) or 0)} "
+            f"rejected={int(strategy_suggestion_effectiveness.get('rejected_suggestion_count', 0) or 0)} "
+            f"superseded={int(strategy_suggestion_effectiveness.get('superseded_suggestion_count', 0) or 0)} "
+            f"avg_resolution_hours={float(strategy_suggestion_effectiveness.get('avg_resolution_hours', 0.0) or 0.0):.2f}"
+        )
+        stale_ids = list(strategy_suggestion_effectiveness.get("stale_suggestion_ids") or [])
+        if stale_ids:
+            lines.append(f"  Stale suggestion ids: {', '.join(str(item) for item in stale_ids[:5])}")
+        if int(strategy_suggestion_effectiveness.get("followup_count", 0) or 0) > 0:
+            lines.append(
+                f"  Follow-up: improved={int(strategy_suggestion_effectiveness.get('improved_followup_count', 0) or 0)} "
+                f"degraded={int(strategy_suggestion_effectiveness.get('degraded_followup_count', 0) or 0)} "
+                f"unclear={int(strategy_suggestion_effectiveness.get('no_clear_change_followup_count', 0) or 0)} "
+                f"insufficient={int(strategy_suggestion_effectiveness.get('insufficient_followup_sample_count', 0) or 0)}"
+            )
+
+    strategy_suggestion_followups = list(strategy_parameter_suggestion_followup_rows or [])
+    lines.append("")
+    lines.append("## Strategy Parameter Suggestion Follow-up")
+    if not strategy_suggestion_followups:
+        lines.append("- (no applied strategy parameter suggestion follow-up rows)")
+    else:
+        for row in strategy_suggestion_followups:
+            lines.append(
+                f"- **{row.get('portfolio_id', '-') or '-'}** market={row.get('market', '-') or '-'} "
+                f"field={row.get('primary_field', '-') or '-'} "
+                f"verdict={row.get('followup_verdict', '-') or '-'} "
+                f"review={row.get('followup_review_label', '-') or '-'} "
+                f"labeled={int(row.get('followup_labeled_candidate_count', 0) or 0)}"
+            )
+            lines.append(
+                f"  Outcome: top-bottom5/20/60="
+                f"{float(row.get('followup_top_minus_bottom_outcome_5d_bps', 0.0) or 0.0):.1f}/"
+                f"{float(row.get('followup_top_minus_bottom_outcome_20d_bps', 0.0) or 0.0):.1f}/"
+                f"{float(row.get('followup_top_minus_bottom_outcome_60d_bps', 0.0) or 0.0):.1f}bps "
+                f"expected_realized_gap="
+                f"{float(row.get('followup_expected_to_realized_gap_bps', 0.0) or 0.0):.1f}bps "
+                f"realized_edge="
+                f"{float(row.get('followup_avg_realized_edge_bps', 0.0) or 0.0):.1f}bps "
+                f"resolved_at={row.get('resolved_at', '-') or '-'}"
+            )
+            if row.get("followup_summary"):
+                lines.append(f"  结论: {row.get('followup_summary', '')}")
+
+    gateway_budget = dict(ibkr_gateway_budget_summary or {})
+    gateway_budget_rows = list(ibkr_gateway_budget_rows or [])
+    lines.append("")
+    lines.append("## IBKR Gateway Request Budget")
+    if not gateway_budget:
+        lines.append("- (no IBKR Gateway request budget summary)")
+    else:
+        lines.append(
+            f"- Status: {gateway_budget.get('status', 'ok')} "
+            f"gateway_requests={int(gateway_budget.get('gateway_request_count', 0) or 0)} "
+            f"cache_hits={int(gateway_budget.get('cache_hit_count', 0) or 0)} "
+            f"cache_hit_ratio={float(gateway_budget.get('cache_hit_ratio', 0.0) or 0.0):.2f} "
+            f"over_budget={int(gateway_budget.get('over_budget_market_count', 0) or 0)} "
+            f"stale={int(gateway_budget.get('stale_telemetry_market_count', 0) or 0)} "
+            f"missing={int(gateway_budget.get('missing_telemetry_market_count', 0) or 0)}"
+        )
+        for row in gateway_budget_rows[:8]:
+            lines.append(
+                f"  - {row.get('market', '-')}: status={row.get('status', 'ok')} "
+                f"requests={int(row.get('gateway_request_count', 0) or 0)}/"
+                f"{int(row.get('weekly_gateway_request_budget', 0) or 0)} "
+                f"usage={float(row.get('budget_usage_pct', 0.0) or 0.0):.1f}% "
+                f"top_kind={row.get('top_request_kind', '-') or '-'} "
+                f"reason={row.get('reason', '-') or '-'}"
+            )
+
     lines.append("")
     lines.append("## Candidate Model Review")
     if not candidate_model_review_rows:
@@ -465,6 +581,29 @@ def write_weekly_review_markdown(
             )
             if row.get("source_note"):
                 lines.append(f"  建议: {row.get('source_note', '')}")
+
+    lines.append("")
+    lines.append("## Strategy Parameter Suggestions")
+    if not strategy_parameter_suggestion_rows:
+        lines.append("- (no strategy parameter suggestions)")
+    else:
+        for row in strategy_parameter_suggestion_rows:
+            lines.append(
+                f"- **{row.get('portfolio_id', '-') or '-'}** market={row.get('market', '-') or '-'} "
+                f"field={row.get('primary_field', row.get('field', '-')) or '-'} "
+                f"current={row.get('current_value', '-') if row.get('current_value', '-') not in (None, '') else '-'} "
+                f"suggested={row.get('suggested_value', '-') if row.get('suggested_value', '-') not in (None, '') else '-'} "
+                f"auto_apply={int(row.get('auto_apply', 0) or 0)}"
+            )
+            lines.append(
+                f"  证据: {row.get('linked_evidence_artifact', '-') or '-'} / "
+                f"{row.get('linked_evidence_key', '-') or '-'} "
+                f"source={row.get('source_signal_label', row.get('source_signal', '-')) or '-'}"
+            )
+            if row.get("acceptance_rule"):
+                lines.append(f"  验收: {row.get('acceptance_rule', '')}")
+            if row.get("rollback_note"):
+                lines.append(f"  回滚: {row.get('rollback_note', '')}")
 
     lines.append("")
     lines.append("## Patch Governance Summary")

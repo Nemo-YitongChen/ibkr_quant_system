@@ -2251,6 +2251,136 @@ class SupervisorCliTests(unittest.TestCase):
             mock_weekly.assert_called_once()
             self.assertTrue(bool(mock_weekly.call_args.kwargs.get("force", False)))
 
+    def test_supervisor_reuses_broker_snapshot_for_same_market_account_cycle(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            cfg_path = base / "supervisor.yaml"
+            summary_dir = base / "reports_supervisor"
+            report_root = base / "reports_investment"
+            db_path = base / "audit.db"
+            ibkr_cfg_path = base / "ibkr_us.yaml"
+            ibkr_cfg_path.write_text(
+                "\n".join(
+                    [
+                        'host: "127.0.0.1"',
+                        "port: 4002",
+                        "client_id: 101",
+                        'account_id: "DU_TEST"',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        f'summary_out_dir: "{summary_dir}"',
+                        "dashboard_enabled: false",
+                        "run_investment_labeling: false",
+                        "run_investment_weekly_review: false",
+                        "broker_snapshot_singleflight: true",
+                        "poll_sec: 30",
+                        "markets:",
+                        '  - name: "us"',
+                        '    market: "US"',
+                        '    local_timezone: "America/New_York"',
+                        "    enabled: true",
+                        '    report_time: "23:59"',
+                        "    watchlists: []",
+                        "    reports:",
+                        '      - kind: "investment"',
+                        f'        out_dir: "{report_root}"',
+                        f'        db: "{db_path}"',
+                        f'        ibkr_config: "{ibkr_cfg_path}"',
+                        '        watchlist_yaml: "config/watchlists/us_alpha.yaml"',
+                        "        run_broker_snapshot_sync: true",
+                        "      - kind: \"investment\"",
+                        f'        out_dir: "{report_root}"',
+                        f'        db: "{db_path}"',
+                        f'        ibkr_config: "{ibkr_cfg_path}"',
+                        '        watchlist_yaml: "config/watchlists/us_beta.yaml"',
+                        "        run_broker_snapshot_sync: true",
+                        "    short_safety_sync:",
+                        "      enabled: false",
+                        "    trading:",
+                        "      enabled: false",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(cfg_path))
+
+            def _write_source_snapshot(market, item):
+                report_market = str(item.get("market", market.market_code))
+                report_dir = supervisor._report_output_dir(item, report_market)
+                report_dir.mkdir(parents=True, exist_ok=True)
+                portfolio_id = supervisor._portfolio_id_for_item(item, report_market)
+                storage = Storage(str(db_path))
+                storage.insert_investment_execution_run(
+                    {
+                        "run_id": "source-run",
+                        "market": "US",
+                        "portfolio_id": portfolio_id,
+                        "account_id": "DU_TEST",
+                        "report_dir": str(report_dir),
+                        "submitted": 0,
+                        "order_count": 0,
+                        "order_value": 0.0,
+                        "broker_equity": 100000.0,
+                        "broker_cash": 90000.0,
+                        "target_equity": 0.0,
+                        "details": "{}",
+                    }
+                )
+                storage.insert_investment_broker_position(
+                    {
+                        "run_id": "source-run",
+                        "market": "US",
+                        "portfolio_id": portfolio_id,
+                        "symbol": "SPY",
+                        "qty": 2.0,
+                        "avg_cost": 500.0,
+                        "market_price": 510.0,
+                        "market_value": 1020.0,
+                        "weight": 0.0102,
+                        "source": "after",
+                        "details": "{}",
+                    }
+                )
+                (report_dir / "investment_broker_snapshot_summary.json").write_text(
+                    json.dumps(
+                        {
+                            "ts": "2026-03-19T10:00:00+00:00",
+                            "run_id": "source-run",
+                            "market": "US",
+                            "portfolio_id": portfolio_id,
+                            "account_id": "DU_TEST",
+                            "report_dir": str(report_dir),
+                            "source": "broker_snapshot_sync",
+                            "broker_equity": 100000.0,
+                            "broker_cash": 90000.0,
+                            "position_count": 1,
+                        },
+                        ensure_ascii=False,
+                    ),
+                    encoding="utf-8",
+                )
+                return True
+
+            now = datetime(2026, 3, 19, 12, 0, 0, tzinfo=supervisor.tz)
+            with patch.object(supervisor, "_run_investment_broker_snapshot_sync", side_effect=_write_source_snapshot) as mock_sync:
+                supervisor.run_cycle(now)
+
+            self.assertEqual(mock_sync.call_count, 1)
+            reused_summary_path = report_root / "us_beta" / "investment_broker_snapshot_summary.json"
+            reused_summary = json.loads(reused_summary_path.read_text(encoding="utf-8"))
+            self.assertEqual(reused_summary["source"], "broker_snapshot_sync_reused")
+            self.assertEqual(reused_summary["portfolio_id"], "US:us_beta")
+            rows = Storage(str(db_path)).get_investment_broker_positions_for_run(str(reused_summary["run_id"]))
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["portfolio_id"], "US:us_beta")
+            self.assertEqual(rows[0]["source"], "after")
+
     def test_dashboard_control_run_weekly_review_forces_review_and_refreshes_dashboard(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -6782,6 +6912,84 @@ class SupervisorCliTests(unittest.TestCase):
             with patch("src.app.supervisor.subprocess.run", side_effect=subprocess.TimeoutExpired(cmd=["x"], timeout=1)):
                 ok = supervisor._run_cmd("slow-task", ["python", "-m", "slow"], timeout_sec=1)
             self.assertFalse(ok)
+
+    def test_run_cmd_spaces_ibkr_gateway_tasks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = Path(tmp) / "supervisor.yaml"
+            summary_dir = Path(tmp) / "reports_supervisor"
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        f'summary_out_dir: "{summary_dir}"',
+                        "ibkr_task_min_gap_sec: 2.0",
+                        "poll_sec: 30",
+                        "markets: []",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(cfg_path))
+            completed = subprocess.CompletedProcess(args=["python"], returncode=0)
+            with patch("src.app.supervisor.subprocess.run", return_value=completed), patch(
+                "src.app.supervisor.time.monotonic",
+                side_effect=[100.0, 100.5, 102.0],
+            ), patch("src.app.supervisor.time.sleep") as mock_sleep:
+                self.assertTrue(supervisor._run_cmd("run_investment_guard:us:watchlist", ["python"]))
+                self.assertTrue(supervisor._run_cmd("run_investment_opportunity:us:watchlist", ["python"]))
+
+            mock_sleep.assert_called_once_with(1.5)
+
+    def test_run_cmd_does_not_space_non_ibkr_tasks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = Path(tmp) / "supervisor.yaml"
+            summary_dir = Path(tmp) / "reports_supervisor"
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        f'summary_out_dir: "{summary_dir}"',
+                        "ibkr_task_min_gap_sec: 2.0",
+                        "poll_sec: 30",
+                        "markets: []",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(cfg_path))
+            completed = subprocess.CompletedProcess(args=["python"], returncode=0)
+            with patch("src.app.supervisor.subprocess.run", return_value=completed), patch(
+                "src.app.supervisor.time.sleep"
+            ) as mock_sleep:
+                self.assertTrue(supervisor._run_cmd("generate_dashboard", ["python"]))
+                self.assertTrue(supervisor._run_cmd("review_investment_weekly:due", ["python"]))
+
+            mock_sleep.assert_not_called()
+
+    def test_run_cmd_sets_ibkr_telemetry_env_for_gateway_tasks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = Path(tmp) / "supervisor.yaml"
+            summary_dir = Path(tmp) / "reports_supervisor"
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        f'summary_out_dir: "{summary_dir}"',
+                        "ibkr_task_min_gap_sec: 0.0",
+                        "poll_sec: 30",
+                        "markets: []",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(cfg_path))
+            completed = subprocess.CompletedProcess(args=["python"], returncode=0)
+            with patch("src.app.supervisor.subprocess.run", return_value=completed) as mock_run:
+                self.assertTrue(supervisor._run_cmd("run_investment_guard:us:watchlist", ["python"]))
+
+            env = dict(mock_run.call_args.kwargs.get("env") or {})
+            self.assertEqual(env.get("IBKR_TELEMETRY_TOOL"), "run_investment_guard:us:watchlist")
+            self.assertEqual(env.get("IBKR_TELEMETRY_MARKET"), "US")
 
     def test_investment_execution_waits_for_offset_day(self):
         with tempfile.TemporaryDirectory() as tmp:

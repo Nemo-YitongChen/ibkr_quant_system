@@ -728,6 +728,74 @@ def _load_weekly_candidate_model_review_rows(review_dir: Path) -> List[Dict[str,
     return _read_all_csv_rows(review_dir / "weekly_candidate_model_review.csv")
 
 
+def _load_weekly_ibkr_gateway_budget_payload(review_dir: Path) -> Dict[str, Any]:
+    payload = _load_json(review_dir / "weekly_ibkr_gateway_budget_status.json")
+    if payload:
+        return payload
+    summary_json = _load_json(review_dir / "weekly_review_summary.json")
+    summary = summary_json.get("ibkr_gateway_budget")
+    rows = summary_json.get("ibkr_gateway_budget_rows")
+    if isinstance(summary, dict):
+        return {
+            "generated_at": str(summary_json.get("generated_at") or ""),
+            "summary": dict(summary),
+            "rows": [dict(row) for row in rows if isinstance(row, dict)] if isinstance(rows, list) else [],
+        }
+    return {}
+
+
+def _load_walk_forward_acceptance_payload(walk_forward_dir: Path) -> Dict[str, Any]:
+    payload = _load_json(walk_forward_dir / "walk_forward_acceptance_summary.json")
+    if payload:
+        return payload
+    legacy = _load_json(walk_forward_dir / "market_walk_forward_summary.json")
+    rows = legacy.get("summary_rows") if isinstance(legacy, dict) else []
+    if isinstance(rows, list):
+        return {
+            "generated_at": str(legacy.get("generated_at") or ""),
+            "artifact_type": "walk_forward_acceptance_summary",
+            "row_count": len([row for row in rows if isinstance(row, dict)]),
+            "rows": [dict(row) for row in rows if isinstance(row, dict)],
+            "summary": dict(legacy.get("summary") or {}),
+        }
+    return {}
+
+
+def _load_walk_forward_market_stability_payload(walk_forward_dir: Path) -> Dict[str, Any]:
+    payload = _load_json(walk_forward_dir / "walk_forward_market_stability.json")
+    if payload:
+        return payload
+    legacy = _load_json(walk_forward_dir / "market_walk_forward_summary.json")
+    rows = legacy.get("summary_rows") if isinstance(legacy, dict) else []
+    if not isinstance(rows, list):
+        return {}
+    stability_rows: List[Dict[str, Any]] = []
+    for raw in rows:
+        if not isinstance(raw, dict):
+            continue
+        rules = dict(raw.get("acceptance_rules") or {})
+        stability_rows.append(
+            {
+                "market": str(raw.get("market") or ""),
+                "profile": str(raw.get("profile") or ""),
+                "status": str(raw.get("status") or ""),
+                "selected_candidate_family": str(raw.get("selected_candidate_family") or ""),
+                "window_count": int(float(raw.get("window_count", 0) or 0)),
+                "consecutive_stable_windows": int(float(raw.get("consecutive_stable_windows", 0) or 0)),
+                "min_consecutive_stable_windows": int(
+                    float(rules.get("min_consecutive_stable_windows", 0) or 0)
+                ),
+                "acceptance_failed_rules": str(raw.get("acceptance_failed_rules") or ""),
+            }
+        )
+    return {
+        "generated_at": str(legacy.get("generated_at") or ""),
+        "artifact_type": "walk_forward_market_stability",
+        "row_count": len(stability_rows),
+        "rows": stability_rows,
+    }
+
+
 def _load_weekly_risk_review_rows(review_dir: Path) -> List[Dict[str, Any]]:
     summary_json = _load_json(review_dir / "weekly_review_summary.json")
     summary_rows = summary_json.get("risk_review_summary")
@@ -5572,6 +5640,7 @@ def _build_ops_overview(
     artifact_health_summary: Dict[str, Any],
     governance_health_summary: Dict[str, Any],
     evidence_focus_summary: Dict[str, Any] | None = None,
+    ibkr_gateway_budget_summary: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     # 运维总览只聚合“现在最值得先处理”的信号：preflight、报告新鲜度、组合健康度和执行模式偏差。
     checks = [dict(row) for row in list(preflight_summary.get("checks", []) or []) if isinstance(row, dict)]
@@ -5603,6 +5672,16 @@ def _build_ops_overview(
     evidence_focus_primary_market = str(evidence_focus.get("primary_market", "") or "")
     evidence_focus_primary_action = str(evidence_focus.get("primary_action_label", "") or "")
     evidence_focus_summary_text = str(evidence_focus.get("summary_text", "") or "")
+    gateway_budget = dict(ibkr_gateway_budget_summary or {})
+    gateway_budget_status = str(gateway_budget.get("status", "ok") or "ok").strip().lower()
+    gateway_budget_summary_text = str(gateway_budget.get("summary_text", "") or "")
+    gateway_budget_over_count = int(gateway_budget.get("over_budget_market_count", 0) or 0)
+    gateway_budget_stale_count = int(gateway_budget.get("stale_telemetry_market_count", 0) or 0)
+    gateway_budget_missing_count = int(gateway_budget.get("missing_telemetry_market_count", 0) or 0)
+    gateway_budget_request_count = int(gateway_budget.get("gateway_request_count", 0) or 0)
+    gateway_budget_cache_hit_count = int(gateway_budget.get("cache_hit_count", 0) or 0)
+    gateway_budget_cache_hit_ratio = float(gateway_budget.get("cache_hit_ratio", 0.0) or 0.0)
+    gateway_budget_max_usage_pct = float(gateway_budget.get("max_budget_usage_pct", 0.0) or 0.0)
     gateway_runtime_summary = _build_gateway_runtime_summary(preflight_summary, control_payload)
     alert_rows: List[Dict[str, Any]] = []
     for row in warning_rows[:8]:
@@ -5668,6 +5747,20 @@ def _build_ops_overview(
                 or f"urgent_evidence_focus={evidence_focus_urgent_count}",
             )
         )
+    if gateway_budget_status in {"warning", "degraded"}:
+        alert_rows.append(
+            _ops_alert_row(
+                "IBKR_GATEWAY",
+                "request_budget",
+                "FAIL" if gateway_budget_status == "degraded" else "WARN",
+                gateway_budget_summary_text
+                or (
+                    f"gateway_requests={gateway_budget_request_count} "
+                    f"over_budget={gateway_budget_over_count} "
+                    f"stale={gateway_budget_stale_count} missing={gateway_budget_missing_count}"
+                ),
+            )
+        )
     alert_class_counts: Dict[str, int] = {}
     alert_severity_counts: Dict[str, int] = {"fail": 0, "warn": 0, "ok": 0}
     for row in alert_rows:
@@ -5712,6 +5805,7 @@ def _build_ops_overview(
         f"artifact_degraded={artifact_degraded_count} | "
         f"data_attention={data_attention_count} | "
         f"evidence_urgent={evidence_focus_urgent_count} | "
+        f"gateway_budget={gateway_budget_status} | "
         f"mode_mismatch={execution_mismatch_count} | "
         f"gateway_runtime={gateway_runtime_summary.get('status', 'unknown')} | "
         f"governance={governance_status} | "
@@ -5741,6 +5835,15 @@ def _build_ops_overview(
         "evidence_focus_primary_market": evidence_focus_primary_market,
         "evidence_focus_primary_action": evidence_focus_primary_action,
         "evidence_focus_summary_text": evidence_focus_summary_text,
+        "ibkr_gateway_budget_status": gateway_budget_status,
+        "ibkr_gateway_budget_summary_text": gateway_budget_summary_text,
+        "ibkr_gateway_budget_over_budget_market_count": gateway_budget_over_count,
+        "ibkr_gateway_budget_stale_telemetry_market_count": gateway_budget_stale_count,
+        "ibkr_gateway_budget_missing_telemetry_market_count": gateway_budget_missing_count,
+        "ibkr_gateway_budget_gateway_request_count": gateway_budget_request_count,
+        "ibkr_gateway_budget_cache_hit_count": gateway_budget_cache_hit_count,
+        "ibkr_gateway_budget_cache_hit_ratio": gateway_budget_cache_hit_ratio,
+        "ibkr_gateway_budget_max_usage_pct": gateway_budget_max_usage_pct,
         "control_service_status": str(service_state.get("status", "disabled") or "disabled"),
         "gateway_runtime_summary": gateway_runtime_summary,
         "gateway_runtime_status": str(gateway_runtime_summary.get("status", "") or ""),
@@ -7194,6 +7297,7 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
     execution_kpi_dir = _resolve_path(str(cfg.get("dashboard_execution_kpi_dir", "reports_investment_execution")))
     weekly_review_dir_raw = cfg.get("dashboard_weekly_review_dir")
     weekly_review_dir = _resolve_path(str(weekly_review_dir_raw or "reports_investment_weekly"))
+    walk_forward_dir = _resolve_path(str(cfg.get("dashboard_walk_forward_dir", "reports_walk_forward") or "reports_walk_forward"))
     preflight_dir = _resolve_path(str(cfg.get("dashboard_preflight_dir", "reports_preflight") or "reports_preflight"))
     reconcile_dir_raw = str(cfg.get("dashboard_reconcile_dir", "") or "").strip()
     reconcile_dir = _resolve_path(reconcile_dir_raw or "reports_investment_reconcile")
@@ -7251,6 +7355,15 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
     weekly_unified_evidence_rows = _load_weekly_unified_evidence_rows(weekly_review_dir)
     weekly_blocked_vs_allowed_expost_rows = _load_weekly_blocked_vs_allowed_expost_rows(weekly_review_dir)
     weekly_candidate_model_review_rows = _load_weekly_candidate_model_review_rows(weekly_review_dir)
+    weekly_ibkr_gateway_budget_payload = _load_weekly_ibkr_gateway_budget_payload(weekly_review_dir)
+    weekly_ibkr_gateway_budget_summary = dict(weekly_ibkr_gateway_budget_payload.get("summary") or {})
+    weekly_ibkr_gateway_budget_rows = [
+        dict(row)
+        for row in list(weekly_ibkr_gateway_budget_payload.get("rows", []) or [])
+        if isinstance(row, dict)
+    ]
+    walk_forward_acceptance_payload = _load_walk_forward_acceptance_payload(walk_forward_dir)
+    walk_forward_market_stability_payload = _load_walk_forward_market_stability_payload(walk_forward_dir)
     weekly_risk_review_rows = _load_weekly_risk_review_rows(weekly_review_dir)
     weekly_risk_review_map: Dict[str, Dict[str, Any]] = {
         str(row.get("portfolio_id", "") or ""): dict(row)
@@ -7467,6 +7580,7 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
         artifact_health_summary=artifact_health_overview,
         governance_health_summary=governance_health_summary,
         evidence_focus_summary=evidence_focus_summary,
+        ibkr_gateway_budget_summary=weekly_ibkr_gateway_budget_summary,
     )
     gateway_runtime_summary = dict(ops_overview.get("gateway_runtime_summary", {}) or {})
     for card in list(trade_cards) + list(dry_run_cards):
@@ -7477,6 +7591,10 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
         "preflight_summary": preflight_summary,
         "ibkr_history_probe_summary": ibkr_history_probe_summary,
         "ops_overview": ops_overview,
+        "ibkr_gateway_budget": weekly_ibkr_gateway_budget_payload,
+        "ibkr_gateway_budget_rows": weekly_ibkr_gateway_budget_rows,
+        "walk_forward_acceptance": walk_forward_acceptance_payload,
+        "walk_forward_market_stability": walk_forward_market_stability_payload,
         "execution_weekly": execution_weekly,
         "execution_weekly_groups": execution_weekly_groups,
         "execution_weekly_display": execution_weekly_display,
@@ -8362,6 +8480,8 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
             str(row.get("status", "") or ""),
             str(row.get("portfolio_id", "") or "-"),
             str(row.get("linked_evidence_action_id", "") or "-"),
+            str(row.get("linked_strategy_parameter_suggestion_id", "") or "-"),
+            str(row.get("linked_strategy_parameter_field", "") or "-"),
             str(row.get("resolution_status", "") or "-"),
             _short_summary_text(str(row.get("resolution_note", "") or "-"), max_len=96),
             str(row.get("error_class", "") or "-"),
@@ -8573,7 +8693,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
       <div class="meta advanced-only" data-i18n-zh="这些按钮调用本机 supervisor control service；组合级开关会写入当前 summary 目录的 `dashboard_control_state.json`，并在下次启动 `python -m src.app.supervisor` 时自动恢复。">这些按钮调用本机 supervisor control service；组合级开关会写入当前 summary 目录的 `dashboard_control_state.json`，并在下次启动 `python -m src.app.supervisor` 时自动恢复。</div>
       <div class="advanced-only">
       <h3>控制操作审计</h3>
-      {_render_table(["ts", "action", "status", "portfolio", "linked_action", "resolution", "resolution_note", "error_class", "severity", "detail", "error"], control_action_history_rows) if control_action_history_rows else '<div class="empty">暂无控制操作审计记录。</div>'}
+      {_render_table(["ts", "action", "status", "portfolio", "linked_action", "linked_strategy_param", "strategy_field", "resolution", "resolution_note", "error_class", "severity", "detail", "error"], control_action_history_rows) if control_action_history_rows else '<div class="empty">暂无控制操作审计记录。</div>'}
       </div>
     </section>
     """
@@ -10016,6 +10136,7 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
       {_render_table(["市场", "股票池", "模式", "是否开市", "优先级", "建议动作", "说明", "账户权益", "账户现金", "Gateway", "可立即入场", "继续等待", "执行中订单"], overview_rows)}
       </div>
     </section>
+    {dashboard_v2_blocks_card}
     <div class="advanced-only">
     {feedback_threshold_trial_alert_card}
     {weekly_group_card}
@@ -10048,7 +10169,6 @@ def write_dashboard(payload: Dict[str, Any], out_dir: str) -> None:
     {execution_feedback_overview_card}
     {execution_hotspot_overview_card}
     {execution_cost_overview_card}
-    {dashboard_v2_blocks_card}
     {market_views_card}
     {weekly_waterfall_card}
     {evidence_review_card}

@@ -99,6 +99,31 @@ fields:
     step: 0.05
     bounds: [-0.60, 0.10]
     precision: 2
+  mr_weight:
+    field_label: "mean reversion signal weight"
+    step: 0.05
+    bounds: [0.00, 1.00]
+    precision: 2
+  bo_weight:
+    field_label: "breakout signal weight"
+    step: 0.05
+    bounds: [0.00, 1.00]
+    precision: 2
+  mid_soft_floor:
+    field_label: "mid regime soft floor"
+    step: 0.05
+    bounds: [0.00, 1.00]
+    precision: 2
+  mid_qty_min:
+    field_label: "mid regime min qty multiplier"
+    step: 0.05
+    bounds: [0.00, 1.00]
+    precision: 2
+  mid_qty_max:
+    field_label: "mid regime max qty multiplier"
+    step: 0.05
+    bounds: [0.25, 2.00]
+    precision: 2
 
 priorities:
   EXECUTION_GATE:
@@ -184,3 +209,20 @@ priorities:
     risk_recovery_max_bonus:
       rank: 1
       label: "先改 recovery bonus"
+  SIGNAL_FUSION:
+    mr_weight:
+      rank: 1
+      label: "先改均值回归权重"
+    bo_weight:
+      rank: 2
+      label: "再改突破权重"
+  MID_REGIME_SIZING:
+    mid_soft_floor:
+      rank: 1
+      label: "先改 mid soft floor"
+    mid_qty_min:
+      rank: 2
+      label: "再改防守最小仓位"
+    mid_qty_max:
+      rank: 3
+      label: "最后改进攻最大仓位"

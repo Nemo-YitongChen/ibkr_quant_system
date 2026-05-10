@@ -440,6 +440,8 @@ def test_investment_workflow_cli_smoke_generates_contract_artifacts(tmp_path, mo
         weekly_dir / "weekly_slicing_calibration_summary.csv",
         weekly_dir / "weekly_risk_calibration_summary.csv",
         weekly_dir / "weekly_calibration_patch_suggestions.csv",
+        weekly_dir / "weekly_strategy_parameter_suggestions.csv",
+        weekly_dir / "weekly_strategy_parameter_suggestions.json",
         weekly_dir / "weekly_patch_governance_summary.csv",
         weekly_dir / "weekly_control_timeseries.csv",
         weekly_dir / "weekly_review.md",
@@ -511,6 +513,8 @@ def test_investment_workflow_cli_smoke_generates_contract_artifacts(tmp_path, mo
     assert weekly_summary["risk_calibration_summary"][0]["portfolio_id"] == portfolio_id
     assert "calibration_patch_suggestions" in weekly_summary
     assert isinstance(weekly_summary["calibration_patch_suggestions"], list)
+    assert "strategy_parameter_suggestions" in weekly_summary
+    assert isinstance(weekly_summary["strategy_parameter_suggestions"], list)
     assert "patch_governance_summary" in weekly_summary
     assert isinstance(weekly_summary["patch_governance_summary"], list)
     assert weekly_summary["weekly_control_timeseries"][0]["portfolio_id"] == portfolio_id
@@ -552,7 +556,14 @@ def test_investment_workflow_cli_smoke_generates_contract_artifacts(tmp_path, mo
     assert dashboard_payload["cards"][0]["execution_weekly_row"]["portfolio_id"] == portfolio_id
     assert dashboard_payload["execution_weekly"]["portfolio_id"] == portfolio_id
     assert "control_split_text" in dashboard_payload["cards"][0]["weekly_attribution"]
-    assert len(dashboard_payload["dashboard_v2_blocks"]) == 5
+    assert len(dashboard_payload["dashboard_v2_blocks"]) == 10
+    assert [block.get("id") for block in dashboard_payload["dashboard_v2_blocks"] if block.get("category") == "home"] == [
+        "ops_health",
+        "evidence_focus_actions",
+        "evidence_quality",
+        "dashboard_control_actions",
+    ]
+    assert any(block.get("id") == "walk_forward_acceptance" for block in dashboard_payload["dashboard_v2_blocks"])
     assert any(block.get("id") == "evidence_focus_actions" for block in dashboard_payload["dashboard_v2_blocks"])
     assert dashboard_payload["evidence_action_summary"]["action_label"]
     assert dashboard_payload["evidence_action_summary"]["decision_basis"]

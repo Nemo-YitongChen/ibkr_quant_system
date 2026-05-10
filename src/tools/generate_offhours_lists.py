@@ -22,14 +22,13 @@ from typing import Any, Dict, List
 
 from ..common.logger import get_logger
 from ..common.markets import add_market_args, market_config_path, resolve_market_code
-from ..ibkr.market_data import MarketDataService
 from ..enrichment.providers import EnrichmentProviders
 from ..strategies.engine_strategy import StrategyConfig
 from ..strategies.mid_regime import RegimeConfig
 from ..strategies.regime_adaptor import RegimeAdaptConfig, RegimeAdaptor
 
 from ..offhours.candidates import build_candidate_symbols
-from ..offhours.ib_setup import connect_ib, set_delayed_frozen, register_contracts, get_net_liquidation
+from ..offhours.ib_setup import connect_ib, set_delayed_frozen, register_contracts, get_net_liquidation, market_data_service_from_config
 from ..offhours.compute_short import compute_short_for_symbol
 from ..offhours.compute_mid import compute_mid_for_symbol
 from ..offhours.compute_long import compute_long_for_symbol
@@ -101,7 +100,7 @@ def main() -> None:
 
     log.info(f"Offhours symbols n={len(symbols)}: {symbols}")
 
-    md = MarketDataService(ib)
+    md = market_data_service_from_config(ib, ibkr_cfg)
     register_contracts(ib, md, symbols)
 
     base_mid_cfg = RegimeConfig(**(strategy_cfg_raw.get("mid_regime", {}) or {}))

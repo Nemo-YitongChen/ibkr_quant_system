@@ -22,6 +22,7 @@ from ..common.adaptive_strategy import (
     load_report_adaptive_strategy_payload,
 )
 from ..common.artifact_contracts import ARTIFACT_SCHEMA_VERSION
+from ..common.ibkr_telemetry import record_ibkr_request
 from ..common.market_structure import MarketStructureConfig
 from ..common.markets import market_timezone_name, symbol_matches_market
 from ..common.logger import get_logger
@@ -1183,6 +1184,13 @@ class InvestmentExecutionEngine:
             max_age_sec=int(self.execution_cfg.account_snapshot_ttl_sec or 0),
         )
         if cached:
+            record_ibkr_request(
+                "account_summary",
+                status="cache_hit",
+                market=self.market,
+                actual_gateway_request=False,
+                details={"portfolio_id": self.portfolio_id, "account_id": account_id},
+            )
             return {
                 "netliq": float(cached.get("netliq", 0.0) or 0.0),
                 "cash": float(cached.get("cash", 0.0) or 0.0),
@@ -1191,12 +1199,46 @@ class InvestmentExecutionEngine:
 
         stale_cached = self.storage.get_latest_account_snapshot(account_id)
         rows = []
+        account_summary_error: Exception | None = None
         try:
             rows = self.ib.accountSummary(account_id)
-        except Exception:
+            record_ibkr_request(
+                "account_summary",
+                status="success" if rows else "empty",
+                market=self.market,
+                actual_gateway_request=True,
+                details={"method": "accountSummary(account_id)", "portfolio_id": self.portfolio_id, "account_id": account_id, "rows": len(rows or [])},
+            )
+        except Exception as e:
+            record_ibkr_request(
+                "account_summary",
+                status="error",
+                market=self.market,
+                actual_gateway_request=True,
+                details={"method": "accountSummary(account_id)", "portfolio_id": self.portfolio_id, "account_id": account_id, "error": str(e)[:240]},
+            )
+            account_summary_error = e
             rows = []
         if not rows:
-            rows = self.ib.accountSummary()
+            try:
+                rows = self.ib.accountSummary()
+                record_ibkr_request(
+                    "account_summary",
+                    status="success" if rows else "empty",
+                    market=self.market,
+                    actual_gateway_request=True,
+                    details={"method": "accountSummary()", "portfolio_id": self.portfolio_id, "account_id": account_id, "rows": len(rows or [])},
+                )
+            except Exception as e:
+                record_ibkr_request(
+                    "account_summary",
+                    status="error",
+                    market=self.market,
+                    actual_gateway_request=True,
+                    details={"method": "accountSummary()", "portfolio_id": self.portfolio_id, "account_id": account_id, "error": str(e)[:240]},
+                )
+                account_summary_error = e
+                rows = []
         usable_rows = [row for row in rows if str(getattr(row, "account", "") or "").strip() == account_id]
         if not usable_rows:
             visible_accounts = sorted({str(getattr(row, "account", "") or "").strip() for row in rows if str(getattr(row, "account", "") or "").strip()})
@@ -1213,6 +1255,8 @@ class InvestmentExecutionEngine:
                     "cash": float(stale_cached.get("cash", 0.0) or 0.0),
                     "buying_power": float(stale_cached.get("buying_power", 0.0) or 0.0),
                 }
+            if account_summary_error is not None:
+                raise account_summary_error
             raise ValueError(
                 f"Configured IBKR account_id={account_id} was not found in accountSummary. Visible accounts={visible_accounts}"
             )
@@ -1244,12 +1288,40 @@ class InvestmentExecutionEngine:
         market_filter = str(self.market or "").upper()
         try:
             rows = list(self.ib.portfolio(account_id))
-        except Exception:
+            record_ibkr_request(
+                "positions",
+                status="success" if rows else "empty",
+                market=self.market,
+                actual_gateway_request=True,
+                details={"method": "portfolio(account_id)", "portfolio_id": self.portfolio_id, "account_id": account_id, "rows": len(rows or [])},
+            )
+        except Exception as e:
+            record_ibkr_request(
+                "positions",
+                status="error",
+                market=self.market,
+                actual_gateway_request=True,
+                details={"method": "portfolio(account_id)", "portfolio_id": self.portfolio_id, "account_id": account_id, "error": str(e)[:240]},
+            )
             rows = []
         if not rows:
             try:
                 rows = list(self.ib.portfolio())
-            except Exception:
+                record_ibkr_request(
+                    "positions",
+                    status="success" if rows else "empty",
+                    market=self.market,
+                    actual_gateway_request=True,
+                    details={"method": "portfolio()", "portfolio_id": self.portfolio_id, "account_id": account_id, "rows": len(rows or [])},
+                )
+            except Exception as e:
+                record_ibkr_request(
+                    "positions",
+                    status="error",
+                    market=self.market,
+                    actual_gateway_request=True,
+                    details={"method": "portfolio()", "portfolio_id": self.portfolio_id, "account_id": account_id, "error": str(e)[:240]},
+                )
                 rows = []
         if rows:
             matched_rows = [row for row in rows if str(getattr(row, "account", "") or "").strip() == account_id]
@@ -1270,7 +1342,24 @@ class InvestmentExecutionEngine:
                 }
             return out
 
-        fallback_rows = list(self.ib.positions())
+        try:
+            fallback_rows = list(self.ib.positions())
+        except Exception as e:
+            record_ibkr_request(
+                "positions",
+                status="error",
+                market=self.market,
+                actual_gateway_request=True,
+                details={"method": "positions()", "portfolio_id": self.portfolio_id, "account_id": account_id, "error": str(e)[:240]},
+            )
+            raise
+        record_ibkr_request(
+            "positions",
+            status="success" if fallback_rows else "empty",
+            market=self.market,
+            actual_gateway_request=True,
+            details={"method": "positions()", "portfolio_id": self.portfolio_id, "account_id": account_id, "rows": len(fallback_rows or [])},
+        )
         if not fallback_rows:
             return out
         matched_rows = [row for row in fallback_rows if str(getattr(row, "account", "") or "").strip() == account_id]

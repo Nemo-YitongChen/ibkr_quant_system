@@ -14,6 +14,7 @@ from typing import Dict, List, Optional, Tuple
 
 from ib_insync import IB, Contract, RealTimeBarList
 
+from ..common.ibkr_telemetry import record_ibkr_request
 from ..common.logger import get_logger
 
 log = get_logger("ibkr.market_data")
@@ -167,7 +168,10 @@ class MarketDataService:
         hist_retry_backoff_sec: float = 1.5,
         hist_5m_cache_ttl_sec: int = 90,
         hist_5m_cache_stale_fallback_sec: int = 900,
+        hist_daily_cache_ttl_sec: int = 21600,
+        hist_daily_cache_stale_fallback_sec: int = 604800,
         hist_cache_dir: Path | str | None = None,
+        hist_daily_cache_dir: Path | str | None = None,
     ):
         self.ib = ib
         self.request_timeout_sec = request_timeout_sec
@@ -181,10 +185,18 @@ class MarketDataService:
             self.hist_5m_cache_ttl_sec,
             int(hist_5m_cache_stale_fallback_sec),
         )
+        self.hist_daily_cache_ttl_sec = max(0, int(hist_daily_cache_ttl_sec))
+        self.hist_daily_cache_stale_fallback_sec = max(
+            self.hist_daily_cache_ttl_sec,
+            int(hist_daily_cache_stale_fallback_sec),
+        )
         self._contracts: Dict[str, Contract] = {}
         default_cache_dir = Path(__file__).resolve().parents[2] / ".cache" / "market_data_5m"
         self._hist_cache_dir = Path(hist_cache_dir or default_cache_dir)
         self._hist_cache_dir.mkdir(parents=True, exist_ok=True)
+        default_daily_cache_dir = Path(__file__).resolve().parents[2] / ".cache" / "market_data_daily"
+        self._hist_daily_cache_dir = Path(hist_daily_cache_dir or default_daily_cache_dir)
+        self._hist_daily_cache_dir.mkdir(parents=True, exist_ok=True)
 
     @staticmethod
     def _same_contract(left: Contract, right: Contract) -> bool:
@@ -374,6 +386,96 @@ class MarketDataService:
             )
         return out, age_sec
 
+    def _historical_daily_cache_key(
+        self,
+        symbol: str,
+        contract: Contract,
+        *,
+        days: int,
+        duration: str,
+        what_to_show: str,
+        use_rth: bool,
+    ) -> str:
+        payload = {
+            "symbol": str(symbol or "").upper(),
+            "con_id": str(getattr(contract, "conId", "") or ""),
+            "contract_symbol": str(getattr(contract, "symbol", "") or "").upper(),
+            "exchange": str(getattr(contract, "exchange", "") or "").upper(),
+            "primary_exchange": str(getattr(contract, "primaryExchange", "") or "").upper(),
+            "currency": str(getattr(contract, "currency", "") or "").upper(),
+            "days": int(days),
+            "duration": str(duration or ""),
+            "bar_size": "1 day",
+            "what_to_show": str(what_to_show or "").upper(),
+            "use_rth": bool(use_rth),
+        }
+        return hashlib.sha1(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+
+    def _historical_daily_cache_path(self, cache_key: str) -> Path:
+        return self._hist_daily_cache_dir / f"{cache_key}.json"
+
+    def _write_historical_daily_cache(self, cache_key: str, bars: List[OHLCVBar]) -> None:
+        payload = {
+            "ts": time.time(),
+            "bars": [
+                {
+                    "time": bar.time.astimezone(timezone.utc).isoformat(),
+                    "open": float(bar.open),
+                    "high": float(bar.high),
+                    "low": float(bar.low),
+                    "close": float(bar.close),
+                    "volume": float(bar.volume),
+                }
+                for bar in list(bars or [])
+            ],
+        }
+        try:
+            self._historical_daily_cache_path(cache_key).write_text(
+                json.dumps(payload, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except Exception:
+            return
+
+    def _read_historical_daily_cache(
+        self,
+        cache_key: str,
+        *,
+        max_age_sec: int,
+    ) -> Tuple[List[OHLCVBar], Optional[float]]:
+        cache_path = self._historical_daily_cache_path(cache_key)
+        if not cache_path.exists():
+            return [], None
+        try:
+            payload = json.loads(cache_path.read_text(encoding="utf-8"))
+        except Exception:
+            return [], None
+        ts = float(payload.get("ts", 0.0) or 0.0)
+        if ts <= 0:
+            return [], None
+        age_sec = max(0.0, time.time() - ts)
+        if age_sec > max(0, int(max_age_sec)):
+            return [], age_sec
+        out: List[OHLCVBar] = []
+        for row in list(payload.get("bars", []) or []):
+            try:
+                t = datetime.fromisoformat(str(row.get("time", "")))
+            except Exception:
+                continue
+            if t.tzinfo is None:
+                t = t.replace(tzinfo=timezone.utc)
+            out.append(
+                OHLCVBar(
+                    time=t,
+                    open=float(row.get("open", 0.0) or 0.0),
+                    high=float(row.get("high", 0.0) or 0.0),
+                    low=float(row.get("low", 0.0) or 0.0),
+                    close=float(row.get("close", 0.0) or 0.0),
+                    volume=float(row.get("volume", 0.0) or 0.0),
+                )
+            )
+        return out, age_sec
+
     def _cleanup_historical_request(self, raw: object | None) -> None:
         if raw is None or self.ib is None:
             return
@@ -491,6 +593,13 @@ class MarketDataService:
             max_age_sec=self.hist_5m_cache_ttl_sec,
         )
         if len(cached) >= min(need, 30):
+            record_ibkr_request(
+                "historical_5m",
+                status="cache_hit",
+                symbol=symbol,
+                actual_gateway_request=False,
+                details={"bar_size": hist_bar_size, "duration": hist_duration},
+            )
             log.info("[%s] Using cached historical %s bars age=%.1fs", symbol, hist_bar_size, cached_age or 0.0)
             return cached[-need:]
         keep = bool(self.hist_keep_up_to_date)
@@ -504,15 +613,44 @@ class MarketDataService:
                 keep=keep,
             )
             if out:
+                record_ibkr_request(
+                    "historical_5m",
+                    status="success",
+                    symbol=symbol,
+                    actual_gateway_request=True,
+                    details={"bar_size": hist_bar_size, "duration": hist_duration, "bars": len(out)},
+                )
                 self._write_historical_5m_cache(cache_key, out)
+            else:
+                record_ibkr_request(
+                    "historical_5m",
+                    status="empty",
+                    symbol=symbol,
+                    actual_gateway_request=True,
+                    details={"bar_size": hist_bar_size, "duration": hist_duration},
+                )
             return out[-need:]
         except Exception as e:
+            record_ibkr_request(
+                "historical_5m",
+                status="error",
+                symbol=symbol,
+                actual_gateway_request=True,
+                details={"bar_size": hist_bar_size, "duration": hist_duration, "error": str(e)[:240]},
+            )
             log.warning(f"Historical fallback failed for {symbol}: {e}")
             stale, stale_age = self._read_historical_5m_cache(
                 cache_key,
                 max_age_sec=self.hist_5m_cache_stale_fallback_sec,
             )
             if len(stale) >= min(need, 30):
+                record_ibkr_request(
+                    "historical_5m",
+                    status="stale_fallback",
+                    symbol=symbol,
+                    actual_gateway_request=False,
+                    details={"bar_size": hist_bar_size, "duration": hist_duration, "age_sec": stale_age or 0.0},
+                )
                 log.warning(
                     "[%s] Using stale cached historical %s bars age=%.1fs after fallback failure",
                     symbol,
@@ -534,41 +672,108 @@ class MarketDataService:
         """
         contract = self._contract_for_symbol(symbol)
         duration = self._duration_from_days(days)
-        self._ensure_sync_ib_call_ready(context="IB.reqHistoricalData(daily)")
-
-        raw = self.ib.reqHistoricalData(
-            contract=contract,
-            endDateTime="",
-            durationStr=duration,
-            barSizeSetting="1 day",
-            whatToShow=what_to_show,
-            useRTH=1 if use_rth else 0,
-            formatDate=2,
-            keepUpToDate=False,
-            timeout=float(self.request_timeout_sec),
+        cache_key = self._historical_daily_cache_key(
+            symbol,
+            contract,
+            days=int(days),
+            duration=duration,
+            what_to_show=what_to_show,
+            use_rth=use_rth,
         )
-        raw = self._ensure_sync_result(raw, context="IB.reqHistoricalData(daily)")
-
-        out: List[OHLCVBar] = []
-        for r in raw:
-            t = r.date
-            if isinstance(t, str):
-                continue
-            if isinstance(t, date) and not isinstance(t, datetime):
-                t = datetime(t.year, t.month, t.day, tzinfo=timezone.utc)
-            if t.tzinfo is None:
-                t = t.replace(tzinfo=timezone.utc)
-            out.append(
-                OHLCVBar(
-                    time=t,
-                    open=float(r.open),
-                    high=float(r.high),
-                    low=float(r.low),
-                    close=float(r.close),
-                    volume=float(getattr(r, "volume", 0.0) or 0.0),
-                )
+        cached, cached_age = self._read_historical_daily_cache(
+            cache_key,
+            max_age_sec=self.hist_daily_cache_ttl_sec,
+        )
+        if cached:
+            record_ibkr_request(
+                "historical_daily",
+                status="cache_hit",
+                symbol=symbol,
+                actual_gateway_request=False,
+                details={"duration": duration, "what_to_show": what_to_show, "use_rth": bool(use_rth)},
             )
-        return out
+            log.info("[%s] Using cached historical daily bars age=%.1fs", symbol, cached_age or 0.0)
+            return cached
+
+        try:
+            self._ensure_sync_ib_call_ready(context="IB.reqHistoricalData(daily)")
+            raw = self.ib.reqHistoricalData(
+                contract=contract,
+                endDateTime="",
+                durationStr=duration,
+                barSizeSetting="1 day",
+                whatToShow=what_to_show,
+                useRTH=1 if use_rth else 0,
+                formatDate=2,
+                keepUpToDate=False,
+                timeout=float(self.request_timeout_sec),
+            )
+            raw = self._ensure_sync_result(raw, context="IB.reqHistoricalData(daily)")
+            out = self._raw_to_ohlcv(raw)
+            if out:
+                record_ibkr_request(
+                    "historical_daily",
+                    status="success",
+                    symbol=symbol,
+                    actual_gateway_request=True,
+                    details={"duration": duration, "what_to_show": what_to_show, "use_rth": bool(use_rth), "bars": len(out)},
+                )
+                self._write_historical_daily_cache(cache_key, out)
+                return out
+            record_ibkr_request(
+                "historical_daily",
+                status="empty",
+                symbol=symbol,
+                actual_gateway_request=True,
+                details={"duration": duration, "what_to_show": what_to_show, "use_rth": bool(use_rth)},
+            )
+            stale, stale_age = self._read_historical_daily_cache(
+                cache_key,
+                max_age_sec=self.hist_daily_cache_stale_fallback_sec,
+            )
+            if stale:
+                record_ibkr_request(
+                    "historical_daily",
+                    status="stale_fallback",
+                    symbol=symbol,
+                    actual_gateway_request=False,
+                    details={"duration": duration, "age_sec": stale_age or 0.0},
+                )
+                log.warning(
+                    "[%s] Using stale cached historical daily bars age=%.1fs after empty request response",
+                    symbol,
+                    stale_age or 0.0,
+                )
+                return stale
+            return out
+        except Exception as e:
+            record_ibkr_request(
+                "historical_daily",
+                status="error",
+                symbol=symbol,
+                actual_gateway_request=True,
+                details={"duration": duration, "what_to_show": what_to_show, "use_rth": bool(use_rth), "error": str(e)[:240]},
+            )
+            stale, stale_age = self._read_historical_daily_cache(
+                cache_key,
+                max_age_sec=self.hist_daily_cache_stale_fallback_sec,
+            )
+            if stale:
+                record_ibkr_request(
+                    "historical_daily",
+                    status="stale_fallback",
+                    symbol=symbol,
+                    actual_gateway_request=False,
+                    details={"duration": duration, "age_sec": stale_age or 0.0},
+                )
+                log.warning(
+                    "[%s] Using stale cached historical daily bars age=%.1fs after request failure: %s",
+                    symbol,
+                    stale_age or 0.0,
+                    e,
+                )
+                return stale
+            raise
 
     def get_snapshot_price(self, symbol: str) -> float:
         contract = self._contract_for_symbol(symbol)

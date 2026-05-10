@@ -66,3 +66,33 @@ def test_render_dashboard_v2_blocks_previews_nested_rows():
 
     assert "blocked_vs_allowed" in html
     assert "GATE_OK" in html
+
+
+def test_render_dashboard_v2_blocks_groups_home_and_advanced_blocks():
+    html = render_dashboard_v2_blocks(
+        [
+            {
+                "title": "Ops Health",
+                "status": "ok",
+                "summary": "home block",
+                "category": "home",
+                "advanced_only": False,
+                "metrics": {"preflight_fail_count": 0},
+                "rows": [{"name": "hidden unless advanced"}],
+            },
+            {
+                "title": "Market Views",
+                "status": "ok",
+                "summary": "advanced block",
+                "category": "advanced",
+                "advanced_only": True,
+                "metrics": {"market_count": 3},
+            },
+        ]
+    )
+
+    assert "Ops Health" in html
+    assert "Market Views" in html
+    assert "Advanced Evidence Blocks" in html
+    assert 'class="advanced-only dashboard-v2-advanced"' in html
+    assert "hidden unless advanced" in html

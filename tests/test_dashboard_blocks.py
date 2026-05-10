@@ -3,6 +3,10 @@ from __future__ import annotations
 from src.tools.dashboard_blocks import build_dashboard_v2_blocks
 
 
+def _by_id(blocks):
+    return {block["id"]: block for block in blocks}
+
+
 def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
     payload = {
         "ops_overview": {
@@ -13,6 +17,14 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
             "evidence_focus_urgent_count": 2,
             "evidence_focus_primary_market": "US",
             "evidence_focus_primary_action": "Review gate thresholds",
+            "ibkr_gateway_budget_status": "warning",
+            "ibkr_gateway_budget_gateway_request_count": 1200,
+            "ibkr_gateway_budget_cache_hit_count": 300,
+            "ibkr_gateway_budget_cache_hit_ratio": 0.2,
+            "ibkr_gateway_budget_max_usage_pct": 110.0,
+            "ibkr_gateway_budget_over_budget_market_count": 1,
+            "ibkr_gateway_budget_stale_telemetry_market_count": 0,
+            "ibkr_gateway_budget_missing_telemetry_market_count": 0,
             "alert_rows": [{"status": "warn", "name": "stale"}],
         },
         "artifact_health_overview": {"fail_count": 0, "warn_count": 1},
@@ -29,6 +41,8 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
                         "status": "failed",
                         "error_class": "transient_io",
                         "linked_evidence_action_id": "2026W18-US-market-review_gate_thresholds",
+                        "linked_strategy_parameter_suggestion_id": "2026-w19-us-watchlist-mr-weight",
+                        "linked_strategy_parameter_field": "mr_weight",
                         "resolution_status": "ACKNOWLEDGED",
                     },
                 ],
@@ -109,24 +123,77 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
             {"review_label": "SIGNAL_RANKING_WORKING", "portfolio_id": "US:watchlist"},
             {"review_label": "EXPECTED_EDGE_OVERSTATED", "portfolio_id": "HK:watchlist"},
         ],
+        "walk_forward_acceptance": {
+            "rows": [
+                {
+                    "market": "US",
+                    "status": "RECOMMEND_PATCH",
+                    "selected_candidate_family": "REDUCE_TURNOVER",
+                    "acceptance_failed_rules": "",
+                },
+                {
+                    "market": "HK",
+                    "status": "KEEP_BASELINE",
+                    "selected_candidate_family": "BASELINE",
+                    "acceptance_failed_rules": "post_cost_improvement",
+                },
+            ]
+        },
+        "walk_forward_market_stability": {
+            "rows": [
+                {
+                    "market": "US",
+                    "consecutive_stable_windows": 3,
+                    "min_consecutive_stable_windows": 3,
+                },
+                {
+                    "market": "HK",
+                    "consecutive_stable_windows": 1,
+                    "min_consecutive_stable_windows": 3,
+                },
+            ]
+        },
         "weekly_attribution_waterfall": [{"component": "selection"}],
     }
 
     blocks = build_dashboard_v2_blocks(payload)
-    by_id = {block["id"]: block for block in blocks}
+    by_id = _by_id(blocks)
 
     assert list(by_id) == [
         "ops_health",
-        "dashboard_control_actions",
-        "market_views",
         "evidence_focus_actions",
         "evidence_quality",
+        "dashboard_control_actions",
+        "market_views",
+        "walk_forward_acceptance",
+        "weekly_attribution_waterfall",
+        "unified_evidence_overview",
+        "blocked_vs_allowed_expost",
+        "dashboard_control_action_history",
+    ]
+    assert [block["id"] for block in blocks if block["category"] == "home"] == [
+        "ops_health",
+        "evidence_focus_actions",
+        "evidence_quality",
+        "dashboard_control_actions",
+    ]
+    assert [block["id"] for block in blocks if block["advanced_only"]] == [
+        "market_views",
+        "walk_forward_acceptance",
+        "weekly_attribution_waterfall",
+        "unified_evidence_overview",
+        "blocked_vs_allowed_expost",
+        "dashboard_control_action_history",
     ]
     assert by_id["ops_health"]["metrics"]["degraded_health_count"] == 1
     assert by_id["ops_health"]["metrics"]["evidence_focus_action_count"] == 3
     assert by_id["ops_health"]["metrics"]["evidence_focus_urgent_count"] == 2
     assert by_id["ops_health"]["metrics"]["evidence_focus_primary_market"] == "US"
     assert by_id["ops_health"]["metrics"]["evidence_focus_primary_action"] == "Review gate thresholds"
+    assert by_id["ops_health"]["metrics"]["ibkr_gateway_budget_status"] == "warning"
+    assert by_id["ops_health"]["metrics"]["ibkr_gateway_budget_gateway_request_count"] == 1200
+    assert by_id["ops_health"]["metrics"]["ibkr_gateway_budget_cache_hit_ratio"] == 0.2
+    assert by_id["ops_health"]["metrics"]["ibkr_gateway_budget_over_budget_market_count"] == 1
     assert by_id["dashboard_control_actions"]["metrics"]["history_count"] == 3
     assert by_id["dashboard_control_actions"]["metrics"]["linked_action_history_count"] == 1
     assert (
@@ -134,6 +201,13 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
         == "2026W18-US-market-review_gate_thresholds"
     )
     assert by_id["dashboard_control_actions"]["metrics"]["last_resolution_status"] == "ACKNOWLEDGED"
+    assert by_id["dashboard_control_actions"]["metrics"]["linked_strategy_parameter_suggestion_history_count"] == 1
+    assert (
+        by_id["dashboard_control_actions"]["metrics"]["last_linked_strategy_parameter_suggestion_id"]
+        == "2026-w19-us-watchlist-mr-weight"
+    )
+    assert by_id["dashboard_control_actions"]["metrics"]["last_linked_strategy_parameter_field"] == "mr_weight"
+    assert by_id["dashboard_control_actions"]["metrics"]["last_strategy_parameter_resolution_status"] == "ACKNOWLEDGED"
     assert by_id["dashboard_control_actions"]["metrics"]["transient_io_error_count"] == 1
     assert by_id["dashboard_control_actions"]["metrics"]["retryable_error_count"] == 1
     assert by_id["market_views"]["metrics"]["market_count"] == 3
@@ -175,6 +249,22 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
         "count": 1,
         "action": "keep_gate_monitor_post_cost",
     }
+    assert by_id["weekly_attribution_waterfall"]["category"] == "advanced"
+    assert by_id["walk_forward_acceptance"]["category"] == "advanced"
+    assert by_id["walk_forward_acceptance"]["metrics"]["market_count"] == 2
+    assert by_id["walk_forward_acceptance"]["metrics"]["recommend_patch_count"] == 1
+    assert by_id["walk_forward_acceptance"]["metrics"]["rejected_or_baseline_count"] == 1
+    assert by_id["walk_forward_acceptance"]["metrics"]["stable_market_count"] == 1
+    assert by_id["walk_forward_acceptance"]["status"] == "warn"
+    assert by_id["weekly_attribution_waterfall"]["metrics"]["row_count"] == 1
+    assert by_id["unified_evidence_overview"]["advanced_only"] is True
+    assert by_id["unified_evidence_overview"]["metrics"]["row_count"] == 3
+    assert by_id["blocked_vs_allowed_expost"]["metrics"]["review_count"] == 1
+    assert by_id["dashboard_control_action_history"]["metrics"]["history_count"] == 3
+    assert (
+        by_id["dashboard_control_action_history"]["metrics"]["linked_strategy_parameter_suggestion_history_count"]
+        == 1
+    )
 
 
 def test_evidence_quality_block_marks_gate_review_when_blocked_outperforms():
@@ -191,7 +281,7 @@ def test_evidence_quality_block_marks_gate_review_when_blocked_outperforms():
         "candidate_model_review": [],
     }
 
-    block = build_dashboard_v2_blocks(payload)[-1]
+    block = _by_id(build_dashboard_v2_blocks(payload))["evidence_quality"]
 
     assert block["status"] == "warn"
     assert block["metrics"]["too_restrictive_count"] == 1
@@ -214,7 +304,7 @@ def test_evidence_quality_block_keeps_insufficient_samples_non_warning():
         "candidate_model_review": [],
     }
 
-    block = build_dashboard_v2_blocks(payload)[-1]
+    block = _by_id(build_dashboard_v2_blocks(payload))["evidence_quality"]
 
     assert block["status"] == "ok"
     assert block["metrics"]["insufficient_sample_count"] == 1
@@ -238,7 +328,7 @@ def test_market_views_block_keeps_sample_collection_non_warning():
         },
     }
 
-    block = build_dashboard_v2_blocks(payload)[2]
+    block = _by_id(build_dashboard_v2_blocks(payload))["market_views"]
 
     assert block["status"] == "ok"
     assert block["metrics"]["attention_count"] == 0
@@ -260,7 +350,7 @@ def test_market_views_block_handles_malformed_evidence_summary():
         "market_evidence_action_summary": {"US": "legacy bad summary"},
     }
 
-    block = build_dashboard_v2_blocks(payload)[2]
+    block = _by_id(build_dashboard_v2_blocks(payload))["market_views"]
 
     assert block["status"] == "warn"
     assert block["metrics"]["gate_review_market_count"] == 1
@@ -279,7 +369,7 @@ def test_evidence_focus_actions_block_keeps_sample_collection_non_warning():
         ]
     }
 
-    block = build_dashboard_v2_blocks(payload)[3]
+    block = _by_id(build_dashboard_v2_blocks(payload))["evidence_focus_actions"]
 
     assert block["id"] == "evidence_focus_actions"
     assert block["status"] == "ok"

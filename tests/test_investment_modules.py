@@ -72,17 +72,39 @@ def _bars(n: int = 500, start: float = 100.0, step: float = 0.2):
 
 
 class InvestmentModuleTests(unittest.TestCase):
-    def test_labeling_daily_bars_prefers_ibkr_loader_before_yfinance_cache(self):
+    def test_labeling_daily_bars_prefers_yfinance_cache_before_ibkr_loader(self):
+        class _FakeLoader:
+            def __init__(self):
+                self.calls = 0
+
+            def get_daily_bars(self, symbol, days):
+                self.calls += 1
+                return (_bars(n=20, start=50.0, step=0.1), "ibkr")
+
+        loader = _FakeLoader()
+        with patch("src.tools.label_investment_snapshots.fetch_daily_bars", return_value=_bars(n=20, start=60.0, step=0.2)):
+            rows, source = _load_daily_bars_for_labeling(
+                "AAPL",
+                "US",
+                90,
+                {"US": loader},
+            )
+        self.assertEqual(source, "yfinance_cache")
+        self.assertEqual(loader.calls, 0)
+        self.assertGreaterEqual(len(rows), 10)
+
+    def test_labeling_daily_bars_falls_back_to_ibkr_loader_when_yfinance_empty(self):
         class _FakeLoader:
             def get_daily_bars(self, symbol, days):
                 return (_bars(n=20, start=50.0, step=0.1), "ibkr")
 
-        rows, source = _load_daily_bars_for_labeling(
-            "AAPL",
-            "US",
-            90,
-            {"US": _FakeLoader()},
-        )
+        with patch("src.tools.label_investment_snapshots.fetch_daily_bars", return_value=[]):
+            rows, source = _load_daily_bars_for_labeling(
+                "AAPL",
+                "US",
+                90,
+                {"US": _FakeLoader()},
+            )
         self.assertEqual(source, "ibkr")
         self.assertGreaterEqual(len(rows), 10)
 

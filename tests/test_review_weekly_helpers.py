@@ -145,6 +145,21 @@ def test_read_csv_rows_and_markdown_writer(tmp_path: Path):
                 "source_note": "被 edge gate 挡掉的单事后并不差，当前 edge floor/buffer 可能偏紧。",
             }
         ],
+        strategy_parameter_suggestion_rows=[
+            {
+                "portfolio_id": "US:watchlist",
+                "market": "US",
+                "primary_field": "mr_weight",
+                "current_value": 0.6,
+                "suggested_value": 0.55,
+                "auto_apply": 0,
+                "linked_evidence_artifact": "weekly_candidate_model_review",
+                "linked_evidence_key": "US:US:watchlist:SIGNAL_RANKING_INVERTED",
+                "source_signal_label": "signal ranking inverted",
+                "acceptance_rule": "Paper first; require at least 3 validation windows.",
+                "rollback_note": "Revert when post-cost edge deteriorates.",
+            }
+        ],
         patch_governance_rows=[
             {
                 "market": "US",
@@ -164,6 +179,31 @@ def test_read_csv_rows_and_markdown_writer(tmp_path: Path):
                 "examples": "US:watchlist:已批准",
             }
         ],
+        evidence_focus_effectiveness_summary={
+            "new_action_count": 2,
+            "urgent_action_count": 1,
+            "open_urgent_action_count": 0,
+            "resolved_action_count": 1,
+            "stale_urgent_action_count": 0,
+            "acknowledged_action_count": 1,
+            "applied_action_count": 1,
+            "rejected_action_count": 0,
+            "superseded_action_count": 0,
+            "avg_resolution_hours": 18.5,
+        },
+        strategy_parameter_suggestion_effectiveness_summary={
+            "suggestion_count": 1,
+            "open_suggestion_count": 1,
+            "handled_suggestion_count": 0,
+            "resolved_suggestion_count": 0,
+            "stale_suggestion_count": 0,
+            "auto_apply_count": 0,
+            "acknowledged_suggestion_count": 0,
+            "applied_suggestion_count": 0,
+            "rejected_suggestion_count": 0,
+            "superseded_suggestion_count": 0,
+            "avg_resolution_hours": 0.0,
+        },
     )
     text = out_path.read_text(encoding="utf-8")
     assert "# Weekly Investment Review" in text
@@ -181,9 +221,18 @@ def test_read_csv_rows_and_markdown_writer(tmp_path: Path):
     assert "## Calibration Patch Suggestions" in text
     assert "market_profiles.US.edge_cost_buffer_bps" in text
     assert "edge gate 偏紧" in text
+    assert "## Strategy Parameter Suggestions" in text
+    assert "mr_weight" in text
+    assert "weekly_candidate_model_review" in text
+    assert "Paper first" in text
     assert "## Patch Governance Summary" in text
     assert "adv_split_trigger_pct" in text
     assert "avg_review_to_apply_weeks=1.0" in text
+    assert "## Evidence Focus Effectiveness" in text
+    assert "New actions: 2 urgent=1 open_urgent=0 resolved=1 stale_urgent=0" in text
+    assert "avg_resolution_hours=18.50" in text
+    assert "## Strategy Parameter Suggestion Effectiveness" in text
+    assert "Suggestions: 1 open=1 handled=0 resolved=0 stale=0 auto_apply=0" in text
 
 
 def test_weekly_strategy_note_prefers_defensive_cap_message() -> None:

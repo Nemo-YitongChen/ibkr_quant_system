@@ -36,6 +36,11 @@ def test_strategy_parameter_proposed_value_uses_bounds_and_precision() -> None:
         registry=registry,
     ) == 0.48
     assert strategy_parameter_proposed_value("max_slices_per_symbol", 3, "INCREASE", registry=registry) == 4
+    assert strategy_parameter_proposed_value("mr_weight", 0.60, "INCREASE", registry=registry) == 0.65
+    assert strategy_parameter_priority("SIGNAL_FUSION", "mr_weight", registry=registry) == (
+        1,
+        "先改均值回归权重",
+    )
 
 
 def test_strategy_parameter_registry_supports_custom_override_file(tmp_path: Path) -> None:

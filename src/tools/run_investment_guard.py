@@ -155,6 +155,7 @@ def main(argv: list[str] | None = None) -> None:
             guard_cfg=guard_cfg,
             market_structure=market_structure,
             adaptive_strategy=adaptive_strategy,
+            market_data_cfg=ibkr_cfg,
         )
         result = engine.run(report_dir=str(report_dir), submit=bool(args.submit))
         summary_fields, artifact_fields = _cli_summary_payload(result, report_dir)

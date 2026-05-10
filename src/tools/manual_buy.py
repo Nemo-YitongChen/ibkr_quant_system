@@ -8,8 +8,8 @@ from ib_insync import Stock, MarketOrder  # type: ignore
 from ..common.logger import get_logger
 from ..common.storage import Storage
 from ..ibkr.connection import IBKRConnection
-from ..ibkr.market_data import MarketDataService
 from ..ibkr.orders import OrderService
+from ..offhours.ib_setup import market_data_service_from_config
 
 log = get_logger("tools.manual_buy")
 
@@ -35,7 +35,7 @@ def main():
     ib = conn.connect()
     ib.RequestTimeout = 5
 
-    md = MarketDataService(ib)
+    md = market_data_service_from_config(ib, ibkr_cfg)
     orders = OrderService(ib, account_id, storage, md_svc=md)
 
     # Use delayed-frozen to avoid 420 if no RT permission

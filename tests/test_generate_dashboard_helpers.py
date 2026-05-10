@@ -735,6 +735,42 @@ def test_build_ops_overview_keeps_sample_only_evidence_non_alerting() -> None:
     assert all(row["category"] != "EVIDENCE" for row in overview["alert_rows"])
 
 
+def test_build_ops_overview_surfaces_ibkr_gateway_budget_alert() -> None:
+    overview = _build_ops_overview(
+        [],
+        preflight_summary={"pass_count": 1, "warn_count": 0, "fail_count": 0, "checks": []},
+        control_payload={"service": {"status": "configured"}, "actions": {}},
+        execution_mode_summary={"mismatch_count": 0},
+        status_rollout_summary={
+            "market_state_missing_count": 0,
+            "data_attention_count": 0,
+            "data_research_fallback_count": 0,
+            "market_rows": [],
+        },
+        artifact_health_summary={"warning_count": 0, "degraded_count": 0},
+        governance_health_summary={"status": "ready"},
+        ibkr_gateway_budget_summary={
+            "status": "warning",
+            "summary_text": "gateway_requests=2200 cache_hits=300 over_budget=1",
+            "gateway_request_count": 2200,
+            "cache_hit_count": 300,
+            "cache_hit_ratio": 0.12,
+            "over_budget_market_count": 1,
+            "stale_telemetry_market_count": 0,
+            "missing_telemetry_market_count": 0,
+            "max_budget_usage_pct": 110.0,
+        },
+    )
+
+    categories = {row["category"]: row for row in overview["alert_rows"]}
+    assert overview["ibkr_gateway_budget_status"] == "warning"
+    assert overview["ibkr_gateway_budget_gateway_request_count"] == 2200
+    assert overview["ibkr_gateway_budget_over_budget_market_count"] == 1
+    assert "gateway_budget=warning" in overview["summary_text"]
+    assert categories["IBKR_GATEWAY"]["status"] == "WARN"
+    assert "gateway_requests=2200" in categories["IBKR_GATEWAY"]["detail"]
+
+
 def test_build_ops_overview_classifies_preflight_gateway_port_alerts() -> None:
     overview = _build_ops_overview(
         [],

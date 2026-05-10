@@ -5,6 +5,14 @@ port: 4002            # IB Gateway paper default
 client_id: 101
 account_id: "UXXXXXXX"  # 改成你的
 timezone: "Australia/Sydney"
+market_data:
+  request_timeout_sec: 12.0
+  hist_retry_attempts: 2
+  hist_retry_backoff_sec: 1.5
+  hist_5m_cache_ttl_sec: 90
+  hist_5m_cache_stale_fallback_sec: 900
+  hist_daily_cache_ttl_sec: 21600
+  hist_daily_cache_stale_fallback_sec: 604800
 regime_adaptor_config: "config/regime_adaptor.yaml"
 paper_allowed_execution_sources:
   - REALTIME

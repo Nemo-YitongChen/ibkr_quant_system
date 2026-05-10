@@ -16,10 +16,10 @@ try:
     from ..ibkr.account import AccountService
     from ..ibkr.connection import IBKRConnection
     from ..ibkr.fills import FillProcessor
-    from ..ibkr.market_data import MarketDataService
     from ..ibkr.orders import OrderService
     from ..ibkr.universe import UniverseConfig, UniverseService, scanner_location_codes_from_config
     from ..offhours.candidates import load_watchlist_symbols
+    from ..offhours.ib_setup import market_data_service_from_config
     from ..portfolio.allocator import AllocatorConfig, PortfolioAllocator
     from ..portfolio.entry_guard import EntryGuard, GuardConfig
     from ..risk.limits import DailyRiskGate, RiskContextConfig
@@ -46,10 +46,10 @@ except ImportError:
     from ibkr.account import AccountService
     from ibkr.connection import IBKRConnection
     from ibkr.fills import FillProcessor
-    from ibkr.market_data import MarketDataService
     from ibkr.orders import OrderService
     from ibkr.universe import UniverseConfig, UniverseService, scanner_location_codes_from_config
     from offhours.candidates import load_watchlist_symbols
+    from offhours.ib_setup import market_data_service_from_config
     from portfolio.allocator import AllocatorConfig, PortfolioAllocator
     from portfolio.entry_guard import EntryGuard, GuardConfig
     from risk.limits import DailyRiskGate, RiskContextConfig
@@ -391,7 +391,7 @@ def run_intraday_engine(
 
     _fills = FillProcessor(ib, storage, gate)
 
-    md = MarketDataService(ib)
+    md = market_data_service_from_config(ib, ibkr_cfg)
     orders = OrderService(ib, account_id, storage)
     entry_guard = EntryGuard(ib, GuardConfig())
     allocator = PortfolioAllocator(

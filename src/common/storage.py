@@ -1554,6 +1554,21 @@ class Storage:
         with self._conn() as c:
             c.execute(f"INSERT INTO investment_broker_positions ({cols}) VALUES ({qs})", list(row.values()))
 
+    def get_investment_broker_positions_for_run(self, run_id: str) -> List[Dict[str, Any]]:
+        run_id = str(run_id or "").strip()
+        if not run_id:
+            return []
+        with self._conn() as c:
+            cur = c.execute(
+                "SELECT * FROM investment_broker_positions WHERE run_id=? ORDER BY symbol ASC, id ASC",
+                (run_id,),
+            )
+            columns = [desc[0] for desc in (cur.description or [])]
+            return [
+                {columns[idx]: row[idx] for idx in range(len(columns))}
+                for row in cur.fetchall()
+            ]
+
     def insert_account_snapshot(self, row: Dict[str, Any]):
         row = dict(row)
         row.setdefault("ts", datetime.utcnow().isoformat())

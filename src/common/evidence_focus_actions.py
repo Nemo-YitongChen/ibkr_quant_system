@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from hashlib import sha1
 from typing import Any, Dict, Iterable, List
 
@@ -20,6 +21,13 @@ KNOWN_ACTION_STATUSES = {
     ACTION_STATUS_SUPERSEDED,
     ACTION_STATUS_EXPIRED,
 }
+RESOLVED_ACTION_STATUSES = {
+    ACTION_STATUS_APPLIED,
+    ACTION_STATUS_REJECTED,
+    ACTION_STATUS_SUPERSEDED,
+}
+HANDLED_ACTION_STATUSES = RESOLVED_ACTION_STATUSES | {ACTION_STATUS_ACKNOWLEDGED}
+NON_STALE_ACTION_STATUSES = HANDLED_ACTION_STATUSES | {ACTION_STATUS_EXPIRED}
 
 URGENCY_URGENT = "urgent"
 URGENCY_NORMAL = "normal"
@@ -50,6 +58,15 @@ ACTION_EVIDENCE_ARTIFACTS = {
     "keep_gate_monitor_post_cost": "weekly_blocked_vs_allowed_expost.json",
 }
 
+BLOCKED_VS_ALLOWED_EXPOST_ARTIFACT = "weekly_blocked_vs_allowed_expost.json"
+BLOCKED_VS_ALLOWED_REVIEW_LABEL_ACTIONS = {
+    "BLOCKED_OUTPERFORMED_ALLOWED": ("review_gate_thresholds", URGENCY_URGENT),
+    "INSUFFICIENT_OUTCOME_SAMPLE": ("collect_more_outcome_samples", URGENCY_SAMPLE_COLLECTION),
+    "INSUFFICIENT_SAMPLE": ("collect_more_outcome_samples", URGENCY_SAMPLE_COLLECTION),
+    "GATE_OK": ("keep_gate_monitor_post_cost", URGENCY_NORMAL),
+    "BLOCKING_HELPED": ("keep_gate_monitor_post_cost", URGENCY_NORMAL),
+}
+
 
 def _safe_int(value: Any, default: int = 0) -> int:
     try:
@@ -58,6 +75,25 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return int(float(value))
     except (TypeError, ValueError):
         return int(default)
+
+
+def _parse_iso_datetime(value: Any) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _hours_between(start: datetime | None, end: datetime | None) -> float | None:
+    if start is None or end is None:
+        return None
+    return round(max(0.0, (end - start).total_seconds() / 3600.0), 2)
 
 
 def normalize_action_status(status: Any) -> str:
@@ -168,28 +204,51 @@ def normalize_evidence_focus_action(raw: Dict[str, Any] | None) -> Dict[str, Any
     }
 
 
-def _action_from_review_label(review_label: str) -> tuple[str, str]:
+def action_from_blocked_vs_allowed_review_label(review_label: str) -> tuple[str, str]:
     label = str(review_label or "").strip().upper()
-    if label == "BLOCKED_OUTPERFORMED_ALLOWED":
-        return "review_gate_thresholds", URGENCY_URGENT
+    if label in BLOCKED_VS_ALLOWED_REVIEW_LABEL_ACTIONS:
+        return BLOCKED_VS_ALLOWED_REVIEW_LABEL_ACTIONS[label]
     if label.startswith("INSUFFICIENT"):
-        return "collect_more_outcome_samples", URGENCY_SAMPLE_COLLECTION
-    if label in {"GATE_OK", "BLOCKING_HELPED"}:
-        return "keep_gate_monitor_post_cost", URGENCY_NORMAL
+        return BLOCKED_VS_ALLOWED_REVIEW_LABEL_ACTIONS["INSUFFICIENT_SAMPLE"]
     return "review_evidence", URGENCY_NORMAL
 
 
 def build_evidence_focus_actions_from_expost(
-    rows: Iterable[Dict[str, Any]],
+    rows: Iterable[Dict[str, Any]] | None,
     *,
     week: str,
+    artifact_missing: bool = False,
 ) -> List[Dict[str, Any]]:
+    if rows is None or artifact_missing:
+        return [
+            normalize_evidence_focus_action(
+                {
+                    "week": week,
+                    "market": "GLOBAL",
+                    "portfolio_id": "",
+                    "action_type": "build_weekly_unified_evidence",
+                    "action": "build_weekly_unified_evidence",
+                    "basis": "MISSING_BLOCKED_VS_ALLOWED_EXPOST_ARTIFACT",
+                    "urgency": URGENCY_URGENT,
+                    "linked_evidence_artifact": BLOCKED_VS_ALLOWED_EXPOST_ARTIFACT,
+                    "linked_evidence_key": f"missing|{BLOCKED_VS_ALLOWED_EXPOST_ARTIFACT}",
+                    "summary": (
+                        "weekly_blocked_vs_allowed_expost artifact missing; "
+                        "rebuild weekly evidence before gate calibration."
+                    ),
+                    "detail": (
+                        "Blocked-vs-allowed ex-post review is unavailable, so gate calibration should "
+                        "wait for weekly evidence regeneration."
+                    ),
+                }
+            )
+        ]
     actions: List[Dict[str, Any]] = []
     for raw in list(rows or []):
         if not isinstance(raw, dict):
             continue
         row = dict(raw)
-        action_type, urgency = _action_from_review_label(str(row.get("review_label") or ""))
+        action_type, urgency = action_from_blocked_vs_allowed_review_label(str(row.get("review_label") or ""))
         action = normalize_evidence_focus_action(
             {
                 "week": week,
@@ -199,7 +258,7 @@ def build_evidence_focus_actions_from_expost(
                 "action": action_type,
                 "basis": str(row.get("review_label") or ""),
                 "urgency": urgency,
-                "linked_evidence_artifact": "weekly_blocked_vs_allowed_expost.json",
+                "linked_evidence_artifact": BLOCKED_VS_ALLOWED_EXPOST_ARTIFACT,
                 "linked_evidence_key": "|".join(
                     str(part or "")
                     for part in (
@@ -368,3 +427,76 @@ def apply_action_resolutions(
         updated["resolution_note"] = str(audit.get("resolution_note") or "").strip()
         resolved.append(updated)
     return resolved
+
+
+def build_evidence_focus_effectiveness_summary(
+    actions: Iterable[Dict[str, Any]],
+    *,
+    now_iso: str,
+    stale_after_days: int = 7,
+) -> Dict[str, Any]:
+    """Summarize whether evidence focus actions were handled after creation."""
+    rows = [normalize_evidence_focus_action(row) for row in list(actions or []) if isinstance(row, dict)]
+    now_dt = _parse_iso_datetime(now_iso) or datetime.now(timezone.utc)
+    stale_hours = max(0.0, float(stale_after_days) * 24.0)
+    status_counts: Dict[str, int] = {}
+    stale_urgent_action_ids: List[str] = []
+    resolution_hours: List[float] = []
+
+    for row in rows:
+        status = normalize_action_status(row.get("status"))
+        status_counts[status] = int(status_counts.get(status, 0)) + 1
+        created_dt = _parse_iso_datetime(row.get("created_at") or row.get("updated_at"))
+        resolved_dt = _parse_iso_datetime(row.get("resolved_at"))
+        hours = _hours_between(created_dt, resolved_dt)
+        action_age_hours = _hours_between(created_dt, now_dt)
+        if hours is not None and status in HANDLED_ACTION_STATUSES:
+            resolution_hours.append(hours)
+        if (
+            str(row.get("urgency") or "") == URGENCY_URGENT
+            and status not in NON_STALE_ACTION_STATUSES
+            and created_dt is not None
+            and action_age_hours is not None
+            and action_age_hours >= stale_hours
+        ):
+            stale_urgent_action_ids.append(str(row.get("action_id") or ""))
+
+    urgent_count = sum(1 for row in rows if str(row.get("urgency") or "") == URGENCY_URGENT)
+    open_urgent_count = sum(
+        1
+        for row in rows
+        if str(row.get("urgency") or "") == URGENCY_URGENT
+        and normalize_action_status(row.get("status")) not in NON_STALE_ACTION_STATUSES
+    )
+    sample_collection_count = sum(1 for row in rows if str(row.get("urgency") or "") == URGENCY_SAMPLE_COLLECTION)
+    resolved_count = sum(
+        1
+        for row in rows
+        if normalize_action_status(row.get("status")) in RESOLVED_ACTION_STATUSES
+    )
+    avg_resolution_hours = round(sum(resolution_hours) / len(resolution_hours), 2) if resolution_hours else 0.0
+    summary_text = (
+        f"actions={len(rows)} urgent={urgent_count} open_urgent={open_urgent_count} "
+        f"resolved={resolved_count} stale_urgent={len(stale_urgent_action_ids)} "
+        f"avg_resolution_hours={avg_resolution_hours:.2f}"
+    )
+    return {
+        "status": "warn" if stale_urgent_action_ids else "ok",
+        "summary_text": summary_text,
+        "new_action_count": len(rows),
+        "action_count": len(rows),
+        "urgent_action_count": urgent_count,
+        "open_urgent_action_count": open_urgent_count,
+        "resolved_action_count": resolved_count,
+        "acknowledged_action_count": int(status_counts.get(ACTION_STATUS_ACKNOWLEDGED, 0)),
+        "applied_action_count": int(status_counts.get(ACTION_STATUS_APPLIED, 0)),
+        "rejected_action_count": int(status_counts.get(ACTION_STATUS_REJECTED, 0)),
+        "superseded_action_count": int(status_counts.get(ACTION_STATUS_SUPERSEDED, 0)),
+        "sample_collection_count": sample_collection_count,
+        "stale_urgent_action_count": len(stale_urgent_action_ids),
+        "avg_resolution_hours": avg_resolution_hours,
+        "stale_after_days": int(stale_after_days),
+        "status_counts": status_counts,
+        "stale_urgent_action_ids": [action_id for action_id in stale_urgent_action_ids if action_id][:10],
+        "read_only": True,
+    }

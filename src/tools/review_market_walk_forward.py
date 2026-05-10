@@ -1075,6 +1075,87 @@ def _cli_summary_payload(report: Dict[str, Any], out_dir: Path) -> tuple[Dict[st
     return summary_contract.to_dict(), artifacts.to_dict()
 
 
+def _build_walk_forward_acceptance_summary_payload(report: Dict[str, Any]) -> Dict[str, Any]:
+    rows: List[Dict[str, Any]] = []
+    for raw in list(report.get("summary_rows") or []):
+        row = dict(raw or {})
+        rows.append(
+            {
+                "market": str(row.get("market") or ""),
+                "profile": str(row.get("profile") or ""),
+                "selected_candidate_family": str(row.get("selected_candidate_family") or ""),
+                "selected_candidate_label": str(row.get("selected_candidate_label") or ""),
+                "status": str(row.get("status") or ""),
+                "status_reason": str(row.get("status_reason") or ""),
+                "acceptance_failed_rules": str(row.get("acceptance_failed_rules") or ""),
+                "acceptance_rules": dict(row.get("acceptance_rules") or {}),
+                "baseline_validation_score": float(row.get("baseline_validation_score", 0.0) or 0.0),
+                "tuned_validation_score": float(row.get("tuned_validation_score", 0.0) or 0.0),
+                "improvement_score": float(row.get("improvement_score", 0.0) or 0.0),
+                "win_rate": float(row.get("win_rate", 0.0) or 0.0),
+                "mean_validate_turnover": float(row.get("mean_validate_turnover", 0.0) or 0.0),
+                "mean_validate_turnover_target": float(row.get("mean_validate_turnover_target", 0.0) or 0.0),
+                "mean_validate_outcome_5d_bps": float(row.get("mean_validate_outcome_5d_bps", 0.0) or 0.0),
+                "mean_validate_outcome_20d_bps": float(row.get("mean_validate_outcome_20d_bps", 0.0) or 0.0),
+                "mean_validate_outcome_60d_bps": float(row.get("mean_validate_outcome_60d_bps", 0.0) or 0.0),
+                "mean_validate_realized_edge_20d_bps": float(
+                    row.get("mean_validate_realized_edge_20d_bps", 0.0) or 0.0
+                ),
+                "read_only": True,
+            }
+        )
+    return {
+        "generated_at": str(report.get("generated_at") or ""),
+        "schema_version": 1,
+        "artifact_type": "walk_forward_acceptance_summary",
+        "row_count": len(rows),
+        "rows": rows,
+        "summary": dict(report.get("summary") or {}),
+    }
+
+
+def _build_walk_forward_market_stability_payload(report: Dict[str, Any]) -> Dict[str, Any]:
+    rows: List[Dict[str, Any]] = []
+    for raw in list(report.get("summary_rows") or []):
+        row = dict(raw or {})
+        rules = dict(row.get("acceptance_rules") or {})
+        rows.append(
+            {
+                "market": str(row.get("market") or ""),
+                "profile": str(row.get("profile") or ""),
+                "status": str(row.get("status") or ""),
+                "selected_candidate_family": str(row.get("selected_candidate_family") or ""),
+                "window_count": int(row.get("window_count", 0) or 0),
+                "consecutive_stable_windows": int(row.get("consecutive_stable_windows", 0) or 0),
+                "min_validation_windows": int(rules.get("min_validation_windows", 0) or 0),
+                "min_consecutive_stable_windows": int(
+                    rules.get("min_consecutive_stable_windows", 0) or 0
+                ),
+                "win_rate": float(row.get("win_rate", 0.0) or 0.0),
+                "improvement_score": float(row.get("improvement_score", 0.0) or 0.0),
+                "acceptance_failed_rules": str(row.get("acceptance_failed_rules") or ""),
+                "turnover_guard_passed": float(row.get("mean_validate_turnover", 0.0) or 0.0)
+                <= float(row.get("mean_validate_turnover_target", 0.0) or 0.0),
+                "outcome_support_5_20_60_passed": (
+                    float(row.get("mean_validate_outcome_5d_bps", 0.0) or 0.0) > 0.0
+                    and float(row.get("mean_validate_outcome_20d_bps", 0.0) or 0.0) > 0.0
+                    and float(row.get("mean_validate_outcome_60d_bps", 0.0) or 0.0) > 0.0
+                ),
+                "post_cost_realized_edge_20d_bps": float(
+                    row.get("mean_validate_realized_edge_20d_bps", 0.0) or 0.0
+                ),
+                "read_only": True,
+            }
+        )
+    return {
+        "generated_at": str(report.get("generated_at") or ""),
+        "schema_version": 1,
+        "artifact_type": "walk_forward_market_stability",
+        "row_count": len(rows),
+        "rows": rows,
+    }
+
+
 def main(argv: List[str] | None = None) -> None:
     args = parse_args(argv)
     db_path = resolve_repo_path(BASE_DIR, str(args.db))
@@ -1096,9 +1177,18 @@ def main(argv: List[str] | None = None) -> None:
     patch_rows = list(report.get("patch_rows") or [])
     write_csv(str(out_dir / "market_walk_forward_summary.csv"), summary_rows)
     write_csv(str(out_dir / "market_walk_forward_candidate_summary.csv"), candidate_rows)
+    write_csv(str(out_dir / "walk_forward_parameter_candidates.csv"), candidate_rows)
     write_csv(str(out_dir / "market_walk_forward_windows.csv"), window_rows)
     write_csv(str(out_dir / "market_walk_forward_patch_recommendations.csv"), patch_rows)
     write_json(str(out_dir / "market_walk_forward_summary.json"), report)
+    write_json(
+        str(out_dir / "walk_forward_acceptance_summary.json"),
+        _build_walk_forward_acceptance_summary_payload(report),
+    )
+    write_json(
+        str(out_dir / "walk_forward_market_stability.json"),
+        _build_walk_forward_market_stability_payload(report),
+    )
     _write_walk_forward_markdown(out_dir / "market_walk_forward.md", report=report)
     summary_fields, artifact_fields = _cli_summary_payload(report, out_dir)
     emit_cli_summary(

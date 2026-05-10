@@ -5,7 +5,19 @@ def clamp(x: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, x))
 
 
-def fuse(short_sig: float, long_sig: float, mid_scale: float, can_trade_short: bool) -> float:
+def fuse(
+    short_sig: float,
+    long_sig: float,
+    mid_scale: float,
+    can_trade_short: bool,
+    *,
+    short_base_weight: float = 0.85,
+    short_mid_weight: float = 0.10,
+    long_weight: float = 0.10,
+    mid_bias_weight: float = 0.05,
+    momentum_block_mid_threshold: float = 0.25,
+    momentum_block_short_threshold: float = 0.60,
+) -> float:
     """
     输出 total_sig ∈ [-1, 1]
     设计：
@@ -22,13 +34,13 @@ def fuse(short_sig: float, long_sig: float, mid_scale: float, can_trade_short: b
 
     # 中期过滤：m 太差时，短线“追涨型信号”不让做（保留反转/均值回归的机会）
     # 这里假设 short_sig > 0 表示做多倾向；若你未来做空，逻辑可对称扩展。
-    if m < 0.25 and s > 0.6:
+    if m < float(momentum_block_mid_threshold) and s > float(momentum_block_short_threshold):
         return 0.0  # 强烈逆风不追
 
     # 调权：中期越强，短线权重越大（允许更积极）
-    w_short = 0.85 + 0.10 * (m - 0.5)   # 0.80 ~ 0.90
-    w_long  = 0.10                      # 长线暂时占位
-    w_bias  = 0.05 * (m - 0.5)          # 中期给一点偏置（弱则略降）
+    w_short = float(short_base_weight) + float(short_mid_weight) * (m - 0.5)
+    w_long = float(long_weight)
+    w_bias = float(mid_bias_weight) * (m - 0.5)
 
     total = w_short * s + w_long * clamp(long_sig, -1.0, 1.0) + w_bias
     return clamp(total, -1.0, 1.0)

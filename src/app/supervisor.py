@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import copy
 import hashlib
+import os
 import signal
 import subprocess
 import sys
@@ -11,7 +12,7 @@ import json
 import threading
 import webbrowser
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
@@ -126,6 +127,16 @@ CALIBRATION_PATCH_REVIEW_LABELS = {
     "APPLIED": "已应用",
     "CLEAR": "已清除",
 }
+IBKR_GATEWAY_TASK_PREFIXES = (
+    "generate_investment_report:",
+    "generate_trade_report:",
+    "sync_investment_broker_snapshot:",
+    "run_investment_execution:",
+    "run_investment_guard:",
+    "run_investment_opportunity:",
+    "short_safety_sync:",
+    "label_investment_snapshots:",
+)
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
@@ -264,6 +275,7 @@ class Supervisor:
         self._weekly_review_summary_cache_size = -1
         self._weekly_review_summary_cache_payload: Dict[str, Any] = {}
         self._cycle_running = False
+        self._last_ibkr_gateway_task_start_monotonic = 0.0
         self._dashboard_control_lock = threading.Lock()
         self._dashboard_control_poll_state_lock = threading.Lock()
         self._dashboard_control_poll_state_cache: Dict[str, Any] = {}
@@ -420,6 +432,8 @@ class Supervisor:
             str(self._preflight_output_dir()),
             "--feedback_thresholds_config",
             str(self._weekly_feedback_threshold_override_path()),
+            "--dashboard_control_audit",
+            str(self._dashboard_control_action_audit_path()),
             "--days",
             str(int(self.cfg.get("weekly_review_days", 7) or 7)),
         ]
@@ -2419,13 +2433,49 @@ class Supervisor:
 
         return sorted([market for market in self.markets if market.enabled], key=_priority)
 
+    @staticmethod
+    def _is_ibkr_gateway_task(name: str) -> bool:
+        task_name = str(name or "").strip().lower()
+        return any(task_name.startswith(prefix) for prefix in IBKR_GATEWAY_TASK_PREFIXES)
+
+    @staticmethod
+    def _ibkr_gateway_task_market(name: str) -> str:
+        parts = [part for part in str(name or "").split(":") if part]
+        if len(parts) < 2:
+            return ""
+        market = str(parts[1] or "").upper().strip()
+        return market if market not in {"DUE", "FORCED"} else ""
+
+    def _space_ibkr_gateway_task(self, name: str) -> None:
+        if not self._is_ibkr_gateway_task(name):
+            return
+        gap_sec = max(0.0, float(self.cfg.get("ibkr_task_min_gap_sec", 2.0) or 0.0))
+        if gap_sec <= 0:
+            return
+        now_mono = time.monotonic()
+        last_start = float(getattr(self, "_last_ibkr_gateway_task_start_monotonic", 0.0) or 0.0)
+        wait_sec = (gap_sec - (now_mono - last_start)) if last_start > 0 else 0.0
+        if wait_sec > 0:
+            log.info("Spacing IBKR Gateway task %s by %.2fs", name, wait_sec)
+            time.sleep(wait_sec)
+            now_mono = time.monotonic()
+        self._last_ibkr_gateway_task_start_monotonic = now_mono
+
     def _run_cmd(self, name: str, cmd: List[str], *, timeout_sec: float | int | None = None) -> bool:
+        self._space_ibkr_gateway_task(name)
         log.info(f"Running task {name}: {' '.join(cmd)}")
         timeout = None
         if timeout_sec is not None and float(timeout_sec) > 0:
             timeout = float(timeout_sec)
+        env = None
+        if self._is_ibkr_gateway_task(name):
+            env = os.environ.copy()
+            env["IBKR_TELEMETRY_TOOL"] = str(name)
+            task_market = self._ibkr_gateway_task_market(name)
+            if task_market:
+                env["IBKR_TELEMETRY_MARKET"] = task_market
         try:
-            res = subprocess.run(cmd, cwd=str(BASE_DIR), text=True, timeout=timeout)
+            res = subprocess.run(cmd, cwd=str(BASE_DIR), text=True, timeout=timeout, env=env)
         except subprocess.TimeoutExpired:
             log.warning(f"Task {name} timed out after {timeout:.0f}s")
             return False
@@ -4125,6 +4175,145 @@ class Supervisor:
             timeout_sec=float(item.get("broker_snapshot_timeout_sec", self.cfg.get("execution_timeout_sec", 300))),
         )
 
+    def _broker_snapshot_singleflight_key(self, item: Dict[str, Any], report_market: str) -> str:
+        cfg_path = self._ibkr_config_path_for(item, report_market)
+        try:
+            ibkr_cfg = _load_yaml(cfg_path)
+        except Exception:
+            ibkr_cfg = {}
+        account_id = str(ibkr_cfg.get("account_id") or "").strip()
+        db_path = str(self._db_path(item, report_market))
+        return "|".join(
+            [
+                str(report_market or "").upper(),
+                str(account_id or "UNKNOWN_ACCOUNT"),
+                str(cfg_path),
+                str(db_path),
+            ]
+        )
+
+    def _reuse_investment_broker_snapshot_sync(
+        self,
+        market: MarketRuntime,
+        item: Dict[str, Any],
+        *,
+        report_market: str,
+        source_item: Dict[str, Any],
+    ) -> bool:
+        source_summary_path = self._broker_snapshot_marker_path(source_item, report_market)
+        if not source_summary_path.exists():
+            return False
+        try:
+            source_summary = json.loads(source_summary_path.read_text(encoding="utf-8"))
+        except Exception:
+            source_summary = {}
+        source_run_id = str(source_summary.get("run_id") or "").strip()
+        if not source_run_id:
+            return False
+
+        target_report_dir = self._report_output_dir(item, report_market)
+        target_report_dir.mkdir(parents=True, exist_ok=True)
+        target_portfolio_id = self._portfolio_id_for_item(item, report_market)
+        source_portfolio_id = str(source_summary.get("portfolio_id") or "")
+        now_utc = datetime.now(timezone.utc)
+        digest = hashlib.sha1(
+            f"{source_run_id}|{target_portfolio_id}|{now_utc.isoformat()}".encode("utf-8")
+        ).hexdigest()[:8]
+        run_id = f"{report_market}-broker-snapshot-reuse-{now_utc.strftime('%Y%m%dT%H%M%SZ')}-{digest}"
+
+        source_storage = Storage(str(self._db_path(source_item, report_market)))
+        target_storage = Storage(str(self._db_path(item, report_market)))
+        source_positions = source_storage.get_investment_broker_positions_for_run(source_run_id)
+        broker_equity = _coerce_float(source_summary.get("broker_equity"), 0.0)
+        broker_cash = _coerce_float(source_summary.get("broker_cash"), 0.0)
+        account_id = str(source_summary.get("account_id") or "")
+        details = {
+            "source": "broker_snapshot_sync_reused",
+            "reused_from_run_id": source_run_id,
+            "reused_from_portfolio_id": source_portfolio_id,
+            "reused_from_report_dir": str(source_summary.get("report_dir") or ""),
+        }
+        target_storage.insert_investment_execution_run(
+            {
+                "run_id": run_id,
+                "market": str(report_market or market.market_code).upper(),
+                "portfolio_id": target_portfolio_id,
+                "account_id": account_id,
+                "report_dir": str(target_report_dir),
+                "submitted": 0,
+                "order_count": 0,
+                "order_value": 0.0,
+                "broker_equity": float(broker_equity),
+                "broker_cash": float(broker_cash),
+                "target_equity": 0.0,
+                "details": json.dumps(details, ensure_ascii=False),
+            }
+        )
+        copied_count = 0
+        for row in source_positions:
+            position_details: Dict[str, Any] = {}
+            raw_details = row.get("details")
+            if isinstance(raw_details, str) and raw_details.strip():
+                try:
+                    position_details = json.loads(raw_details)
+                except Exception:
+                    position_details = {}
+            position_details.update(
+                {
+                    "account_id": account_id,
+                    "source": "broker_snapshot_sync_reused",
+                    "reused_from_run_id": source_run_id,
+                    "reused_from_portfolio_id": source_portfolio_id,
+                }
+            )
+            target_storage.insert_investment_broker_position(
+                {
+                    "run_id": run_id,
+                    "market": str(report_market or market.market_code).upper(),
+                    "portfolio_id": target_portfolio_id,
+                    "symbol": str(row.get("symbol") or "").upper(),
+                    "qty": _coerce_float(row.get("qty"), 0.0),
+                    "avg_cost": _coerce_float(row.get("avg_cost"), 0.0),
+                    "market_price": _coerce_float(row.get("market_price"), 0.0),
+                    "market_value": _coerce_float(row.get("market_value"), 0.0),
+                    "weight": _coerce_float(row.get("weight"), 0.0),
+                    "source": "after",
+                    "details": json.dumps(position_details, ensure_ascii=False),
+                }
+            )
+            copied_count += 1
+
+        summary = dict(source_summary)
+        summary.update(
+            {
+                "ts": now_utc.isoformat(),
+                "run_id": run_id,
+                "market": str(report_market or market.market_code).upper(),
+                "portfolio_id": target_portfolio_id,
+                "account_id": account_id,
+                "report_dir": str(target_report_dir),
+                "source": "broker_snapshot_sync_reused",
+                "broker_equity": float(broker_equity),
+                "broker_cash": float(broker_cash),
+                "position_count": int(copied_count),
+                "reused_from_run_id": source_run_id,
+                "reused_from_portfolio_id": source_portfolio_id,
+                "reused_from_report_dir": str(source_summary.get("report_dir") or ""),
+            }
+        )
+        (target_report_dir / "investment_broker_snapshot_summary.json").write_text(
+            json.dumps(summary, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        log.info(
+            "Reused broker snapshot: market=%s source_portfolio=%s target_portfolio=%s positions=%s",
+            report_market,
+            source_portfolio_id,
+            target_portfolio_id,
+            copied_count,
+        )
+        return True
+
     def _run_investment_guard(self, market: MarketRuntime, item: Dict[str, Any]) -> bool:
         report_market = resolve_market_code(str(item.get("market", market.market_code)))
         effective_execution_config = self._effective_execution_config_path(item, report_market)
@@ -4386,6 +4575,7 @@ class Supervisor:
                     all_done_for_day = all(str(item.get("_last_successful_report_day", "") or "") == day_key for item in market.reports)
                     market.last_report_day = day_key if all_done_for_day else ""
 
+                broker_snapshot_singleflight: Dict[str, Dict[str, Any]] = {}
                 for item in market.reports:
                     if str(item.get("kind", "trade") or "trade").strip().lower() != "investment":
                         continue
@@ -4403,10 +4593,26 @@ class Supervisor:
                     if last_snapshot_ts > 0 and (now.timestamp() - last_snapshot_ts) < (interval_min * 60):
                         self._add_reason(market_summary["broker_snapshot_skip_reasons"], "snapshot_interval_not_elapsed")
                         continue
+                    singleflight_enabled = bool(item.get("broker_snapshot_singleflight", self.cfg.get("broker_snapshot_singleflight", True)))
+                    singleflight_key = self._broker_snapshot_singleflight_key(item, report_market) if singleflight_enabled else ""
+                    if singleflight_key and singleflight_key in broker_snapshot_singleflight:
+                        source_item = dict(broker_snapshot_singleflight[singleflight_key].get("item") or {})
+                        if self._reuse_investment_broker_snapshot_sync(
+                            market,
+                            item,
+                            report_market=report_market,
+                            source_item=source_item,
+                        ):
+                            item["_last_broker_snapshot_run_ts"] = now.timestamp()
+                            self._add_reason(market_summary["broker_snapshot_skip_reasons"], "snapshot_reused_singleflight")
+                            market_summary["notable_actions"].append(f"broker_snapshot_reused:{Path(str(item['watchlist_yaml'])).stem}")
+                            continue
                     if self._run_investment_broker_snapshot_sync(market, item):
                         item["_last_broker_snapshot_run_ts"] = now.timestamp()
                         market_summary["broker_snapshot_runs"] = int(market_summary["broker_snapshot_runs"]) + 1
                         market_summary["notable_actions"].append(f"broker_snapshot:{Path(str(item['watchlist_yaml'])).stem}")
+                        if singleflight_key:
+                            broker_snapshot_singleflight[singleflight_key] = {"item": dict(item)}
 
                 for item in market.reports:
                     if str(item.get("kind", "trade") or "trade").strip().lower() != "investment":

@@ -18,8 +18,8 @@ from ..common.user_explanations import annotate_guard_user_explanation
 from ..data import MarketDataAdapter
 from ..ibkr.contracts import make_stock_contract
 from ..ibkr.investment_orders import InvestmentOrderParams
-from ..ibkr.market_data import MarketDataService, OHLCVBar
-from ..offhours.ib_setup import register_contracts, set_delayed_frozen
+from ..ibkr.market_data import OHLCVBar
+from ..offhours.ib_setup import market_data_service_from_config, register_contracts, set_delayed_frozen
 from ..portfolio.investment_allocator import InvestmentExecutionConfig, load_lot_size_map
 
 log = get_logger("app.investment_guard")
@@ -208,6 +208,7 @@ class InvestmentGuardEngine:
         guard_cfg: InvestmentGuardConfig,
         market_structure: MarketStructureConfig | None = None,
         adaptive_strategy: AdaptiveStrategyConfig | None = None,
+        market_data_cfg: Dict[str, Any] | None = None,
     ):
         self.ib = ib
         self.storage = storage
@@ -227,7 +228,7 @@ class InvestmentGuardEngine:
             execution_cfg=execution_cfg,
             market_structure=self.market_structure,
         )
-        self.md = MarketDataService(ib)
+        self.md = market_data_service_from_config(ib, market_data_cfg)
         self.data_adapter = MarketDataAdapter(self.md)
 
     def _position_metrics(self, positions: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:

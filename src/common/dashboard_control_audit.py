@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any, Dict, Iterable
+from typing import Any, Dict, Iterable, List
 
 from .alert_classification import classify_error_text, error_severity
 
@@ -77,11 +77,50 @@ def extract_evidence_action_link(payload: Dict[str, Any] | None) -> Dict[str, st
     }
 
 
+def extract_strategy_parameter_suggestion_link(payload: Dict[str, Any] | None) -> Dict[str, str]:
+    raw = dict(payload or {})
+    suggestion_id = _clean_text(
+        raw.get("strategy_parameter_suggestion_id") or raw.get("linked_strategy_parameter_suggestion_id"),
+        max_len=180,
+    )
+    field = _clean_text(
+        raw.get("primary_field") or raw.get("strategy_parameter_field") or raw.get("linked_strategy_parameter_field"),
+        max_len=120,
+    )
+    config_path = _clean_text(
+        raw.get("config_path") or raw.get("strategy_parameter_config_path") or raw.get("linked_strategy_parameter_config_path"),
+        max_len=220,
+    )
+    market = _clean_text(raw.get("market") or raw.get("linked_market"), max_len=32)
+    portfolio_id = _clean_text(raw.get("portfolio_id") or raw.get("linked_portfolio_id"), max_len=160)
+    status = normalize_resolution_status(raw.get("resolution_status"))
+    note = _clean_text(raw.get("resolution_note"), max_len=240)
+    if not any((suggestion_id, field, config_path)):
+        return {}
+    if suggestion_id and not status:
+        status = RESOLUTION_STATUS_ACKNOWLEDGED
+    out = {
+        "linked_strategy_parameter_suggestion_id": suggestion_id,
+        "linked_strategy_parameter_field": field,
+        "linked_strategy_parameter_config_path": config_path,
+        "resolution_status": status,
+        "resolution_note": note,
+    }
+    if market:
+        out["linked_market"] = market
+    if portfolio_id:
+        out["linked_portfolio_id"] = portfolio_id
+    return out
+
+
 def attach_evidence_action_link(record: Dict[str, Any] | None, payload: Dict[str, Any] | None) -> Dict[str, Any]:
     out = dict(record or {})
     link = extract_evidence_action_link(payload)
     if link:
         out.update(link)
+    strategy_link = extract_strategy_parameter_suggestion_link(payload)
+    if strategy_link:
+        out.update(strategy_link)
     return out
 
 
@@ -108,9 +147,10 @@ def sanitize_dashboard_control_action(row: Dict[str, Any] | None) -> Dict[str, A
 
 
 def summarize_evidence_action_audit_links(rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
+    source_rows = list(rows or [])
     linked_rows = [
         dict(row)
-        for row in list(rows or [])
+        for row in source_rows
         if isinstance(row, dict) and str(row.get("linked_evidence_action_id") or "").strip()
     ]
     last = linked_rows[-1] if linked_rows else {}
@@ -118,6 +158,16 @@ def summarize_evidence_action_audit_links(rows: Iterable[Dict[str, Any]]) -> Dic
     for row in linked_rows:
         status = str(row.get("resolution_status") or "").strip().upper() or "UNKNOWN"
         status_counts[status] = int(status_counts.get(status, 0)) + 1
+    strategy_rows = [
+        dict(row)
+        for row in source_rows
+        if isinstance(row, dict) and str(row.get("linked_strategy_parameter_suggestion_id") or "").strip()
+    ]
+    last_strategy = strategy_rows[-1] if strategy_rows else {}
+    strategy_status_counts: Dict[str, int] = {}
+    for row in strategy_rows:
+        status = str(row.get("resolution_status") or "").strip().upper() or "UNKNOWN"
+        strategy_status_counts[status] = int(strategy_status_counts.get(status, 0)) + 1
     return {
         "linked_action_history_count": len(linked_rows),
         "last_linked_evidence_action_id": str(last.get("linked_evidence_action_id") or ""),
@@ -125,6 +175,13 @@ def summarize_evidence_action_audit_links(rows: Iterable[Dict[str, Any]]) -> Dic
         "last_linked_market": str(last.get("linked_market") or ""),
         "last_linked_portfolio_id": str(last.get("linked_portfolio_id") or ""),
         "resolution_status_counts": status_counts,
+        "linked_strategy_parameter_suggestion_history_count": len(strategy_rows),
+        "last_linked_strategy_parameter_suggestion_id": str(
+            last_strategy.get("linked_strategy_parameter_suggestion_id") or ""
+        ),
+        "last_linked_strategy_parameter_field": str(last_strategy.get("linked_strategy_parameter_field") or ""),
+        "last_strategy_parameter_resolution_status": str(last_strategy.get("resolution_status") or ""),
+        "strategy_parameter_resolution_status_counts": strategy_status_counts,
     }
 
 
@@ -132,3 +189,25 @@ def append_dashboard_control_action_audit(path: Path, row: Dict[str, Any]) -> No
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(sanitize_dashboard_control_action(row), ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def read_dashboard_control_action_audit(path: Path, *, max_rows: int = 1000) -> List[Dict[str, Any]]:
+    if not path.exists() or not path.is_file():
+        return []
+    rows: List[Dict[str, Any]] = []
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                raw = line.strip()
+                if not raw:
+                    continue
+                try:
+                    payload = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(payload, dict):
+                    rows.append(sanitize_dashboard_control_action(payload))
+    except OSError:
+        return []
+    limit = max(1, int(max_rows))
+    return rows[-limit:]

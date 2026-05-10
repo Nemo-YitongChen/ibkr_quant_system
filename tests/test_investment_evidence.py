@@ -120,3 +120,63 @@ def test_blocked_vs_allowed_expost_review_accepts_unified_rows():
     assert row["allowed_minus_blocked_outcome_20d_bps"] == 140.0
     assert row["positive_outcome_horizon_count"] == 3
     assert row["review_label"] == "BLOCKING_HELPED"
+
+
+def test_blocked_vs_allowed_expost_review_marks_restrictive_when_blocked_outperforms():
+    unified_rows = build_unified_evidence_rows(
+        [
+            {
+                "portfolio_id": "US:watchlist",
+                "market": "US",
+                "symbol": "AAA",
+                "decision_status": "FILLED",
+                "fill_notional": 1000.0,
+                "outcome_5d_bps": -20.0,
+                "outcome_20d_bps": -40.0,
+                "outcome_60d_bps": -60.0,
+            },
+            {
+                "portfolio_id": "US:watchlist",
+                "market": "US",
+                "symbol": "BBB",
+                "decision_status": "BLOCKED_EDGE",
+                "blocked_edge_order_count": 1,
+                "outcome_5d_bps": 30.0,
+                "outcome_20d_bps": 50.0,
+                "outcome_60d_bps": 70.0,
+            },
+        ]
+    )
+    review = build_blocked_vs_allowed_expost_review(unified_rows)
+
+    assert len(review) == 1
+    row = review[0]
+    assert row["allowed_minus_blocked_outcome_20d_bps"] == -90.0
+    assert row["negative_outcome_horizon_count"] == 3
+    assert row["review_label"] == "BLOCKED_OUTPERFORMED_ALLOWED"
+
+
+def test_blocked_vs_allowed_expost_review_marks_insufficient_when_outcomes_missing():
+    unified_rows = build_unified_evidence_rows(
+        [
+            {
+                "portfolio_id": "HK:watchlist",
+                "market": "HK",
+                "symbol": "AAA",
+                "decision_status": "FILLED",
+                "fill_notional": 1000.0,
+            },
+            {
+                "portfolio_id": "HK:watchlist",
+                "market": "HK",
+                "symbol": "BBB",
+                "decision_status": "BLOCKED_EDGE",
+                "blocked_edge_order_count": 1,
+            },
+        ]
+    )
+    review = build_blocked_vs_allowed_expost_review(unified_rows)
+
+    assert len(review) == 1
+    assert review[0]["outcome_horizon_count"] == 0
+    assert review[0]["review_label"] == "INSUFFICIENT_OUTCOME_SAMPLE"

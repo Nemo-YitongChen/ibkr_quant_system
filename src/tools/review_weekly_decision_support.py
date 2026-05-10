@@ -628,9 +628,15 @@ def _build_candidate_model_review_rows(unified_evidence_rows: List[Dict[str, Any
         bucket_size = max(1, (len(labeled_sorted) + 2) // 3) if labeled_sorted else 0
         top_rows = labeled_sorted[:bucket_size] if bucket_size else []
         bottom_rows = list(reversed(labeled_sorted[-bucket_size:])) if bucket_size else []
+        top_avg_5d = _avg_from_rows(top_rows, "outcome_5d_bps")
         top_avg = _avg_from_rows(top_rows, "outcome_20d_bps")
+        top_avg_60d = _avg_from_rows(top_rows, "outcome_60d_bps")
+        bottom_avg_5d = _avg_from_rows(bottom_rows, "outcome_5d_bps")
         bottom_avg = _avg_from_rows(bottom_rows, "outcome_20d_bps")
+        bottom_avg_60d = _avg_from_rows(bottom_rows, "outcome_60d_bps")
+        spread_5d = float(top_avg_5d - bottom_avg_5d) if top_avg_5d is not None and bottom_avg_5d is not None else None
         spread = float(top_avg - bottom_avg) if top_avg is not None and bottom_avg is not None else None
+        spread_60d = float(top_avg_60d - bottom_avg_60d) if top_avg_60d is not None and bottom_avg_60d is not None else None
         avg_expected_post_cost_edge = _avg_from_rows(labeled, "expected_post_cost_edge_bps")
         avg_realized_edge = _avg_from_rows(labeled, "realized_edge_bps")
         expected_realized_gap = (
@@ -666,9 +672,15 @@ def _build_candidate_model_review_rows(unified_evidence_rows: List[Dict[str, Any
                 "avg_expected_post_cost_edge_bps": avg_expected_post_cost_edge,
                 "avg_realized_edge_bps": avg_realized_edge,
                 "expected_to_realized_gap_bps": expected_realized_gap,
+                "top_score_avg_outcome_5d_bps": top_avg_5d,
                 "top_score_avg_outcome_20d_bps": top_avg,
+                "top_score_avg_outcome_60d_bps": top_avg_60d,
+                "bottom_score_avg_outcome_5d_bps": bottom_avg_5d,
                 "bottom_score_avg_outcome_20d_bps": bottom_avg,
+                "bottom_score_avg_outcome_60d_bps": bottom_avg_60d,
+                "top_minus_bottom_outcome_5d_bps": spread_5d,
                 "top_minus_bottom_outcome_20d_bps": spread,
+                "top_minus_bottom_outcome_60d_bps": spread_60d,
                 "review_label": review_label,
                 "recommendation": recommendation,
                 "no_trade_optimization_note": (

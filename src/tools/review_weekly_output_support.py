@@ -8,9 +8,21 @@ from typing import Any, Dict, List
 from ..analysis.report import write_csv, write_json
 from ..common.artifact_contracts import ARTIFACT_SCHEMA_VERSION
 from ..common.cli_contracts import ArtifactBundle, WeeklyReviewSummary
+from ..common.evidence_focus_actions import (
+    build_evidence_focus_actions_from_expost,
+    build_evidence_focus_effectiveness_summary,
+)
 from ..common.markets import resolve_market_code
+from ..common.strategy_parameter_suggestions import (
+    apply_strategy_parameter_suggestion_resolutions,
+    build_strategy_parameter_suggestion_effectiveness_summary,
+    build_strategy_parameter_suggestion_followup_rows,
+    build_weekly_strategy_parameter_suggestion_rows,
+)
 from .review_weekly_io import read_csv_rows as _read_csv
 from .review_weekly_markdown import write_weekly_review_markdown
+
+BASE_DIR = Path(__file__).resolve().parents[2]
 
 
 def _flatten_broker_positions(
@@ -570,6 +582,8 @@ def build_weekly_csv_artifacts(
     weekly_slicing_calibration_rows: List[Dict[str, Any]],
     weekly_risk_calibration_rows: List[Dict[str, Any]],
     weekly_calibration_patch_suggestion_rows: List[Dict[str, Any]],
+    weekly_strategy_parameter_suggestion_rows: List[Dict[str, Any]],
+    weekly_strategy_parameter_suggestion_followup_rows: List[Dict[str, Any]],
     weekly_patch_governance_summary_rows: List[Dict[str, Any]],
     weekly_control_timeseries_rows: List[Dict[str, Any]],
     broker_latest_rows_by_portfolio: Dict[str, List[Dict[str, Any]]],
@@ -624,6 +638,8 @@ def build_weekly_csv_artifacts(
         "weekly_slicing_calibration_summary.csv": weekly_slicing_calibration_rows,
         "weekly_risk_calibration_summary.csv": weekly_risk_calibration_rows,
         "weekly_calibration_patch_suggestions.csv": weekly_calibration_patch_suggestion_rows,
+        "weekly_strategy_parameter_suggestions.csv": weekly_strategy_parameter_suggestion_rows,
+        "weekly_strategy_parameter_suggestion_followup.csv": weekly_strategy_parameter_suggestion_followup_rows,
         "weekly_patch_governance_summary.csv": weekly_patch_governance_summary_rows,
         "weekly_control_timeseries.csv": weekly_control_timeseries_rows,
         "weekly_broker_positions.csv": _flatten_broker_positions(broker_latest_rows_by_portfolio),
@@ -649,9 +665,14 @@ def build_weekly_tuning_dataset_payload(
     weekly_slicing_calibration_rows: List[Dict[str, Any]],
     weekly_risk_calibration_rows: List[Dict[str, Any]],
     weekly_calibration_patch_suggestion_rows: List[Dict[str, Any]],
+    weekly_strategy_parameter_suggestion_rows: List[Dict[str, Any]],
+    weekly_strategy_parameter_suggestion_followup_rows: List[Dict[str, Any]],
     weekly_patch_governance_summary_rows: List[Dict[str, Any]],
     weekly_control_timeseries_rows: List[Dict[str, Any]],
     weekly_tuning_dataset_rows: List[Dict[str, Any]],
+    evidence_focus_actions: List[Dict[str, Any]],
+    evidence_focus_effectiveness_summary: Dict[str, Any],
+    strategy_parameter_suggestion_effectiveness_summary: Dict[str, Any],
 ) -> Dict[str, Any]:
     return {
         "generated_at": str(generated_at or ""),
@@ -671,8 +692,13 @@ def build_weekly_tuning_dataset_payload(
         "slicing_calibration_summary": weekly_slicing_calibration_rows,
         "risk_calibration_summary": weekly_risk_calibration_rows,
         "calibration_patch_suggestions": weekly_calibration_patch_suggestion_rows,
+        "strategy_parameter_suggestions": weekly_strategy_parameter_suggestion_rows,
+        "strategy_parameter_suggestion_followup": weekly_strategy_parameter_suggestion_followup_rows,
         "patch_governance_summary": weekly_patch_governance_summary_rows,
         "control_timeseries": weekly_control_timeseries_rows,
+        "evidence_focus_actions": evidence_focus_actions,
+        "evidence_focus_effectiveness": evidence_focus_effectiveness_summary,
+        "strategy_parameter_suggestion_effectiveness": strategy_parameter_suggestion_effectiveness_summary,
         "rows": weekly_tuning_dataset_rows,
     }
 
@@ -740,6 +766,8 @@ def build_weekly_review_summary_payload(
     weekly_slicing_calibration_rows: List[Dict[str, Any]],
     weekly_risk_calibration_rows: List[Dict[str, Any]],
     weekly_calibration_patch_suggestion_rows: List[Dict[str, Any]],
+    weekly_strategy_parameter_suggestion_rows: List[Dict[str, Any]],
+    weekly_strategy_parameter_suggestion_followup_rows: List[Dict[str, Any]],
     weekly_patch_governance_summary_rows: List[Dict[str, Any]],
     execution_effect_rows: List[Dict[str, Any]],
     planned_execution_cost_rows: List[Dict[str, Any]],
@@ -755,6 +783,9 @@ def build_weekly_review_summary_payload(
     weekly_tuning_history_overview_rows: List[Dict[str, Any]],
     weekly_control_timeseries_rows: List[Dict[str, Any]],
     weekly_tuning_dataset_rows: List[Dict[str, Any]],
+    evidence_focus_actions: List[Dict[str, Any]],
+    evidence_focus_effectiveness_summary: Dict[str, Any],
+    strategy_parameter_suggestion_effectiveness_summary: Dict[str, Any],
     broker_latest_rows_by_portfolio: Dict[str, List[Dict[str, Any]]],
     broker_summary_rows: List[Dict[str, Any]],
     broker_diff_rows: List[Dict[str, Any]],
@@ -808,6 +839,8 @@ def build_weekly_review_summary_payload(
         "slicing_calibration_summary": weekly_slicing_calibration_rows,
         "risk_calibration_summary": weekly_risk_calibration_rows,
         "calibration_patch_suggestions": weekly_calibration_patch_suggestion_rows,
+        "strategy_parameter_suggestions": weekly_strategy_parameter_suggestion_rows,
+        "strategy_parameter_suggestion_followup": weekly_strategy_parameter_suggestion_followup_rows,
         "patch_governance_summary": weekly_patch_governance_summary_rows,
         "execution_effect_summary": execution_effect_rows,
         "planned_execution_cost_summary": planned_execution_cost_rows,
@@ -823,6 +856,9 @@ def build_weekly_review_summary_payload(
         "weekly_tuning_history_overview": weekly_tuning_history_overview_rows,
         "weekly_control_timeseries": weekly_control_timeseries_rows,
         "weekly_tuning_dataset": weekly_tuning_dataset_rows,
+        "evidence_focus_actions": evidence_focus_actions,
+        "evidence_focus_effectiveness": evidence_focus_effectiveness_summary,
+        "strategy_parameter_suggestion_effectiveness": strategy_parameter_suggestion_effectiveness_summary,
         "broker_snapshot_portfolio_count": len(broker_latest_rows_by_portfolio),
         "broker_summary_rows": broker_summary_rows,
         "broker_local_diff_rows": broker_diff_rows,
@@ -875,7 +911,11 @@ def build_weekly_review_markdown_kwargs(
     weekly_slicing_calibration_rows: List[Dict[str, Any]],
     weekly_risk_calibration_rows: List[Dict[str, Any]],
     weekly_calibration_patch_suggestion_rows: List[Dict[str, Any]],
+    weekly_strategy_parameter_suggestion_rows: List[Dict[str, Any]],
+    weekly_strategy_parameter_suggestion_followup_rows: List[Dict[str, Any]],
     weekly_patch_governance_summary_rows: List[Dict[str, Any]],
+    evidence_focus_effectiveness_summary: Dict[str, Any],
+    strategy_parameter_suggestion_effectiveness_summary: Dict[str, Any],
 ) -> Dict[str, Any]:
     return {
         "summary_rows": summary_rows,
@@ -914,7 +954,13 @@ def build_weekly_review_markdown_kwargs(
         "slicing_calibration_rows": weekly_slicing_calibration_rows,
         "risk_calibration_rows": weekly_risk_calibration_rows,
         "calibration_patch_suggestion_rows": weekly_calibration_patch_suggestion_rows,
+        "strategy_parameter_suggestion_rows": weekly_strategy_parameter_suggestion_rows,
+        "strategy_parameter_suggestion_followup_rows": weekly_strategy_parameter_suggestion_followup_rows,
         "patch_governance_rows": weekly_patch_governance_summary_rows,
+        "evidence_focus_effectiveness_summary": evidence_focus_effectiveness_summary,
+        "strategy_parameter_suggestion_effectiveness_summary": (
+            strategy_parameter_suggestion_effectiveness_summary
+        ),
     }
 
 
@@ -984,9 +1030,64 @@ def build_weekly_output_bundle(
     broker_latest_rows_by_portfolio: Dict[str, List[Dict[str, Any]]],
     broker_diff_rows: List[Dict[str, Any]],
     strategy_context_rows: List[Dict[str, Any]],
+    dashboard_control_audit_rows: List[Dict[str, Any]] | None = None,
+    previous_strategy_parameter_suggestion_rows: List[Dict[str, Any]] | None = None,
 ) -> Dict[str, Any]:
     rollup = _weekly_summary_rollup(summary_rows)
     generated_at = datetime.now(timezone.utc).isoformat()
+    weekly_strategy_parameter_suggestion_rows = build_weekly_strategy_parameter_suggestion_rows(
+        candidate_model_review_rows,
+        week_label=week_label,
+        base_dir=BASE_DIR,
+    )
+    weekly_strategy_parameter_suggestion_rows = [
+        {
+            **dict(row),
+            "created_at": str(row.get("created_at") or generated_at),
+            "status": str(row.get("status") or "SUGGESTED"),
+            "auto_apply": int(row.get("auto_apply", 0) or 0),
+            "read_only": int(row.get("read_only", 1) or 0),
+        }
+        for row in weekly_strategy_parameter_suggestion_rows
+    ]
+    suggestion_by_id: Dict[str, Dict[str, Any]] = {}
+    for raw in list(previous_strategy_parameter_suggestion_rows or []):
+        if not isinstance(raw, dict):
+            continue
+        suggestion_id = str(raw.get("suggestion_id") or raw.get("linked_strategy_parameter_suggestion_id") or "").strip()
+        if suggestion_id:
+            suggestion_by_id[suggestion_id] = {**dict(raw), "carried_forward": 1}
+    for raw in weekly_strategy_parameter_suggestion_rows:
+        suggestion_id = str(raw.get("suggestion_id") or "").strip()
+        if suggestion_id:
+            suggestion_by_id[suggestion_id] = {**dict(raw), "carried_forward": 0}
+    weekly_strategy_parameter_suggestion_rows = list(suggestion_by_id.values())
+    weekly_strategy_parameter_suggestion_rows = apply_strategy_parameter_suggestion_resolutions(
+        weekly_strategy_parameter_suggestion_rows,
+        dashboard_control_audit_rows or [],
+    )
+    weekly_strategy_parameter_suggestion_rows.sort(
+        key=lambda row: (
+            int(row.get("carried_forward", 0) or 0),
+            str(row.get("market") or ""),
+            str(row.get("portfolio_id") or ""),
+            str(row.get("primary_field") or ""),
+            str(row.get("suggestion_id") or ""),
+        )
+    )
+    weekly_strategy_parameter_suggestion_followup_rows = build_strategy_parameter_suggestion_followup_rows(
+        weekly_strategy_parameter_suggestion_rows,
+        candidate_model_review_rows,
+        week_label=week_label,
+        now_iso=generated_at,
+    )
+    strategy_parameter_suggestion_effectiveness_summary = (
+        build_strategy_parameter_suggestion_effectiveness_summary(
+            weekly_strategy_parameter_suggestion_rows,
+            now_iso=generated_at,
+            followup_rows=weekly_strategy_parameter_suggestion_followup_rows,
+        )
+    )
     csv_artifacts = build_weekly_csv_artifacts(
         summary_rows=summary_rows,
         trade_rows=trade_rows,
@@ -1036,10 +1137,22 @@ def build_weekly_output_bundle(
         weekly_slicing_calibration_rows=weekly_slicing_calibration_rows,
         weekly_risk_calibration_rows=weekly_risk_calibration_rows,
         weekly_calibration_patch_suggestion_rows=weekly_calibration_patch_suggestion_rows,
+        weekly_strategy_parameter_suggestion_rows=weekly_strategy_parameter_suggestion_rows,
+        weekly_strategy_parameter_suggestion_followup_rows=(
+            weekly_strategy_parameter_suggestion_followup_rows
+        ),
         weekly_patch_governance_summary_rows=weekly_patch_governance_summary_rows,
         weekly_control_timeseries_rows=weekly_control_timeseries_rows,
         broker_latest_rows_by_portfolio=broker_latest_rows_by_portfolio,
         broker_diff_rows=broker_diff_rows,
+    )
+    evidence_focus_actions = build_evidence_focus_actions_from_expost(
+        blocked_vs_allowed_expost_rows,
+        week=week_label,
+    )
+    evidence_focus_effectiveness_summary = build_evidence_focus_effectiveness_summary(
+        evidence_focus_actions,
+        now_iso=generated_at,
     )
     weekly_tuning_dataset_payload = build_weekly_tuning_dataset_payload(
         generated_at=generated_at,
@@ -1058,9 +1171,18 @@ def build_weekly_output_bundle(
         weekly_slicing_calibration_rows=weekly_slicing_calibration_rows,
         weekly_risk_calibration_rows=weekly_risk_calibration_rows,
         weekly_calibration_patch_suggestion_rows=weekly_calibration_patch_suggestion_rows,
+        weekly_strategy_parameter_suggestion_rows=weekly_strategy_parameter_suggestion_rows,
+        weekly_strategy_parameter_suggestion_followup_rows=(
+            weekly_strategy_parameter_suggestion_followup_rows
+        ),
         weekly_patch_governance_summary_rows=weekly_patch_governance_summary_rows,
         weekly_control_timeseries_rows=weekly_control_timeseries_rows,
         weekly_tuning_dataset_rows=weekly_tuning_dataset_rows,
+        evidence_focus_actions=evidence_focus_actions,
+        evidence_focus_effectiveness_summary=evidence_focus_effectiveness_summary,
+        strategy_parameter_suggestion_effectiveness_summary=(
+            strategy_parameter_suggestion_effectiveness_summary
+        ),
     )
     weekly_unified_evidence_payload = build_weekly_rows_artifact_payload(
         generated_at=generated_at,
@@ -1118,6 +1240,10 @@ def build_weekly_output_bundle(
         weekly_slicing_calibration_rows=weekly_slicing_calibration_rows,
         weekly_risk_calibration_rows=weekly_risk_calibration_rows,
         weekly_calibration_patch_suggestion_rows=weekly_calibration_patch_suggestion_rows,
+        weekly_strategy_parameter_suggestion_rows=weekly_strategy_parameter_suggestion_rows,
+        weekly_strategy_parameter_suggestion_followup_rows=(
+            weekly_strategy_parameter_suggestion_followup_rows
+        ),
         weekly_patch_governance_summary_rows=weekly_patch_governance_summary_rows,
         execution_effect_rows=execution_effect_rows,
         planned_execution_cost_rows=planned_execution_cost_rows,
@@ -1133,6 +1259,11 @@ def build_weekly_output_bundle(
         weekly_tuning_history_overview_rows=weekly_tuning_history_overview_rows,
         weekly_control_timeseries_rows=weekly_control_timeseries_rows,
         weekly_tuning_dataset_rows=weekly_tuning_dataset_rows,
+        evidence_focus_actions=evidence_focus_actions,
+        evidence_focus_effectiveness_summary=evidence_focus_effectiveness_summary,
+        strategy_parameter_suggestion_effectiveness_summary=(
+            strategy_parameter_suggestion_effectiveness_summary
+        ),
         broker_latest_rows_by_portfolio=broker_latest_rows_by_portfolio,
         broker_summary_rows=broker_summary_rows,
         broker_diff_rows=broker_diff_rows,
@@ -1181,7 +1312,15 @@ def build_weekly_output_bundle(
         weekly_slicing_calibration_rows=weekly_slicing_calibration_rows,
         weekly_risk_calibration_rows=weekly_risk_calibration_rows,
         weekly_calibration_patch_suggestion_rows=weekly_calibration_patch_suggestion_rows,
+        weekly_strategy_parameter_suggestion_rows=weekly_strategy_parameter_suggestion_rows,
+        weekly_strategy_parameter_suggestion_followup_rows=(
+            weekly_strategy_parameter_suggestion_followup_rows
+        ),
         weekly_patch_governance_summary_rows=weekly_patch_governance_summary_rows,
+        evidence_focus_effectiveness_summary=evidence_focus_effectiveness_summary,
+        strategy_parameter_suggestion_effectiveness_summary=(
+            strategy_parameter_suggestion_effectiveness_summary
+        ),
     )
     summary_fields, artifact_fields = build_weekly_cli_summary_payload(summary_payload, out_dir)
     return {
@@ -1189,6 +1328,22 @@ def build_weekly_output_bundle(
         "json_artifacts": {
             "weekly_unified_evidence.json": weekly_unified_evidence_payload,
             "weekly_blocked_vs_allowed_expost.json": weekly_blocked_vs_allowed_expost_payload,
+            "weekly_strategy_parameter_suggestions.json": build_weekly_rows_artifact_payload(
+                generated_at=generated_at,
+                week_label=week_label,
+                window_start=window_start,
+                window_end=window_end,
+                artifact_type="weekly_strategy_parameter_suggestions",
+                rows=weekly_strategy_parameter_suggestion_rows,
+            ),
+            "weekly_strategy_parameter_suggestion_followup.json": build_weekly_rows_artifact_payload(
+                generated_at=generated_at,
+                week_label=week_label,
+                window_start=window_start,
+                window_end=window_end,
+                artifact_type="weekly_strategy_parameter_suggestion_followup",
+                rows=weekly_strategy_parameter_suggestion_followup_rows,
+            ),
             "weekly_tuning_dataset.json": weekly_tuning_dataset_payload,
             "weekly_review_summary.json": summary_payload,
         },

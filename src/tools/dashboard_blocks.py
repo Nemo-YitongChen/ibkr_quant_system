@@ -6,6 +6,24 @@ from ..common.alert_classification import summarize_error_classes
 from ..common.dashboard_control_audit import summarize_evidence_action_audit_links
 
 
+DASHBOARD_BLOCK_CATEGORY_HOME = "home"
+DASHBOARD_BLOCK_CATEGORY_ADVANCED = "advanced"
+
+HOME_DASHBOARD_BLOCK_IDS = [
+    "ops_health",
+    "evidence_focus_actions",
+    "evidence_quality",
+    "dashboard_control_actions",
+]
+ADVANCED_DASHBOARD_BLOCK_IDS = [
+    "market_views",
+    "walk_forward_acceptance",
+    "weekly_attribution_waterfall",
+    "unified_evidence_overview",
+    "blocked_vs_allowed_expost",
+    "dashboard_control_action_history",
+]
+
 EVIDENCE_ACTION_DETAILS = {
     "build_weekly_unified_evidence": {
         "label": "Build unified evidence",
@@ -136,6 +154,18 @@ def _block_status_from_rows(rows: List[Dict[str, Any]]) -> str:
     return "ok"
 
 
+def _with_dashboard_block_layout(block: Dict[str, Any]) -> Dict[str, Any]:
+    enriched = dict(block)
+    block_id = str(enriched.get("id") or "")
+    if block_id in ADVANCED_DASHBOARD_BLOCK_IDS:
+        enriched["category"] = DASHBOARD_BLOCK_CATEGORY_ADVANCED
+        enriched["advanced_only"] = True
+    else:
+        enriched["category"] = DASHBOARD_BLOCK_CATEGORY_HOME
+        enriched["advanced_only"] = False
+    return enriched
+
+
 ACTION_BY_LABEL = {
     str(details.get("label") or "").strip().lower(): action
     for action, details in EVIDENCE_ACTION_DETAILS.items()
@@ -200,6 +230,20 @@ def build_ops_health_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "evidence_focus_urgent_count": _int(ops.get("evidence_focus_urgent_count")),
             "evidence_focus_primary_market": str(ops.get("evidence_focus_primary_market") or ""),
             "evidence_focus_primary_action": str(ops.get("evidence_focus_primary_action") or ""),
+            "ibkr_gateway_budget_status": str(ops.get("ibkr_gateway_budget_status") or "ok"),
+            "ibkr_gateway_budget_gateway_request_count": _int(ops.get("ibkr_gateway_budget_gateway_request_count")),
+            "ibkr_gateway_budget_cache_hit_count": _int(ops.get("ibkr_gateway_budget_cache_hit_count")),
+            "ibkr_gateway_budget_cache_hit_ratio": float(ops.get("ibkr_gateway_budget_cache_hit_ratio", 0.0) or 0.0),
+            "ibkr_gateway_budget_max_usage_pct": float(ops.get("ibkr_gateway_budget_max_usage_pct", 0.0) or 0.0),
+            "ibkr_gateway_budget_over_budget_market_count": _int(
+                ops.get("ibkr_gateway_budget_over_budget_market_count")
+            ),
+            "ibkr_gateway_budget_stale_telemetry_market_count": _int(
+                ops.get("ibkr_gateway_budget_stale_telemetry_market_count")
+            ),
+            "ibkr_gateway_budget_missing_telemetry_market_count": _int(
+                ops.get("ibkr_gateway_budget_missing_telemetry_market_count")
+            ),
         },
         "rows": alert_rows,
     }
@@ -218,7 +262,7 @@ def build_control_actions_block(payload: Dict[str, Any]) -> Dict[str, Any]:
         link_summary = summarize_evidence_action_audit_links(raw_history)
     return {
         "id": "dashboard_control_actions",
-        "title": "Dashboard Control Actions",
+        "title": "Governance / Control Actions",
         "status": "fail" if failed_count else str(service.get("status") or "disabled"),
         "summary": (
             f"service={service.get('status') or 'disabled'} "
@@ -226,6 +270,7 @@ def build_control_actions_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             f"failed_recent={failed_count} "
             f"primary_error={error_summary.get('primary_error_class') or 'none'} "
             f"linked_actions={_int(link_summary.get('linked_action_history_count'))} "
+            f"linked_strategy_params={_int(link_summary.get('linked_strategy_parameter_suggestion_history_count'))} "
             f"last_resolution={link_summary.get('last_resolution_status') or '-'}"
         ),
         "metrics": {
@@ -234,6 +279,18 @@ def build_control_actions_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "linked_action_history_count": _int(link_summary.get("linked_action_history_count")),
             "last_linked_evidence_action_id": str(link_summary.get("last_linked_evidence_action_id") or ""),
             "last_resolution_status": str(link_summary.get("last_resolution_status") or ""),
+            "linked_strategy_parameter_suggestion_history_count": _int(
+                link_summary.get("linked_strategy_parameter_suggestion_history_count")
+            ),
+            "last_linked_strategy_parameter_suggestion_id": str(
+                link_summary.get("last_linked_strategy_parameter_suggestion_id") or ""
+            ),
+            "last_linked_strategy_parameter_field": str(
+                link_summary.get("last_linked_strategy_parameter_field") or ""
+            ),
+            "last_strategy_parameter_resolution_status": str(
+                link_summary.get("last_strategy_parameter_resolution_status") or ""
+            ),
             "retryable_error_count": _int(error_summary.get("retryable_count")),
             "validation_error_count": _int(dict(error_summary.get("class_counts") or {}).get("validation")),
             "permission_error_count": _int(dict(error_summary.get("class_counts") or {}).get("permission")),
@@ -243,6 +300,51 @@ def build_control_actions_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "run_once_in_progress": int(bool(actions.get("run_once_in_progress"))),
             "preflight_in_progress": int(bool(actions.get("preflight_in_progress"))),
             "weekly_review_in_progress": int(bool(actions.get("weekly_review_in_progress"))),
+        },
+        "rows": history,
+    }
+
+
+def build_dashboard_control_action_history_block(payload: Dict[str, Any]) -> Dict[str, Any]:
+    control = _dict(payload.get("dashboard_control"))
+    actions = _dict(control.get("actions"))
+    raw_history = _rows(actions.get("action_history"), limit=100)
+    history = list(reversed(raw_history))[:50]
+    failed_count = sum(1 for row in history if str(row.get("status") or "").lower() == "failed")
+    error_summary = summarize_error_classes(history)
+    link_summary = _dict(actions.get("evidence_action_link_summary"))
+    if not link_summary:
+        link_summary = summarize_evidence_action_audit_links(raw_history)
+    return {
+        "id": "dashboard_control_action_history",
+        "title": "Dashboard Control Action History",
+        "status": "fail" if failed_count else "ok",
+        "summary": (
+            f"history={len(history)} failed={failed_count} "
+            f"linked_actions={_int(link_summary.get('linked_action_history_count'))} "
+            f"linked_strategy_params={_int(link_summary.get('linked_strategy_parameter_suggestion_history_count'))} "
+            f"primary_error={error_summary.get('primary_error_class') or 'none'}"
+        ),
+        "metrics": {
+            "history_count": len(history),
+            "raw_history_count": len(raw_history),
+            "failed_count": failed_count,
+            "linked_action_history_count": _int(link_summary.get("linked_action_history_count")),
+            "last_linked_evidence_action_id": str(link_summary.get("last_linked_evidence_action_id") or ""),
+            "last_resolution_status": str(link_summary.get("last_resolution_status") or ""),
+            "linked_strategy_parameter_suggestion_history_count": _int(
+                link_summary.get("linked_strategy_parameter_suggestion_history_count")
+            ),
+            "last_linked_strategy_parameter_suggestion_id": str(
+                link_summary.get("last_linked_strategy_parameter_suggestion_id") or ""
+            ),
+            "last_linked_strategy_parameter_field": str(
+                link_summary.get("last_linked_strategy_parameter_field") or ""
+            ),
+            "last_strategy_parameter_resolution_status": str(
+                link_summary.get("last_strategy_parameter_resolution_status") or ""
+            ),
+            "retryable_error_count": _int(error_summary.get("retryable_count")),
         },
         "rows": history,
     }
@@ -377,7 +479,7 @@ def build_evidence_quality_block(payload: Dict[str, Any]) -> Dict[str, Any]:
     action_details = _evidence_action_details(primary_action)
     return {
         "id": "evidence_quality",
-        "title": "Trading Quality Evidence",
+        "title": "Execution Quality",
         "status": "warn" if too_restrictive_count or model_warning_count else "ok",
         "summary": (
             f"evidence_rows={evidence_row_count} "
@@ -415,11 +517,131 @@ def build_evidence_quality_block(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def build_weekly_attribution_waterfall_block(payload: Dict[str, Any]) -> Dict[str, Any]:
+    rows = _rows(payload.get("weekly_attribution_waterfall"), limit=50)
+    component_count = len({str(row.get("component") or "").strip() for row in rows if row.get("component")})
+    market_count = len({str(row.get("market") or "").strip() for row in rows if row.get("market")})
+    return {
+        "id": "weekly_attribution_waterfall",
+        "title": "Weekly Attribution Waterfall",
+        "status": "ok",
+        "summary": f"rows={len(rows)} components={component_count} markets={market_count}",
+        "metrics": {
+            "row_count": len(rows),
+            "component_count": component_count,
+            "market_count": market_count,
+        },
+        "rows": rows,
+    }
+
+
+def build_walk_forward_acceptance_block(payload: Dict[str, Any]) -> Dict[str, Any]:
+    acceptance = _dict(payload.get("walk_forward_acceptance"))
+    stability = _dict(payload.get("walk_forward_market_stability"))
+    acceptance_rows = _rows(acceptance.get("rows"), limit=50)
+    stability_rows = _rows(stability.get("rows"), limit=50)
+    recommend_count = sum(1 for row in acceptance_rows if str(row.get("status") or "") == "RECOMMEND_PATCH")
+    watch_count = sum(1 for row in acceptance_rows if str(row.get("status") or "") == "WATCH")
+    rejected_count = sum(
+        1
+        for row in acceptance_rows
+        if str(row.get("acceptance_failed_rules") or "").strip()
+        or str(row.get("status") or "") in {"KEEP_BASELINE", "INSUFFICIENT_HISTORY"}
+    )
+    stable_market_count = sum(
+        1 for row in stability_rows if _int(row.get("consecutive_stable_windows")) >= _int(row.get("min_consecutive_stable_windows"))
+    )
+    return {
+        "id": "walk_forward_acceptance",
+        "title": "Walk-Forward Acceptance",
+        "status": "warn" if watch_count or rejected_count else "ok",
+        "summary": (
+            f"markets={len(acceptance_rows)} recommend={recommend_count} "
+            f"watch={watch_count} rejected_or_baseline={rejected_count}"
+        ),
+        "metrics": {
+            "market_count": len(acceptance_rows),
+            "recommend_patch_count": recommend_count,
+            "watch_count": watch_count,
+            "rejected_or_baseline_count": rejected_count,
+            "stable_market_count": stable_market_count,
+            "stability_row_count": len(stability_rows),
+        },
+        "rows": {
+            "acceptance": acceptance_rows,
+            "market_stability": stability_rows,
+        },
+    }
+
+
+def build_unified_evidence_overview_block(payload: Dict[str, Any]) -> Dict[str, Any]:
+    overview = _dict(payload.get("unified_evidence_overview"))
+    sample_rows = _rows(payload.get("unified_evidence_rows"), limit=20)
+    row_count = _int(overview.get("row_count"))
+    return {
+        "id": "unified_evidence_overview",
+        "title": "Unified Evidence Overview",
+        "status": "warn" if row_count <= 0 else "ok",
+        "summary": (
+            f"rows={row_count} allowed={_int(overview.get('allowed_row_count'))} "
+            f"blocked={_int(overview.get('blocked_row_count'))} "
+            f"candidate_only={_int(overview.get('candidate_only_row_count'))}"
+        ),
+        "metrics": {
+            "row_count": row_count,
+            "allowed_row_count": _int(overview.get("allowed_row_count")),
+            "blocked_row_count": _int(overview.get("blocked_row_count")),
+            "candidate_only_row_count": _int(overview.get("candidate_only_row_count")),
+            "outcome_labeled_row_count": _int(overview.get("outcome_labeled_row_count")),
+            "partial_join_row_count": _int(overview.get("partial_join_row_count")),
+            "sample_row_count": len(sample_rows),
+        },
+        "rows": {
+            "overview": overview,
+            "sample_rows": sample_rows,
+        },
+    }
+
+
+def build_blocked_vs_allowed_expost_block(payload: Dict[str, Any]) -> Dict[str, Any]:
+    rows = _rows(payload.get("blocked_vs_allowed_expost_review"), limit=50)
+    too_restrictive_count = _count_labels(rows, {"BLOCKED_OUTPERFORMED_ALLOWED"})
+    blocking_helped_count = _count_labels(rows, {"BLOCKING_HELPED", "GATE_OK"})
+    insufficient_sample_count = _count_insufficient_sample(rows)
+    mixed_review_count = _count_labels(rows, {"MIXED", "NEUTRAL"})
+    return {
+        "id": "blocked_vs_allowed_expost",
+        "title": "Blocked vs Allowed Ex-Post Review",
+        "status": "warn" if too_restrictive_count else "ok",
+        "summary": (
+            f"reviews={len(rows)} too_restrictive={too_restrictive_count} "
+            f"blocking_helped={blocking_helped_count} insufficient_sample={insufficient_sample_count}"
+        ),
+        "metrics": {
+            "review_count": len(rows),
+            "too_restrictive_count": too_restrictive_count,
+            "blocking_helped_count": blocking_helped_count,
+            "insufficient_sample_count": insufficient_sample_count,
+            "mixed_review_count": mixed_review_count,
+        },
+        "rows": {
+            "label_summary": _blocked_review_label_summary(rows),
+            "reviews": rows,
+        },
+    }
+
+
 def build_dashboard_v2_blocks(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
-    return [
+    blocks = [
         build_ops_health_block(payload),
-        build_control_actions_block(payload),
-        build_market_views_block(payload),
         build_evidence_focus_actions_block(payload),
         build_evidence_quality_block(payload),
+        build_control_actions_block(payload),
+        build_market_views_block(payload),
+        build_walk_forward_acceptance_block(payload),
+        build_weekly_attribution_waterfall_block(payload),
+        build_unified_evidence_overview_block(payload),
+        build_blocked_vs_allowed_expost_block(payload),
+        build_dashboard_control_action_history_block(payload),
     ]
+    return [_with_dashboard_block_layout(block) for block in blocks]

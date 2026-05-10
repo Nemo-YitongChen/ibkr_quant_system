@@ -29,10 +29,9 @@ from ..common.runtime_paths import resolve_repo_path
 from ..common.storage import Storage
 from ..enrichment.providers import EnrichmentProviders
 from ..ibkr.universe import UniverseService, UniverseConfig, scanner_location_codes_from_config
-from ..ibkr.market_data import MarketDataService
 from ..offhours.candidates import load_watchlist_symbols, read_recent_symbols_from_audit
 from ..offhours.compute_short import compute_engine_signal_for_symbol
-from ..offhours.ib_setup import connect_ib, get_net_liquidation, register_contracts, set_delayed_frozen
+from ..offhours.ib_setup import connect_ib, get_net_liquidation, market_data_service_from_config, register_contracts, set_delayed_frozen
 from ..risk.model import TradeRiskConfig
 from ..risk.short_safety import ShortSafetyConfig, ShortSafetyGate, load_short_safety_rule_file, load_symbol_float_map
 from ..strategies import StrategyConfig
@@ -423,7 +422,7 @@ def main() -> None:
             recent_symbols = _filter_symbols_by_market(recent_symbols, hk_only=True)
             log.info(f"Filtered audit recent symbols for HK watchlist: before={before} after={len(recent_symbols)}")
 
-        md = MarketDataService(ib)
+        md = market_data_service_from_config(ib, cfg)
         regime_adaptor = RegimeAdaptor(
             market=resolved_market,
             base_cfg=regime_cfg,

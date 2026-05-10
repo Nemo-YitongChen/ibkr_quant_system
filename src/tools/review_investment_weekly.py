@@ -9,6 +9,16 @@ from typing import Any, Dict, List
 
 from ..analysis.investment_portfolio import InvestmentPaperConfig
 from ..common.cli import build_cli_parser, emit_cli_summary
+from ..common.dashboard_control_audit import read_dashboard_control_action_audit
+from ..common.ibkr_telemetry import (
+    build_ibkr_request_summary_payload,
+    summarize_ibkr_request_events,
+)
+from ..common.ibkr_gateway_budget import (
+    build_ibkr_gateway_budget_payload,
+    build_ibkr_gateway_budget_rows,
+    load_ibkr_gateway_budget_config,
+)
 from .review_weekly_io import (
     read_csv_rows as _read_csv,
     read_json as _read_json,
@@ -160,6 +170,11 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--out_dir", default="reports_investment_weekly", help="Directory for weekly review artifacts.")
     ap.add_argument("--labeling_dir", default="", help="Optional snapshot labeling output dir. Defaults to auto-detect.")
     ap.add_argument("--preflight_dir", default="reports_preflight", help="Optional preflight output dir for IBKR history probe summary.")
+    ap.add_argument(
+        "--dashboard_control_audit",
+        default="",
+        help="Optional dashboard_control_action_audit.jsonl used to resolve evidence and strategy suggestion actions.",
+    )
     ap.add_argument(
         "--feedback_thresholds_config",
         default="",
@@ -1109,6 +1124,22 @@ def main(argv: List[str] | None = None) -> None:
         if str(args.feedback_thresholds_config or "").strip()
         else (out_dir / "weekly_feedback_threshold_overrides.yaml")
     )
+    dashboard_control_audit_path = (
+        Path(_resolve_project_path(str(args.dashboard_control_audit)))
+        if str(getattr(args, "dashboard_control_audit", "") or "").strip()
+        else None
+    )
+    dashboard_control_audit_rows = (
+        read_dashboard_control_action_audit(dashboard_control_audit_path)
+        if dashboard_control_audit_path is not None
+        else []
+    )
+    previous_strategy_parameter_suggestion_payload = _read_json(
+        out_dir / "weekly_strategy_parameter_suggestions.json"
+    )
+    previous_strategy_parameter_suggestion_rows = list(
+        previous_strategy_parameter_suggestion_payload.get("rows") or []
+    ) if isinstance(previous_strategy_parameter_suggestion_payload, dict) else []
     feedback_threshold_overrides = _load_feedback_threshold_overrides(thresholds_config_path)
 
     market_filter = resolve_market_code(getattr(args, "market", ""))
@@ -1433,6 +1464,7 @@ def main(argv: List[str] | None = None) -> None:
         feedback_automation_bundle.get("feedback_threshold_tuning_rows") or []
     )
     window_label = f"{since_dt.date().isoformat()} -> {datetime.now(timezone.utc).date().isoformat()}"
+    generated_at = datetime.now(timezone.utc).isoformat()
     weekly_tuning_dataset_rows = _build_weekly_tuning_dataset_rows(
         summary_rows,
         decision_evidence_rows=decision_evidence_rows,
@@ -1491,6 +1523,33 @@ def main(argv: List[str] | None = None) -> None:
     )
     weekly_control_timeseries_rows = list(
         history_calibration_bundle.get("weekly_control_timeseries_rows") or []
+    )
+    ibkr_request_summary_rows = summarize_ibkr_request_events(
+        window_start=since_ts,
+        window_end=window_end_ts,
+        market_filter=market_filter or "ALL",
+    )
+    ibkr_request_summary_payload = build_ibkr_request_summary_payload(
+        generated_at=generated_at,
+        week_label=review_week_label,
+        window_start=since_ts,
+        window_end=window_end_ts,
+        rows=ibkr_request_summary_rows,
+    )
+    ibkr_gateway_budget_config = load_ibkr_gateway_budget_config(BASE_DIR)
+    ibkr_gateway_budget_rows = build_ibkr_gateway_budget_rows(
+        ibkr_request_summary_rows,
+        config=ibkr_gateway_budget_config,
+        generated_at=generated_at,
+        window_start=since_ts,
+        window_end=window_end_ts,
+    )
+    ibkr_gateway_budget_payload = build_ibkr_gateway_budget_payload(
+        generated_at=generated_at,
+        week_label=review_week_label,
+        window_start=since_ts,
+        window_end=window_end_ts,
+        rows=ibkr_gateway_budget_rows,
     )
     output_bundle = _build_weekly_output_bundle(
         out_dir=out_dir,
@@ -1557,17 +1616,40 @@ def main(argv: List[str] | None = None) -> None:
         broker_latest_rows_by_portfolio=broker_latest_rows_by_portfolio,
         broker_diff_rows=broker_diff_rows,
         strategy_context_rows=strategy_context_rows,
+        dashboard_control_audit_rows=dashboard_control_audit_rows,
+        previous_strategy_parameter_suggestion_rows=previous_strategy_parameter_suggestion_rows,
     )
     csv_artifacts = dict(output_bundle.get("csv_artifacts") or {})
     summary_payload = dict(output_bundle.get("summary_payload") or {})
     markdown_kwargs = dict(output_bundle.get("markdown_kwargs") or {})
     summary_fields = dict(output_bundle.get("summary_fields") or {})
     artifact_fields = dict(output_bundle.get("artifact_fields") or {})
+    summary_payload["ibkr_request_summary"] = dict(ibkr_request_summary_payload.get("summary") or {})
+    summary_payload["ibkr_gateway_budget"] = dict(ibkr_gateway_budget_payload.get("summary") or {})
+    summary_payload["ibkr_gateway_budget_rows"] = list(ibkr_gateway_budget_rows or [])
+    markdown_kwargs["ibkr_gateway_budget_summary"] = dict(ibkr_gateway_budget_payload.get("summary") or {})
+    markdown_kwargs["ibkr_gateway_budget_rows"] = list(ibkr_gateway_budget_rows or [])
+    csv_artifacts["weekly_ibkr_request_summary.csv"] = ibkr_request_summary_rows
+    csv_artifacts["weekly_ibkr_gateway_budget_status.csv"] = ibkr_gateway_budget_rows
+    json_artifacts = dict(output_bundle.get("json_artifacts") or {})
+    json_artifacts["weekly_review_summary.json"] = summary_payload
+    json_artifacts["weekly_ibkr_request_summary.json"] = ibkr_request_summary_payload
+    json_artifacts["weekly_ibkr_gateway_budget_status.json"] = ibkr_gateway_budget_payload
     _write_weekly_csv_artifacts(out_dir, csv_artifacts)
-    _write_weekly_json_artifacts(
-        out_dir,
-        dict(output_bundle.get("json_artifacts") or {}),
+    _write_weekly_json_artifacts(out_dir, json_artifacts)
+    summary_fields["ibkr_gateway_request_count"] = int(
+        dict(ibkr_request_summary_payload.get("summary") or {}).get("gateway_request_count") or 0
     )
+    summary_fields["ibkr_gateway_budget_status"] = str(
+        dict(ibkr_gateway_budget_payload.get("summary") or {}).get("status") or "ok"
+    )
+    summary_fields["ibkr_gateway_over_budget_market_count"] = int(
+        dict(ibkr_gateway_budget_payload.get("summary") or {}).get("over_budget_market_count") or 0
+    )
+    artifact_fields["ibkr_request_summary_json"] = out_dir / "weekly_ibkr_request_summary.json"
+    artifact_fields["ibkr_request_summary_csv"] = out_dir / "weekly_ibkr_request_summary.csv"
+    artifact_fields["ibkr_gateway_budget_json"] = out_dir / "weekly_ibkr_gateway_budget_status.json"
+    artifact_fields["ibkr_gateway_budget_csv"] = out_dir / "weekly_ibkr_gateway_budget_status.csv"
     _write_weekly_markdown_artifact(out_dir, markdown_kwargs)
     emit_cli_summary(
         command="ibkr-quant-weekly-review",

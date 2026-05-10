@@ -38,6 +38,7 @@ from ..common.adaptive_strategy import (
     load_adaptive_strategy,
 )
 from ..common.cli import build_cli_parser, emit_cli_summary
+from ..common.ibkr_telemetry import record_ibkr_request
 from ..common.logger import get_logger
 from ..common.market_structure import MarketStructureConfig, load_market_structure
 from ..common.markets import (
@@ -59,7 +60,7 @@ from ..ibkr.universe import UniverseConfig, UniverseService, scanner_location_co
 from ..offhours.candidates import load_watchlist_symbols, read_recent_symbols_from_audit
 from ..offhours.compute_long import compute_long_from_bars
 from ..offhours.compute_mid import compute_mid_from_bars
-from ..offhours.ib_setup import connect_ib, register_contracts, set_delayed_frozen
+from ..offhours.ib_setup import connect_ib, market_data_service_from_config, register_contracts, set_delayed_frozen
 from ..strategies.mid_regime import RegimeConfig
 from ..strategies.regime_adaptor import RegimeAdaptConfig, RegimeAdaptor
 
@@ -1281,6 +1282,14 @@ def _scanner_symbols(
     )
     cached = _scanner_cache_get(db_path, codes_key=codes_key, ttl_sec=scanner_refresh_sec)
     if cached:
+        record_ibkr_request(
+            "scanner",
+            status="cache_hit",
+            market=market,
+            actual_gateway_request=False,
+            quantity=max(1, len(cached)),
+            details={"codes_key": codes_key, "symbols": len(cached)},
+        )
         return cached
 
     try:
@@ -1304,6 +1313,13 @@ def _scanner_symbols(
         )
         res = uni.build()
     except Exception as e:
+        record_ibkr_request(
+            "scanner",
+            status="error",
+            market=market,
+            actual_gateway_request=True,
+            details={"codes_key": codes_key, "error": str(e)[:240]},
+        )
         log.warning("investment scanner failed market=%s: %s %s", market, type(e).__name__, e)
         return []
 
@@ -1314,6 +1330,14 @@ def _scanner_symbols(
         ]
     )
     filtered = [symbol for symbol in normalized if symbol_matches_market(symbol, market)]
+    record_ibkr_request(
+        "scanner",
+        status="success" if filtered else "empty",
+        market=market,
+        actual_gateway_request=True,
+        quantity=max(1, int(scanner_max_codes_per_run or 1)),
+        details={"codes_key": codes_key, "symbols": len(filtered)},
+    )
     if filtered:
         _scanner_cache_put(db_path, codes_key=codes_key, symbols=filtered)
     return filtered
@@ -1742,7 +1766,7 @@ def main(argv: List[str] | None = None) -> None:
         else:
             ib = connect_ib(host, port, client_id, request_timeout=float(args.request_timeout_sec))
             set_delayed_frozen(ib)
-            md = MarketDataService(ib)
+            md = market_data_service_from_config(ib, ibkr_cfg)
             data_adapter = MarketDataAdapter(md)
             scanner_symbols = _scanner_symbols(
                 ib,

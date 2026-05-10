@@ -17,6 +17,17 @@ from ..signals.fusion import fuse
 log = get_logger("strategy.engine")
 
 
+def combine_short_signals(mr_sig: float, bo_sig: float, *, mr_weight: float = 0.60, bo_weight: float = 0.40) -> float:
+    """Blend mean-reversion and breakout signals without amplifying beyond [-1, 1]."""
+    mr_w = max(0.0, float(mr_weight))
+    bo_w = max(0.0, float(bo_weight))
+    total_w = mr_w + bo_w
+    if total_w <= 0.0:
+        return 0.0
+    blended = (mr_w * float(mr_sig) + bo_w * float(bo_sig)) / total_w
+    return max(-1.0, min(1.0, blended))
+
+
 @dataclass
 class StrategyConfig:
     trade_threshold: float = 0.65
@@ -36,6 +47,14 @@ class StrategyConfig:
     mid_soft_floor: float = 0.0
     mid_qty_min: float = 0.25
     mid_qty_max: float = 1.25
+    mr_weight: float = 0.60
+    bo_weight: float = 0.40
+    fusion_short_base_weight: float = 0.85
+    fusion_short_mid_weight: float = 0.10
+    fusion_long_weight: float = 0.10
+    fusion_mid_bias_weight: float = 0.05
+    fusion_momentum_block_mid_threshold: float = 0.25
+    fusion_momentum_block_short_threshold: float = 0.60
 
     risk: TradeRiskConfig = field(default_factory=TradeRiskConfig)
     mr: MRConfig = field(default_factory=MRConfig)
@@ -52,13 +71,16 @@ class StrategyConfig:
     def from_dict(cls, raw: Dict[str, Any] | None) -> "StrategyConfig":
         raw = dict(raw or {})
         strategy_raw = dict(raw.get("strategy") or {})
+        engine_raw = dict(raw.get("engine") or {})
         orders_raw = dict(raw.get("orders") or {})
         flat_raw = {key: value for key, value in raw.items() if key in cls.__dataclass_fields__}
+        mid_raw = dict(raw.get("mid_regime") or {})
+        mid_raw.update(dict(raw.get("mid") or {}))
         nested = {
             "risk": TradeRiskConfig.from_dict(dict(raw.get("risk") or {})),
             "mr": cls._dataclass_from_dict(MRConfig, dict(raw.get("mr") or {})),
             "bo": cls._dataclass_from_dict(BOConfig, dict(raw.get("bo") or {})),
-            "mid": cls._dataclass_from_dict(RegimeConfig, dict(raw.get("mid") or {})),
+            "mid": cls._dataclass_from_dict(RegimeConfig, mid_raw),
         }
         values: Dict[str, Any] = {}
         values.update(flat_raw)
@@ -70,12 +92,22 @@ class StrategyConfig:
             "mid_soft_floor",
             "mid_qty_min",
             "mid_qty_max",
+            "mr_weight",
+            "bo_weight",
+            "fusion_short_base_weight",
+            "fusion_short_mid_weight",
+            "fusion_long_weight",
+            "fusion_mid_bias_weight",
+            "fusion_momentum_block_mid_threshold",
+            "fusion_momentum_block_short_threshold",
             "runtime_mode",
             "paper_allowed_execution_sources",
             "enforce_pretrade_risk_gate",
         ):
             if key in strategy_raw:
                 values[key] = strategy_raw[key]
+            if key in engine_raw:
+                values[key] = engine_raw[key]
         if "default_take_profit_pct" in orders_raw:
             values["take_profit_pct"] = orders_raw["default_take_profit_pct"]
         if "default_stop_loss_pct" in orders_raw:
@@ -270,7 +302,12 @@ class EngineStrategy:
 
         s_mr = mr_signal(close, self.cfg.mr)
         s_bo = bo_signal(high, low, close, self.cfg.bo)
-        short_sig = 0.6 * s_mr + 0.4 * s_bo
+        short_sig = combine_short_signals(
+            s_mr,
+            s_bo,
+            mr_weight=float(self.cfg.mr_weight),
+            bo_weight=float(self.cfg.bo_weight),
+        )
 
         regime_state = evaluate_regime(close, self.cfg.mid)
         regime_state_v2 = to_regime_state_v2(regime_state)
@@ -281,7 +318,18 @@ class EngineStrategy:
         if self.gate is not None and hasattr(self.gate, "can_trade_short"):
             can_short = bool(self.gate.can_trade_short())
 
-        total = fuse(short_sig=short_sig, long_sig=0.0, mid_scale=mid_scale, can_trade_short=can_short)
+        total = fuse(
+            short_sig=short_sig,
+            long_sig=0.0,
+            mid_scale=mid_scale,
+            can_trade_short=can_short,
+            short_base_weight=float(self.cfg.fusion_short_base_weight),
+            short_mid_weight=float(self.cfg.fusion_short_mid_weight),
+            long_weight=float(self.cfg.fusion_long_weight),
+            mid_bias_weight=float(self.cfg.fusion_mid_bias_weight),
+            momentum_block_mid_threshold=float(self.cfg.fusion_momentum_block_mid_threshold),
+            momentum_block_short_threshold=float(self.cfg.fusion_momentum_block_short_threshold),
+        )
 
         # -------- Phase2: pick entry channel (Pure-Short or Total) --------
         channel = "NONE"

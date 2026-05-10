@@ -248,9 +248,19 @@ def test_walk_forward_main_writes_artifacts(tmp_path: Path, capsys) -> None:
     assert payload["summary"]["market_count"] == 1
     assert (out_dir / "market_walk_forward_summary.csv").exists()
     assert (out_dir / "market_walk_forward_candidate_summary.csv").exists()
+    assert (out_dir / "walk_forward_parameter_candidates.csv").exists()
     assert (out_dir / "market_walk_forward_windows.csv").exists()
     assert (out_dir / "market_walk_forward_patch_recommendations.csv").exists()
+    assert (out_dir / "walk_forward_acceptance_summary.json").exists()
+    assert (out_dir / "walk_forward_market_stability.json").exists()
     assert (out_dir / "market_walk_forward.md").exists()
+    acceptance = json.loads((out_dir / "walk_forward_acceptance_summary.json").read_text(encoding="utf-8"))
+    assert acceptance["artifact_type"] == "walk_forward_acceptance_summary"
+    assert acceptance["row_count"] == 1
+    assert "acceptance_rules" in acceptance["rows"][0]
+    stability = json.loads((out_dir / "walk_forward_market_stability.json").read_text(encoding="utf-8"))
+    assert stability["artifact_type"] == "walk_forward_market_stability"
+    assert stability["rows"][0]["market"] == "US"
 
 
 def test_build_market_walk_forward_report_rejects_when_outcome_support_is_not_consistent(tmp_path: Path) -> None:

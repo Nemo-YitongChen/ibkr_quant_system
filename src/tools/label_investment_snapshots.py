@@ -18,7 +18,7 @@ from ..common.storage import Storage
 from ..enrichment.yfinance_history import fetch_daily_bars
 from ..ibkr.contracts import make_stock_contract
 from ..ibkr.market_data import MarketDataService
-from ..offhours.ib_setup import register_contracts, set_delayed_frozen
+from ..offhours.ib_setup import market_data_service_from_config, register_contracts, set_delayed_frozen
 
 log = get_logger("tools.label_investment_snapshots")
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -65,12 +65,12 @@ class _LabelingIbkrHistoryLoader:
         try:
             # labeling 是闭市后的离线任务，不适合像主执行链路那样无限重试。
             # 这里失败就立刻回退，避免整个回标流程被单个 IBKR 连接卡死。
-            ib.connect(host, port, clientId=base_client_id + 700, timeout=6)
+            ib.connect(host, port, clientId=base_client_id + 700, timeout=6, readonly=True)
             ib.reqCurrentTime()
             ib.RequestTimeout = 8
             set_delayed_frozen(ib)
             self._ib = ib
-            self._md = MarketDataService(ib)
+            self._md = market_data_service_from_config(ib, raw_cfg)
             self._available = True
             return True
         except Exception as e:
@@ -120,6 +120,11 @@ def _load_daily_bars_for_labeling(
     days: int,
     ibkr_loaders: Dict[str, _LabelingIbkrHistoryLoader],
 ) -> tuple[List[Any], str]:
+    # Outcome labeling is an offline review path. Prefer the external daily cache first
+    # so a weekly labeling run does not open one IBKR API client per market.
+    bars = fetch_daily_bars(symbol, days=max(90, int(days)), allow_stale_cache=True)
+    if bars:
+        return bars, "yfinance_cache"
     market_code = str(market or "").upper().strip()
     loader = ibkr_loaders.get(market_code)
     if loader is None and market_code:
@@ -129,9 +134,6 @@ def _load_daily_bars_for_labeling(
         bars, source = loader.get_daily_bars(symbol, days=max(90, int(days)))
         if bars:
             return bars, source
-    bars = fetch_daily_bars(symbol, days=max(90, int(days)), allow_stale_cache=True)
-    if bars:
-        return bars, "yfinance_cache"
     return [], ""
 
 
