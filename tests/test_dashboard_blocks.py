@@ -153,6 +153,51 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
                 },
             ]
         },
+        "strategy_parameter_suggestions": [
+            {
+                "suggestion_id": "2026-w19-us-watchlist-mr-weight",
+                "market": "US",
+                "portfolio_id": "US:watchlist",
+                "primary_field": "mr_weight",
+                "status": "SUGGESTED",
+                "auto_apply": 0,
+            },
+            {
+                "suggestion_id": "2026-w18-hk-watchlist-bo-weight",
+                "market": "HK",
+                "portfolio_id": "HK:watchlist",
+                "primary_field": "bo_weight",
+                "status": "APPLIED",
+                "auto_apply": 0,
+            },
+        ],
+        "strategy_parameter_suggestion_followup": [
+            {
+                "suggestion_id": "2026-w18-hk-watchlist-bo-weight",
+                "market": "HK",
+                "portfolio_id": "HK:watchlist",
+                "primary_field": "bo_weight",
+                "followup_verdict": "DEGRADED",
+            },
+        ],
+        "strategy_parameter_suggestion_effectiveness": {
+            "status": "warn",
+            "summary_text": "suggestions=2 open=1 handled=1 resolved=1 followups=1 degraded=1",
+            "suggestion_count": 2,
+            "open_suggestion_count": 1,
+            "handled_suggestion_count": 1,
+            "resolved_suggestion_count": 1,
+            "applied_suggestion_count": 1,
+            "stale_suggestion_count": 0,
+            "auto_apply_count": 0,
+            "followup_count": 1,
+            "improved_followup_count": 0,
+            "degraded_followup_count": 1,
+            "primary_market": "US",
+            "primary_portfolio_id": "US:watchlist",
+            "primary_field": "mr_weight",
+            "read_only": True,
+        },
         "weekly_attribution_waterfall": [{"component": "selection"}],
     }
 
@@ -166,6 +211,7 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
         "dashboard_control_actions",
         "market_views",
         "walk_forward_acceptance",
+        "strategy_parameter_governance",
         "weekly_attribution_waterfall",
         "unified_evidence_overview",
         "blocked_vs_allowed_expost",
@@ -180,6 +226,7 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
     assert [block["id"] for block in blocks if block["advanced_only"]] == [
         "market_views",
         "walk_forward_acceptance",
+        "strategy_parameter_governance",
         "weekly_attribution_waterfall",
         "unified_evidence_overview",
         "blocked_vs_allowed_expost",
@@ -256,6 +303,13 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
     assert by_id["walk_forward_acceptance"]["metrics"]["rejected_or_baseline_count"] == 1
     assert by_id["walk_forward_acceptance"]["metrics"]["stable_market_count"] == 1
     assert by_id["walk_forward_acceptance"]["status"] == "warn"
+    assert by_id["strategy_parameter_governance"]["category"] == "advanced"
+    assert by_id["strategy_parameter_governance"]["status"] == "warn"
+    assert by_id["strategy_parameter_governance"]["metrics"]["suggestion_count"] == 2
+    assert by_id["strategy_parameter_governance"]["metrics"]["open_suggestion_count"] == 1
+    assert by_id["strategy_parameter_governance"]["metrics"]["resolved_suggestion_count"] == 1
+    assert by_id["strategy_parameter_governance"]["metrics"]["degraded_followup_count"] == 1
+    assert by_id["strategy_parameter_governance"]["metrics"]["primary_field"] == "mr_weight"
     assert by_id["weekly_attribution_waterfall"]["metrics"]["row_count"] == 1
     assert by_id["unified_evidence_overview"]["advanced_only"] is True
     assert by_id["unified_evidence_overview"]["metrics"]["row_count"] == 3

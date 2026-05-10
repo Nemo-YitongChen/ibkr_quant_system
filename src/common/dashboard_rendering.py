@@ -124,7 +124,7 @@ def render_dashboard_v2_blocks(blocks: List[Dict[str, Any]]) -> str:
     return (
         '<section class="card overview dashboard-v2-blocks">'
         "<h2>Dashboard v2 Evidence Blocks</h2>"
-        '<div class="meta">Home shows Ops Health, Evidence Focus, Execution Quality, and Governance / Control Actions. Advanced mode expands market, waterfall, unified evidence, blocked-vs-allowed, and action history blocks.</div>'
+        '<div class="meta">Home shows Ops Health, Evidence Focus, Execution Quality, and Governance / Control Actions. Advanced mode expands market, walk-forward, strategy parameter governance, waterfall, unified evidence, blocked-vs-allowed, and action history blocks.</div>'
         '<div class="dashboard-v2-grid">'
         + home_cards
         + "</div>"

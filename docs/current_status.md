@@ -182,6 +182,8 @@
 - **weekly review 已新增 read-only `strategy_parameter_suggestions` 产物：当 candidate model review 出现 `SIGNAL_RANKING_INVERTED` 且样本足够时，每个 market/portfolio/week 只生成一个 primary strategy field 建议，带 linked evidence、acceptance rule、rollback note 和 `auto_apply=0`**
 - **dashboard control audit 已能关联 strategy parameter suggestions：控制 payload 可携带 `strategy_parameter_suggestion_id/primary_field/config_path/resolution_status/resolution_note`，审计历史和 dashboard v2 Governance block 会展示 linked strategy suggestion 与处理状态，但仍不自动写配置**
 - **strategy parameter suggestion 已新增 effectiveness summary：weekly summary、tuning dataset 和 markdown 会统计 open/handled/resolved/stale、resolution mix、avg resolution hours 与 `auto_apply` 违规，dashboard control audit 可通过 `linked_strategy_parameter_suggestion_id` 回填处理状态**
+- **dashboard v2 已新增 `Strategy Parameter Governance` advanced block：直接展示 weekly strategy parameter suggestions、follow-up verdict 和 effectiveness summary，open/stale/degraded/auto-apply 违规会进入 warning，但仍保持只读**
+- **2026-05-10 后续开发报告已补充到 `docs/development_report_2026-05-10.md`：下一步优先拆 dashboard weekly artifact loader，再推进 execution quality decision evidence 与配置 defaults+overrides**
 
 ---
 

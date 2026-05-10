@@ -728,6 +728,42 @@ def _load_weekly_candidate_model_review_rows(review_dir: Path) -> List[Dict[str,
     return _read_all_csv_rows(review_dir / "weekly_candidate_model_review.csv")
 
 
+def _load_weekly_strategy_parameter_suggestion_rows(review_dir: Path) -> List[Dict[str, Any]]:
+    artifact_rows = _load_weekly_rows_json_artifact(
+        review_dir / "weekly_strategy_parameter_suggestions.json",
+        "strategy_parameter_suggestions",
+        "strategy_parameter_suggestion_rows",
+    )
+    if artifact_rows is not None:
+        return artifact_rows
+    summary_json = _load_json(review_dir / "weekly_review_summary.json")
+    summary_rows = summary_json.get("strategy_parameter_suggestions")
+    if isinstance(summary_rows, list) and summary_rows:
+        return [dict(row) for row in summary_rows if isinstance(row, dict)]
+    return _read_all_csv_rows(review_dir / "weekly_strategy_parameter_suggestions.csv")
+
+
+def _load_weekly_strategy_parameter_suggestion_followup_rows(review_dir: Path) -> List[Dict[str, Any]]:
+    artifact_rows = _load_weekly_rows_json_artifact(
+        review_dir / "weekly_strategy_parameter_suggestion_followup.json",
+        "strategy_parameter_suggestion_followup",
+        "strategy_parameter_suggestion_followup_rows",
+    )
+    if artifact_rows is not None:
+        return artifact_rows
+    summary_json = _load_json(review_dir / "weekly_review_summary.json")
+    summary_rows = summary_json.get("strategy_parameter_suggestion_followup")
+    if isinstance(summary_rows, list) and summary_rows:
+        return [dict(row) for row in summary_rows if isinstance(row, dict)]
+    return _read_all_csv_rows(review_dir / "weekly_strategy_parameter_suggestion_followup.csv")
+
+
+def _load_weekly_strategy_parameter_suggestion_effectiveness(review_dir: Path) -> Dict[str, Any]:
+    summary_json = _load_json(review_dir / "weekly_review_summary.json")
+    summary = summary_json.get("strategy_parameter_suggestion_effectiveness")
+    return dict(summary) if isinstance(summary, dict) else {}
+
+
 def _load_weekly_ibkr_gateway_budget_payload(review_dir: Path) -> Dict[str, Any]:
     payload = _load_json(review_dir / "weekly_ibkr_gateway_budget_status.json")
     if payload:
@@ -7355,6 +7391,13 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
     weekly_unified_evidence_rows = _load_weekly_unified_evidence_rows(weekly_review_dir)
     weekly_blocked_vs_allowed_expost_rows = _load_weekly_blocked_vs_allowed_expost_rows(weekly_review_dir)
     weekly_candidate_model_review_rows = _load_weekly_candidate_model_review_rows(weekly_review_dir)
+    weekly_strategy_parameter_suggestion_rows = _load_weekly_strategy_parameter_suggestion_rows(weekly_review_dir)
+    weekly_strategy_parameter_suggestion_followup_rows = (
+        _load_weekly_strategy_parameter_suggestion_followup_rows(weekly_review_dir)
+    )
+    weekly_strategy_parameter_suggestion_effectiveness = (
+        _load_weekly_strategy_parameter_suggestion_effectiveness(weekly_review_dir)
+    )
     weekly_ibkr_gateway_budget_payload = _load_weekly_ibkr_gateway_budget_payload(weekly_review_dir)
     weekly_ibkr_gateway_budget_summary = dict(weekly_ibkr_gateway_budget_payload.get("summary") or {})
     weekly_ibkr_gateway_budget_rows = [
@@ -7646,6 +7689,9 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
         "unified_evidence_rows": weekly_unified_evidence_rows[:200],
         "blocked_vs_allowed_expost_review": weekly_blocked_vs_allowed_expost_rows,
         "candidate_model_review": weekly_candidate_model_review_rows,
+        "strategy_parameter_suggestions": weekly_strategy_parameter_suggestion_rows,
+        "strategy_parameter_suggestion_followup": weekly_strategy_parameter_suggestion_followup_rows,
+        "strategy_parameter_suggestion_effectiveness": weekly_strategy_parameter_suggestion_effectiveness,
         "execution_cost_overview": _build_execution_cost_overview(trade_cards),
         "health_overview": _build_health_overview(trade_cards),
         "ops_health_rows": _build_health_overview(trade_cards),

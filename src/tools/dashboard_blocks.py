@@ -18,6 +18,7 @@ HOME_DASHBOARD_BLOCK_IDS = [
 ADVANCED_DASHBOARD_BLOCK_IDS = [
     "market_views",
     "walk_forward_acceptance",
+    "strategy_parameter_governance",
     "weekly_attribution_waterfall",
     "unified_evidence_overview",
     "blocked_vs_allowed_expost",
@@ -79,6 +80,20 @@ def _blocked_review_label(row: Dict[str, Any]) -> str:
 
 def _count_labels(rows: List[Dict[str, Any]], labels: set[str]) -> int:
     return sum(1 for row in rows if _blocked_review_label(row) in labels)
+
+
+def _metric_or_count(metrics: Dict[str, Any], key: str, fallback: int) -> int:
+    return _int(metrics.get(key)) if key in metrics else int(fallback)
+
+
+def _status_count(rows: List[Dict[str, Any]], status: str) -> int:
+    normalized = str(status or "").strip().upper()
+    return sum(1 for row in rows if str(row.get("status") or "").strip().upper() == normalized)
+
+
+def _followup_verdict_count(rows: List[Dict[str, Any]], verdict: str) -> int:
+    normalized = str(verdict or "").strip().upper()
+    return sum(1 for row in rows if str(row.get("followup_verdict") or "").strip().upper() == normalized)
 
 
 def _count_insufficient_sample(rows: List[Dict[str, Any]]) -> int:
@@ -574,6 +589,100 @@ def build_walk_forward_acceptance_block(payload: Dict[str, Any]) -> Dict[str, An
     }
 
 
+def build_strategy_parameter_governance_block(payload: Dict[str, Any]) -> Dict[str, Any]:
+    suggestions = _rows(payload.get("strategy_parameter_suggestions"), limit=50)
+    followups = _rows(payload.get("strategy_parameter_suggestion_followup"), limit=50)
+    effectiveness = _dict(payload.get("strategy_parameter_suggestion_effectiveness"))
+    suggestion_count = _metric_or_count(effectiveness, "suggestion_count", len(suggestions))
+    open_count = _metric_or_count(effectiveness, "open_suggestion_count", _status_count(suggestions, "SUGGESTED"))
+    handled_count = _metric_or_count(
+        effectiveness,
+        "handled_suggestion_count",
+        _status_count(suggestions, "ACKNOWLEDGED")
+        + _status_count(suggestions, "APPLIED")
+        + _status_count(suggestions, "REJECTED")
+        + _status_count(suggestions, "SUPERSEDED"),
+    )
+    resolved_count = _metric_or_count(
+        effectiveness,
+        "resolved_suggestion_count",
+        _status_count(suggestions, "APPLIED")
+        + _status_count(suggestions, "REJECTED")
+        + _status_count(suggestions, "SUPERSEDED"),
+    )
+    applied_count = _metric_or_count(effectiveness, "applied_suggestion_count", _status_count(suggestions, "APPLIED"))
+    stale_count = _metric_or_count(effectiveness, "stale_suggestion_count", 0)
+    auto_apply_count = _metric_or_count(
+        effectiveness,
+        "auto_apply_count",
+        sum(1 for row in suggestions if _int(row.get("auto_apply")) != 0),
+    )
+    followup_count = _metric_or_count(effectiveness, "followup_count", len(followups))
+    improved_followup_count = _metric_or_count(
+        effectiveness,
+        "improved_followup_count",
+        _followup_verdict_count(followups, "IMPROVED"),
+    )
+    degraded_followup_count = _metric_or_count(
+        effectiveness,
+        "degraded_followup_count",
+        _followup_verdict_count(followups, "DEGRADED"),
+    )
+    insufficient_followup_sample_count = _metric_or_count(
+        effectiveness,
+        "insufficient_followup_sample_count",
+        _followup_verdict_count(followups, "INSUFFICIENT_FOLLOWUP_SAMPLE"),
+    )
+    no_clear_change_followup_count = _metric_or_count(
+        effectiveness,
+        "no_clear_change_followup_count",
+        _followup_verdict_count(followups, "NO_CLEAR_CHANGE"),
+    )
+    primary = suggestions[0] if suggestions else {}
+    primary_market = str(effectiveness.get("primary_market") or primary.get("market") or "")
+    primary_portfolio_id = str(effectiveness.get("primary_portfolio_id") or primary.get("portfolio_id") or "")
+    primary_field = str(effectiveness.get("primary_field") or primary.get("primary_field") or "")
+    raw_status = str(effectiveness.get("status") or "").strip().lower()
+    status = "warn" if open_count or stale_count or auto_apply_count or degraded_followup_count else (raw_status or "ok")
+    if raw_status in {"fail", "failed", "error"}:
+        status = "fail"
+    summary_text = str(effectiveness.get("summary_text") or "").strip() or (
+        f"suggestions={suggestion_count} open={open_count} handled={handled_count} "
+        f"resolved={resolved_count} followups={followup_count} "
+        f"improved={improved_followup_count} degraded={degraded_followup_count}"
+    )
+    return {
+        "id": "strategy_parameter_governance",
+        "title": "Strategy Parameter Governance",
+        "status": status,
+        "summary": summary_text,
+        "metrics": {
+            "suggestion_count": suggestion_count,
+            "open_suggestion_count": open_count,
+            "handled_suggestion_count": handled_count,
+            "resolved_suggestion_count": resolved_count,
+            "applied_suggestion_count": applied_count,
+            "stale_suggestion_count": stale_count,
+            "auto_apply_count": auto_apply_count,
+            "followup_count": followup_count,
+            "improved_followup_count": improved_followup_count,
+            "degraded_followup_count": degraded_followup_count,
+            "no_clear_change_followup_count": no_clear_change_followup_count,
+            "insufficient_followup_sample_count": insufficient_followup_sample_count,
+            "avg_resolution_hours": float(effectiveness.get("avg_resolution_hours", 0.0) or 0.0),
+            "primary_market": primary_market,
+            "primary_portfolio_id": primary_portfolio_id,
+            "primary_field": primary_field,
+            "read_only": bool(effectiveness.get("read_only", True)),
+        },
+        "rows": {
+            "effectiveness": effectiveness,
+            "suggestions": suggestions,
+            "followup": followups,
+        },
+    }
+
+
 def build_unified_evidence_overview_block(payload: Dict[str, Any]) -> Dict[str, Any]:
     overview = _dict(payload.get("unified_evidence_overview"))
     sample_rows = _rows(payload.get("unified_evidence_rows"), limit=20)
@@ -639,6 +748,7 @@ def build_dashboard_v2_blocks(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
         build_control_actions_block(payload),
         build_market_views_block(payload),
         build_walk_forward_acceptance_block(payload),
+        build_strategy_parameter_governance_block(payload),
         build_weekly_attribution_waterfall_block(payload),
         build_unified_evidence_overview_block(payload),
         build_blocked_vs_allowed_expost_block(payload),
