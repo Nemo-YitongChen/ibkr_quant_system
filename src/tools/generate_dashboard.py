@@ -4,6 +4,7 @@ import argparse
 import csv
 import html
 import json
+import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -21,7 +22,7 @@ from ..common.artifact_health import (
     build_artifact_health_overview,
     evaluate_artifact_health,
 )
-from ..common.artifact_loader import load_artifact, load_artifact_set
+from ..common.artifact_loader import LoadedArtifact, load_artifact
 from ..common.cli import build_cli_parser, emit_cli_summary
 from ..common.cli_contracts import ArtifactBundle, DashboardSummary
 from ..common.dashboard_evidence import (
@@ -40,6 +41,7 @@ from ..common.governance_health import build_governance_health_summary
 from ..common.market_structure import load_market_structure, market_structure_summary
 from ..common.markets import market_config_path, resolve_market_code, symbol_matches_market
 from ..common.runtime_paths import resolve_repo_path, resolve_scoped_runtime_path, scope_from_ibkr_config
+from ..common.sqlite_utils import connect_sqlite
 from ..common.storage import Storage
 from .dashboard_blocks import build_dashboard_v2_blocks, build_evidence_quality_block
 
@@ -55,6 +57,10 @@ CONTROL_BUTTON_LABELS: Dict[str, str] = {
 }
 DASHBOARD_ARTIFACT_CONTRACTS = dashboard_artifact_contracts()
 REPORT_ARTIFACT_CONTRACTS = report_artifact_contracts()
+DASHBOARD_WEEKLY_SUMMARY_MAX_BYTES = 50_000_000
+DASHBOARD_WEEKLY_JSON_ARTIFACT_MAX_BYTES = 120_000_000
+DASHBOARD_LARGE_JSON_HEADER_BYTES = 131_072
+DASHBOARD_UNIFIED_EVIDENCE_ROW_LIMIT = 50_000
 EXECUTION_MODE_LABELS: Dict[str, str] = {
     "AUTO": "自动执行",
     "REVIEW_ONLY": "只保留人工审核",
@@ -513,6 +519,121 @@ def _load_json(path: Path) -> Dict[str, Any]:
         return {}
 
 
+def _path_size_bytes(path: Path) -> int:
+    try:
+        return int(path.stat().st_size)
+    except Exception:
+        return 0
+
+
+def _json_path_too_large(path: Path, max_bytes: int) -> bool:
+    return bool(path.exists()) and _path_size_bytes(path) > int(max_bytes)
+
+
+def _load_weekly_summary_json(review_dir: Path) -> Dict[str, Any]:
+    path = review_dir / "weekly_review_summary.json"
+    if _json_path_too_large(path, DASHBOARD_WEEKLY_SUMMARY_MAX_BYTES):
+        return {}
+    return _load_json(path)
+
+
+def _read_large_json_header_fields(path: Path) -> Dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            text = handle.read(DASHBOARD_LARGE_JSON_HEADER_BYTES)
+    except Exception:
+        return {}
+    out: Dict[str, Any] = {}
+    for key in (
+        "generated_at",
+        "schema_version",
+        "window_start",
+        "window_end",
+        "portfolio_count",
+        "row_count",
+        "artifact_type",
+    ):
+        match = re.search(rf'"{re.escape(key)}"\s*:\s*("([^"\\]|\\.)*"|-?\d+(?:\.\d+)?)', text)
+        if not match:
+            continue
+        raw = match.group(1)
+        try:
+            out[key] = json.loads(raw)
+        except Exception:
+            out[key] = raw.strip('"')
+    return out
+
+
+def _large_json_metadata_artifact(path: Path, contract) -> LoadedArtifact:
+    fields = _read_large_json_header_fields(path)
+    file_mtime_ts = path.stat().st_mtime if path.exists() else None
+    file_mtime = datetime.fromtimestamp(file_mtime_ts, tz=timezone.utc).isoformat() if file_mtime_ts else ""
+    payload: Dict[str, Any] = {}
+    for key in contract.required_fields:
+        if key == "rows" and "row_count" in fields:
+            payload[key] = "__omitted_for_dashboard_health__"
+        elif key in fields:
+            payload[key] = fields[key]
+    for key in ("generated_at", "schema_version", "row_count", "artifact_type", "window_start", "window_end", "portfolio_count"):
+        if key in fields and key not in payload:
+            payload[key] = fields[key]
+    row_count = 1
+    try:
+        if "row_count" in fields:
+            row_count = int(float(fields.get("row_count") or 0))
+    except Exception:
+        row_count = 1
+    return LoadedArtifact(
+        artifact_key=contract.artifact_key,
+        label=contract.label,
+        format=contract.format,
+        path=str(path),
+        exists=path.exists(),
+        source="file:metadata_only",
+        payload=payload,
+        columns=[],
+        row_count=row_count,
+        file_mtime=file_mtime,
+        file_mtime_ts=file_mtime_ts,
+        generated_at=str(fields.get("generated_at") or file_mtime),
+        generated_at_source="payload" if str(fields.get("generated_at") or "").strip() else "file_mtime",
+        schema_version=str(fields.get("schema_version") or ""),
+        schema_version_source="payload" if str(fields.get("schema_version") or "").strip() else "",
+    )
+
+
+def _load_dashboard_health_artifact(review_dir: Path, contract, *, loaded: Dict[str, LoadedArtifact]) -> LoadedArtifact:
+    path = review_dir / contract.filename
+    if contract.format == "json" and _json_path_too_large(path, DASHBOARD_WEEKLY_SUMMARY_MAX_BYTES):
+        return _large_json_metadata_artifact(path, contract)
+    if (
+        contract.format != "json"
+        and not path.exists()
+        and contract.fallback_filename
+        and _json_path_too_large(review_dir / contract.fallback_filename, DASHBOARD_WEEKLY_SUMMARY_MAX_BYTES)
+    ):
+        return LoadedArtifact(
+            artifact_key=contract.artifact_key,
+            label=contract.label,
+            format=contract.format,
+            path=str(path),
+            exists=False,
+            source="missing",
+            payload=[],
+            columns=[],
+            row_count=0,
+            file_mtime="",
+            file_mtime_ts=None,
+            generated_at="",
+            generated_at_source="",
+            schema_version="",
+            schema_version_source="",
+        )
+    return load_artifact(review_dir, contract, loaded=loaded)
+
+
 def _parse_json_dict(value: Any) -> Dict[str, Any]:
     if isinstance(value, dict):
         return dict(value)
@@ -552,12 +673,18 @@ def _infer_execution_control_mode(row: Dict[str, Any]) -> str:
 def _read_csv_rows(path: Path, limit: int = 10) -> List[Dict[str, Any]]:
     if not path.exists():
         return []
+    max_rows = max(1, int(limit))
+    rows: List[Dict[str, Any]] = []
     try:
         with path.open("r", encoding="utf-8") as f:
-            rows = list(csv.DictReader(f))
+            reader = csv.DictReader(f)
+            for row in reader:
+                rows.append(dict(row))
+                if len(rows) >= max_rows:
+                    break
     except Exception:
         return []
-    return rows[:limit]
+    return rows
 
 
 def _read_all_csv_rows(path: Path) -> List[Dict[str, Any]]:
@@ -656,7 +783,7 @@ def _normalize_execution_weekly_row(
 
 
 def _load_weekly_shadow_review_rows(review_dir: Path) -> List[Dict[str, Any]]:
-    summary_json = _load_json(review_dir / "weekly_review_summary.json")
+    summary_json = _load_weekly_summary_json(review_dir)
     summary_rows = summary_json.get("shadow_review_summary")
     if isinstance(summary_rows, list) and summary_rows:
         return [dict(row) for row in summary_rows if isinstance(row, dict)]
@@ -672,7 +799,7 @@ def _load_ibkr_history_probe_summary(preflight_dir: Path) -> Dict[str, Any]:
 
 
 def _load_weekly_attribution_rows(review_dir: Path) -> List[Dict[str, Any]]:
-    summary_json = _load_json(review_dir / "weekly_review_summary.json")
+    summary_json = _load_weekly_summary_json(review_dir)
     summary_rows = summary_json.get("attribution_summary")
     if isinstance(summary_rows, list) and summary_rows:
         return [dict(row) for row in summary_rows if isinstance(row, dict)]
@@ -681,6 +808,8 @@ def _load_weekly_attribution_rows(review_dir: Path) -> List[Dict[str, Any]]:
 
 def _load_weekly_rows_json_artifact(path: Path, *row_keys: str) -> List[Dict[str, Any]] | None:
     if not path.exists():
+        return None
+    if _json_path_too_large(path, DASHBOARD_WEEKLY_JSON_ARTIFACT_MAX_BYTES):
         return None
     payload = _load_json(path)
     for key in ("rows", *row_keys):
@@ -698,11 +827,11 @@ def _load_weekly_unified_evidence_rows(review_dir: Path) -> List[Dict[str, Any]]
     )
     if artifact_rows is not None:
         return artifact_rows
-    summary_json = _load_json(review_dir / "weekly_review_summary.json")
+    summary_json = _load_weekly_summary_json(review_dir)
     summary_rows = summary_json.get("unified_evidence_rows")
     if isinstance(summary_rows, list) and summary_rows:
         return [dict(row) for row in summary_rows if isinstance(row, dict)]
-    return _read_all_csv_rows(review_dir / "weekly_unified_evidence.csv")
+    return _read_csv_rows(review_dir / "weekly_unified_evidence.csv", limit=DASHBOARD_UNIFIED_EVIDENCE_ROW_LIMIT)
 
 
 def _load_weekly_blocked_vs_allowed_expost_rows(review_dir: Path) -> List[Dict[str, Any]]:
@@ -713,7 +842,7 @@ def _load_weekly_blocked_vs_allowed_expost_rows(review_dir: Path) -> List[Dict[s
     )
     if artifact_rows is not None:
         return artifact_rows
-    summary_json = _load_json(review_dir / "weekly_review_summary.json")
+    summary_json = _load_weekly_summary_json(review_dir)
     summary_rows = summary_json.get("blocked_vs_allowed_expost_review")
     if isinstance(summary_rows, list) and summary_rows:
         return [dict(row) for row in summary_rows if isinstance(row, dict)]
@@ -721,7 +850,7 @@ def _load_weekly_blocked_vs_allowed_expost_rows(review_dir: Path) -> List[Dict[s
 
 
 def _load_weekly_candidate_model_review_rows(review_dir: Path) -> List[Dict[str, Any]]:
-    summary_json = _load_json(review_dir / "weekly_review_summary.json")
+    summary_json = _load_weekly_summary_json(review_dir)
     summary_rows = summary_json.get("candidate_model_review")
     if isinstance(summary_rows, list) and summary_rows:
         return [dict(row) for row in summary_rows if isinstance(row, dict)]
@@ -736,7 +865,7 @@ def _load_weekly_strategy_parameter_suggestion_rows(review_dir: Path) -> List[Di
     )
     if artifact_rows is not None:
         return artifact_rows
-    summary_json = _load_json(review_dir / "weekly_review_summary.json")
+    summary_json = _load_weekly_summary_json(review_dir)
     summary_rows = summary_json.get("strategy_parameter_suggestions")
     if isinstance(summary_rows, list) and summary_rows:
         return [dict(row) for row in summary_rows if isinstance(row, dict)]
@@ -751,7 +880,7 @@ def _load_weekly_strategy_parameter_suggestion_followup_rows(review_dir: Path) -
     )
     if artifact_rows is not None:
         return artifact_rows
-    summary_json = _load_json(review_dir / "weekly_review_summary.json")
+    summary_json = _load_weekly_summary_json(review_dir)
     summary_rows = summary_json.get("strategy_parameter_suggestion_followup")
     if isinstance(summary_rows, list) and summary_rows:
         return [dict(row) for row in summary_rows if isinstance(row, dict)]
@@ -759,7 +888,7 @@ def _load_weekly_strategy_parameter_suggestion_followup_rows(review_dir: Path) -
 
 
 def _load_weekly_strategy_parameter_suggestion_effectiveness(review_dir: Path) -> Dict[str, Any]:
-    summary_json = _load_json(review_dir / "weekly_review_summary.json")
+    summary_json = _load_weekly_summary_json(review_dir)
     summary = summary_json.get("strategy_parameter_suggestion_effectiveness")
     return dict(summary) if isinstance(summary, dict) else {}
 
@@ -768,7 +897,7 @@ def _load_weekly_ibkr_gateway_budget_payload(review_dir: Path) -> Dict[str, Any]
     payload = _load_json(review_dir / "weekly_ibkr_gateway_budget_status.json")
     if payload:
         return payload
-    summary_json = _load_json(review_dir / "weekly_review_summary.json")
+    summary_json = _load_weekly_summary_json(review_dir)
     summary = summary_json.get("ibkr_gateway_budget")
     rows = summary_json.get("ibkr_gateway_budget_rows")
     if isinstance(summary, dict):
@@ -833,7 +962,7 @@ def _load_walk_forward_market_stability_payload(walk_forward_dir: Path) -> Dict[
 
 
 def _load_weekly_risk_review_rows(review_dir: Path) -> List[Dict[str, Any]]:
-    summary_json = _load_json(review_dir / "weekly_review_summary.json")
+    summary_json = _load_weekly_summary_json(review_dir)
     summary_rows = summary_json.get("risk_review_summary")
     if isinstance(summary_rows, list) and summary_rows:
         return [dict(row) for row in summary_rows if isinstance(row, dict)]
@@ -841,7 +970,7 @@ def _load_weekly_risk_review_rows(review_dir: Path) -> List[Dict[str, Any]]:
 
 
 def _load_weekly_risk_feedback_rows(review_dir: Path) -> List[Dict[str, Any]]:
-    summary_json = _load_json(review_dir / "weekly_review_summary.json")
+    summary_json = _load_weekly_summary_json(review_dir)
     summary_rows = summary_json.get("risk_feedback_summary")
     if isinstance(summary_rows, list) and summary_rows:
         return [dict(row) for row in summary_rows if isinstance(row, dict)]
@@ -849,7 +978,7 @@ def _load_weekly_risk_feedback_rows(review_dir: Path) -> List[Dict[str, Any]]:
 
 
 def _load_weekly_execution_feedback_rows(review_dir: Path) -> List[Dict[str, Any]]:
-    summary_json = _load_json(review_dir / "weekly_review_summary.json")
+    summary_json = _load_weekly_summary_json(review_dir)
     summary_rows = summary_json.get("execution_feedback_summary")
     if isinstance(summary_rows, list) and summary_rows:
         return [dict(row) for row in summary_rows if isinstance(row, dict)]
@@ -857,7 +986,7 @@ def _load_weekly_execution_feedback_rows(review_dir: Path) -> List[Dict[str, Any
 
 
 def _load_weekly_portfolio_strategy_context_rows(review_dir: Path) -> List[Dict[str, Any]]:
-    summary_json = _load_json(review_dir / "weekly_review_summary.json")
+    summary_json = _load_weekly_summary_json(review_dir)
     summary_rows = summary_json.get("portfolio_strategy_context")
     if isinstance(summary_rows, list) and summary_rows:
         return [dict(row) for row in summary_rows if isinstance(row, dict)]
@@ -865,7 +994,7 @@ def _load_weekly_portfolio_strategy_context_rows(review_dir: Path) -> List[Dict[
 
 
 def _load_weekly_execution_session_rows(review_dir: Path) -> List[Dict[str, Any]]:
-    summary_json = _load_json(review_dir / "weekly_review_summary.json")
+    summary_json = _load_weekly_summary_json(review_dir)
     summary_rows = summary_json.get("execution_session_summary")
     if isinstance(summary_rows, list) and summary_rows:
         return [dict(row) for row in summary_rows if isinstance(row, dict)]
@@ -873,7 +1002,7 @@ def _load_weekly_execution_session_rows(review_dir: Path) -> List[Dict[str, Any]
 
 
 def _load_weekly_execution_hotspot_rows(review_dir: Path) -> List[Dict[str, Any]]:
-    summary_json = _load_json(review_dir / "weekly_review_summary.json")
+    summary_json = _load_weekly_summary_json(review_dir)
     summary_rows = summary_json.get("execution_hotspot_summary")
     if isinstance(summary_rows, list) and summary_rows:
         return [dict(row) for row in summary_rows if isinstance(row, dict)]
@@ -881,7 +1010,7 @@ def _load_weekly_execution_hotspot_rows(review_dir: Path) -> List[Dict[str, Any]
 
 
 def _load_weekly_feedback_calibration_rows(review_dir: Path) -> List[Dict[str, Any]]:
-    summary_json = _load_json(review_dir / "weekly_review_summary.json")
+    summary_json = _load_weekly_summary_json(review_dir)
     summary_rows = summary_json.get("feedback_calibration_summary")
     if isinstance(summary_rows, list) and summary_rows:
         return [dict(row) for row in summary_rows if isinstance(row, dict)]
@@ -889,7 +1018,7 @@ def _load_weekly_feedback_calibration_rows(review_dir: Path) -> List[Dict[str, A
 
 
 def _load_weekly_feedback_automation_rows(review_dir: Path) -> List[Dict[str, Any]]:
-    summary_json = _load_json(review_dir / "weekly_review_summary.json")
+    summary_json = _load_weekly_summary_json(review_dir)
     summary_rows = summary_json.get("feedback_automation_summary")
     if isinstance(summary_rows, list) and summary_rows:
         return [dict(row) for row in summary_rows if isinstance(row, dict)]
@@ -897,7 +1026,7 @@ def _load_weekly_feedback_automation_rows(review_dir: Path) -> List[Dict[str, An
 
 
 def _load_weekly_feedback_threshold_suggestion_rows(review_dir: Path) -> List[Dict[str, Any]]:
-    summary_json = _load_json(review_dir / "weekly_review_summary.json")
+    summary_json = _load_weekly_summary_json(review_dir)
     summary_rows = summary_json.get("feedback_threshold_suggestion_summary")
     if isinstance(summary_rows, list) and summary_rows:
         return [dict(row) for row in summary_rows if isinstance(row, dict)]
@@ -905,7 +1034,7 @@ def _load_weekly_feedback_threshold_suggestion_rows(review_dir: Path) -> List[Di
 
 
 def _load_weekly_feedback_threshold_history_rows(review_dir: Path) -> List[Dict[str, Any]]:
-    summary_json = _load_json(review_dir / "weekly_review_summary.json")
+    summary_json = _load_weekly_summary_json(review_dir)
     summary_rows = summary_json.get("feedback_threshold_history_overview")
     if isinstance(summary_rows, list) and summary_rows:
         return [dict(row) for row in summary_rows if isinstance(row, dict)]
@@ -913,7 +1042,7 @@ def _load_weekly_feedback_threshold_history_rows(review_dir: Path) -> List[Dict[
 
 
 def _load_weekly_feedback_threshold_effect_rows(review_dir: Path) -> List[Dict[str, Any]]:
-    summary_json = _load_json(review_dir / "weekly_review_summary.json")
+    summary_json = _load_weekly_summary_json(review_dir)
     summary_rows = summary_json.get("feedback_threshold_effect_overview")
     if isinstance(summary_rows, list) and summary_rows:
         return [dict(row) for row in summary_rows if isinstance(row, dict)]
@@ -921,7 +1050,7 @@ def _load_weekly_feedback_threshold_effect_rows(review_dir: Path) -> List[Dict[s
 
 
 def _load_weekly_feedback_threshold_cohort_rows(review_dir: Path) -> List[Dict[str, Any]]:
-    summary_json = _load_json(review_dir / "weekly_review_summary.json")
+    summary_json = _load_weekly_summary_json(review_dir)
     summary_rows = summary_json.get("feedback_threshold_cohort_overview")
     if isinstance(summary_rows, list) and summary_rows:
         return [dict(row) for row in summary_rows if isinstance(row, dict)]
@@ -929,7 +1058,7 @@ def _load_weekly_feedback_threshold_cohort_rows(review_dir: Path) -> List[Dict[s
 
 
 def _load_weekly_feedback_threshold_trial_alert_rows(review_dir: Path) -> List[Dict[str, Any]]:
-    summary_json = _load_json(review_dir / "weekly_review_summary.json")
+    summary_json = _load_weekly_summary_json(review_dir)
     summary_rows = summary_json.get("feedback_threshold_trial_alerts")
     if isinstance(summary_rows, list) and summary_rows:
         return [dict(row) for row in summary_rows if isinstance(row, dict)]
@@ -937,7 +1066,7 @@ def _load_weekly_feedback_threshold_trial_alert_rows(review_dir: Path) -> List[D
 
 
 def _load_weekly_feedback_threshold_tuning_rows(review_dir: Path) -> List[Dict[str, Any]]:
-    summary_json = _load_json(review_dir / "weekly_review_summary.json")
+    summary_json = _load_weekly_summary_json(review_dir)
     summary_rows = summary_json.get("feedback_threshold_tuning_summary")
     if isinstance(summary_rows, list) and summary_rows:
         return [dict(row) for row in summary_rows if isinstance(row, dict)]
@@ -953,7 +1082,7 @@ def _weekly_feedback_threshold_override_path(cfg: Dict[str, Any], review_dir: Pa
 
 def _load_weekly_feedback_threshold_override_rows(cfg: Dict[str, Any], review_dir: Path) -> List[Dict[str, Any]]:
     path = _weekly_feedback_threshold_override_path(cfg, review_dir)
-    raw = _load_json(review_dir / "weekly_review_summary.json")
+    raw = _load_weekly_summary_json(review_dir)
     tuning_rows = list(raw.get("feedback_threshold_tuning_summary") or []) if isinstance(raw, dict) else []
     suggestion_rows = list(raw.get("feedback_threshold_suggestion_summary") or []) if isinstance(raw, dict) else []
     threshold_cfg = _load_yaml(str(path.relative_to(BASE_DIR))) if path.exists() and str(path).startswith(str(BASE_DIR)) else (
@@ -1039,13 +1168,13 @@ def _load_weekly_feedback_threshold_override_rows(cfg: Dict[str, Any], review_di
 
 
 def _load_weekly_labeling_summary(review_dir: Path) -> Dict[str, Any]:
-    summary_json = _load_json(review_dir / "weekly_review_summary.json")
+    summary_json = _load_weekly_summary_json(review_dir)
     summary = summary_json.get("labeling_summary")
     return dict(summary) if isinstance(summary, dict) else {}
 
 
 def _load_weekly_labeling_skip_rows(review_dir: Path) -> List[Dict[str, Any]]:
-    summary_json = _load_json(review_dir / "weekly_review_summary.json")
+    summary_json = _load_weekly_summary_json(review_dir)
     summary_rows = summary_json.get("labeling_skip_summary")
     if isinstance(summary_rows, list) and summary_rows:
         return [dict(row) for row in summary_rows if isinstance(row, dict)]
@@ -1577,8 +1706,7 @@ def _load_broker_snapshot_rows(db_path: Path, *, market: str, portfolio_id: str,
     if not db_path.exists():
         return []
     market_code = resolve_market_code(market)
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
+    conn = connect_sqlite(db_path, row_factory=sqlite3.Row)
     try:
         row = conn.execute(
             """
@@ -1710,8 +1838,7 @@ def _load_recent_risk_history_rows(
         source_label = "Dry Run"
     # 这里直接读运行数据库，而不是只看 weekly summary，
     # 这样 dashboard 能展示“最近几次真实采用的风险预算轨迹”。
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
+    conn = connect_sqlite(db_path, row_factory=sqlite3.Row)
     try:
         normalized_rows = conn.execute(
             """
@@ -1881,8 +2008,7 @@ def _load_recent_patch_review_history_rows(
 def _load_health_summary(db_path: Path, *, portfolio_id: str, hours: int = 24) -> Dict[str, Any]:
     if not db_path.exists():
         return {}
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
+    conn = connect_sqlite(db_path, row_factory=sqlite3.Row)
     try:
         rows = conn.execute(
             """
@@ -2030,7 +2156,9 @@ def _build_review_artifact_health_rows(review_dir: Path) -> tuple[List[Dict[str,
             "weekly_patch_governance_summary",
         )
     }
-    loaded = load_artifact_set(review_dir, contracts)
+    loaded: Dict[str, LoadedArtifact] = {}
+    for key, contract in contracts.items():
+        loaded[key] = _load_dashboard_health_artifact(review_dir, contract, loaded=loaded)
     rows = [
         evaluate_artifact_health(contract, loaded[key], scope_label="GLOBAL")
         for key, contract in contracts.items()
@@ -2131,8 +2259,7 @@ def _load_candidate_outcome_summary_rows(
     if not db_path.exists():
         return []
     market_code = resolve_market_code(market)
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
+    conn = connect_sqlite(db_path, row_factory=sqlite3.Row)
     try:
         rows = conn.execute(
             """
@@ -2428,8 +2555,7 @@ def _load_analysis_state_rows(db_path: Path, *, market: str, portfolio_id: str, 
     if not db_path.exists():
         return []
     market_code = resolve_market_code(market)
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
+    conn = connect_sqlite(db_path, row_factory=sqlite3.Row)
     try:
         rows = conn.execute(
             """
@@ -2466,8 +2592,7 @@ def _load_analysis_event_rows(db_path: Path, *, market: str, portfolio_id: str, 
     if not db_path.exists():
         return []
     market_code = resolve_market_code(market)
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
+    conn = connect_sqlite(db_path, row_factory=sqlite3.Row)
     try:
         rows = conn.execute(
             """
@@ -3143,6 +3268,8 @@ def _build_report_card(
     )
     paper_summary = _load_json(report_dir / "investment_paper_summary.json")
     exec_summary = _load_json(report_dir / "investment_execution_summary.json")
+    no_order_diagnostics = _load_json(report_dir / "investment_no_order_diagnostics.json")
+    owner_progression = _load_json(report_dir / "investment_owner_progression_assessment.json")
     guard_summary = _load_json(report_dir / "investment_guard_summary.json")
     opp_summary = _load_json(report_dir / "investment_opportunity_summary.json")
     broker_equity = _safe_float(
@@ -3278,6 +3405,8 @@ def _build_report_card(
         "sector_theme_distribution": _sector_theme_distribution(candidates),
         "paper_summary": paper_summary,
         "execution_summary": exec_summary,
+        "no_order_diagnostics": no_order_diagnostics,
+        "owner_progression_assessment": owner_progression,
         "guard_summary": guard_summary,
         "opportunity_summary": opp_summary,
         "data_quality_summary": data_quality_summary,
@@ -3400,6 +3529,16 @@ def _build_overview(cards: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 "opp_entry_now": int(opp.get("entry_now_count", 0) or 0),
                 "opp_wait": int(opp.get("wait_count", 0) or 0),
                 "execution_orders": int(execution.get("order_count", 0) or 0),
+                "primary_no_order_reason": str(
+                    execution.get("primary_no_order_reason")
+                    or dict(card.get("no_order_diagnostics", {}) or {}).get("primary_no_order_reason")
+                    or ""
+                ),
+                "owner_progression_status": str(
+                    execution.get("owner_progression_status")
+                    or dict(card.get("owner_progression_assessment", {}) or {}).get("overall_status")
+                    or ""
+                ),
             }
         )
     return rows
@@ -5677,6 +5816,7 @@ def _build_ops_overview(
     governance_health_summary: Dict[str, Any],
     evidence_focus_summary: Dict[str, Any] | None = None,
     ibkr_gateway_budget_summary: Dict[str, Any] | None = None,
+    auto_order_readiness: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     # 运维总览只聚合“现在最值得先处理”的信号：preflight、报告新鲜度、组合健康度和执行模式偏差。
     checks = [dict(row) for row in list(preflight_summary.get("checks", []) or []) if isinstance(row, dict)]
@@ -5718,6 +5858,52 @@ def _build_ops_overview(
     gateway_budget_cache_hit_count = int(gateway_budget.get("cache_hit_count", 0) or 0)
     gateway_budget_cache_hit_ratio = float(gateway_budget.get("cache_hit_ratio", 0.0) or 0.0)
     gateway_budget_max_usage_pct = float(gateway_budget.get("max_budget_usage_pct", 0.0) or 0.0)
+    auto_order = dict(auto_order_readiness or {})
+    auto_order_summary = dict(auto_order.get("summary") or {})
+    auto_order_submit_plan = dict(auto_order_summary.get("submit_plan") or {})
+    auto_order_status = str(auto_order_summary.get("status") or "").strip().lower()
+    auto_order_summary_text = str(auto_order_summary.get("summary_text") or "").strip()
+    auto_order_blocked_count = int(auto_order_summary.get("blocked_count", 0) or 0)
+    auto_order_ready_count = int(auto_order_summary.get("ready_count", 0) or 0)
+    auto_order_primary_block_reason = str(auto_order_summary.get("primary_block_reason") or "").strip()
+    auto_order_submit_plan_status = str(auto_order_submit_plan.get("status") or "").strip().upper()
+    auto_order_submit_plan_ready = bool(auto_order_submit_plan.get("ready", False))
+    auto_order_submit_plan_reason = str(auto_order_submit_plan.get("reason") or "").strip()
+    auto_order_submit_selected_portfolio_id = str(auto_order_submit_plan.get("selected_portfolio_id") or "").strip()
+    auto_order_submit_selected_portfolio_ids = [
+        str(value).strip()
+        for value in list(auto_order_submit_plan.get("selected_portfolio_ids") or [])
+        if str(value).strip()
+    ]
+    auto_order_submit_selected_market = str(auto_order_submit_plan.get("selected_market") or "").strip()
+    auto_order_submit_selected_markets = [
+        str(value).strip()
+        for value in list(auto_order_submit_plan.get("selected_markets") or [])
+        if str(value).strip()
+    ]
+    auto_order_submit_selected_order_count = int(auto_order_submit_plan.get("selected_order_count", 0) or 0)
+    auto_order_submit_selected_total_order_count = int(
+        auto_order_submit_plan.get("selected_total_order_count", 0) or auto_order_submit_selected_order_count
+    )
+    auto_order_submit_selected_gross_value = float(
+        auto_order_submit_plan.get("selected_planned_gross_order_value", 0.0) or 0.0
+    )
+    auto_order_submit_selected_total_gross_value = float(
+        auto_order_submit_plan.get("selected_total_planned_gross_order_value", 0.0)
+        or auto_order_submit_selected_gross_value
+    )
+    auto_order_frontier_candidates = [
+        row for row in list(auto_order_submit_plan.get("frontier_candidates") or []) if isinstance(row, dict)
+    ]
+    auto_order_rejected_candidates = [
+        row for row in list(auto_order_submit_plan.get("rejected_candidates") or []) if isinstance(row, dict)
+    ]
+    auto_order_frontier_candidate_count = int(
+        auto_order_submit_plan.get("frontier_candidate_count", 0) or len(auto_order_frontier_candidates)
+    )
+    auto_order_rejected_candidate_count = int(
+        auto_order_submit_plan.get("rejected_candidate_count", 0) or len(auto_order_rejected_candidates)
+    )
     gateway_runtime_summary = _build_gateway_runtime_summary(preflight_summary, control_payload)
     alert_rows: List[Dict[str, Any]] = []
     for row in warning_rows[:8]:
@@ -5797,6 +5983,16 @@ def _build_ops_overview(
                 ),
             )
         )
+    if auto_order and not auto_order_submit_plan_ready:
+        detail = auto_order_submit_plan_reason or auto_order_primary_block_reason or auto_order_summary_text or "not_ready"
+        alert_rows.append(
+            _ops_alert_row(
+                "AUTO_ORDER",
+                "submit_plan",
+                "WARN",
+                detail,
+            )
+        )
     alert_class_counts: Dict[str, int] = {}
     alert_severity_counts: Dict[str, int] = {"fail": 0, "warn": 0, "ok": 0}
     for row in alert_rows:
@@ -5842,6 +6038,7 @@ def _build_ops_overview(
         f"data_attention={data_attention_count} | "
         f"evidence_urgent={evidence_focus_urgent_count} | "
         f"gateway_budget={gateway_budget_status} | "
+        f"auto_submit_plan={auto_order_submit_plan_status or 'missing'} | "
         f"mode_mismatch={execution_mismatch_count} | "
         f"gateway_runtime={gateway_runtime_summary.get('status', 'unknown')} | "
         f"governance={governance_status} | "
@@ -5880,6 +6077,24 @@ def _build_ops_overview(
         "ibkr_gateway_budget_cache_hit_count": gateway_budget_cache_hit_count,
         "ibkr_gateway_budget_cache_hit_ratio": gateway_budget_cache_hit_ratio,
         "ibkr_gateway_budget_max_usage_pct": gateway_budget_max_usage_pct,
+        "auto_order_status": auto_order_status,
+        "auto_order_summary_text": auto_order_summary_text,
+        "auto_order_blocked_count": auto_order_blocked_count,
+        "auto_order_ready_count": auto_order_ready_count,
+        "auto_order_primary_block_reason": auto_order_primary_block_reason,
+        "auto_order_submit_plan_status": auto_order_submit_plan_status,
+        "auto_order_submit_plan_ready": auto_order_submit_plan_ready,
+        "auto_order_submit_plan_reason": auto_order_submit_plan_reason,
+        "auto_order_submit_selected_market": auto_order_submit_selected_market,
+        "auto_order_submit_selected_markets": auto_order_submit_selected_markets,
+        "auto_order_submit_selected_portfolio_id": auto_order_submit_selected_portfolio_id,
+        "auto_order_submit_selected_portfolio_ids": auto_order_submit_selected_portfolio_ids,
+        "auto_order_submit_selected_order_count": auto_order_submit_selected_order_count,
+        "auto_order_submit_selected_total_order_count": auto_order_submit_selected_total_order_count,
+        "auto_order_submit_selected_gross_value": auto_order_submit_selected_gross_value,
+        "auto_order_submit_selected_total_gross_value": auto_order_submit_selected_total_gross_value,
+        "auto_order_frontier_candidate_count": auto_order_frontier_candidate_count,
+        "auto_order_rejected_candidate_count": auto_order_rejected_candidate_count,
         "control_service_status": str(service_state.get("status", "disabled") or "disabled"),
         "gateway_runtime_summary": gateway_runtime_summary,
         "gateway_runtime_status": str(gateway_runtime_summary.get("status", "") or ""),
@@ -7499,6 +7714,7 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
     )
     dashboard_control = _load_dashboard_control_payload(summary_dir, cfg, cards)
     _attach_dashboard_control(cards, dashboard_control)
+    auto_order_readiness = _load_json(summary_dir / "auto_order_readiness.json")
     market_data_health_overview = _build_market_data_health_overview(cards)
     market_data_health_map: Dict[str, Dict[str, Any]] = {
         str(row.get("market", "") or "").strip().upper(): dict(row)
@@ -7624,6 +7840,7 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
         governance_health_summary=governance_health_summary,
         evidence_focus_summary=evidence_focus_summary,
         ibkr_gateway_budget_summary=weekly_ibkr_gateway_budget_summary,
+        auto_order_readiness=auto_order_readiness,
     )
     gateway_runtime_summary = dict(ops_overview.get("gateway_runtime_summary", {}) or {})
     for card in list(trade_cards) + list(dry_run_cards):
@@ -7634,6 +7851,7 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
         "preflight_summary": preflight_summary,
         "ibkr_history_probe_summary": ibkr_history_probe_summary,
         "ops_overview": ops_overview,
+        "auto_order_readiness": auto_order_readiness,
         "ibkr_gateway_budget": weekly_ibkr_gateway_budget_payload,
         "ibkr_gateway_budget_rows": weekly_ibkr_gateway_budget_rows,
         "walk_forward_acceptance": walk_forward_acceptance_payload,
@@ -7815,6 +8033,28 @@ def _simple_ops_overview_rows(ops_overview: Dict[str, Any]) -> List[List[str]]:
     else:
         evidence_focus_label = "已就绪 | 0"
 
+    auto_submit_status = str(ops_overview.get("auto_order_submit_plan_status", "") or "").strip().upper()
+    auto_submit_reason = str(
+        ops_overview.get("auto_order_submit_plan_reason")
+        or ops_overview.get("auto_order_primary_block_reason")
+        or ""
+    ).strip()
+    auto_selected_portfolio = str(ops_overview.get("auto_order_submit_selected_portfolio_id", "") or "").strip()
+    auto_selected_portfolios = [
+        str(value).strip()
+        for value in list(ops_overview.get("auto_order_submit_selected_portfolio_ids") or [])
+        if str(value).strip()
+    ]
+    if auto_submit_status in {"READY_SINGLE_CANDIDATE", "READY_MULTI_CANDIDATE"}:
+        selected_label = ",".join(auto_selected_portfolios) if auto_selected_portfolios else auto_selected_portfolio
+        auto_order_label = f"可提交 | {selected_label or '-'}"
+    elif auto_submit_status == "DISABLED":
+        auto_order_label = "未启用 | policy disabled"
+    elif auto_submit_status:
+        auto_order_label = f"阻断 | {auto_submit_reason or auto_submit_status}"
+    else:
+        auto_order_label = "未生成 | auto_order_readiness"
+
     return [
         [
             "Preflight",
@@ -7833,6 +8073,10 @@ def _simple_ops_overview_rows(ops_overview: Dict[str, Any]) -> List[List[str]]:
                 or ops_overview.get("gateway_runtime_status_label")
                 or "-"
             ),
+        ],
+        [
+            "自动下单",
+            auto_order_label,
         ],
         [
             "市场状态缺口",

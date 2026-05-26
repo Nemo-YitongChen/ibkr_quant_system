@@ -184,6 +184,13 @@
 - **strategy parameter suggestion 已新增 effectiveness summary：weekly summary、tuning dataset 和 markdown 会统计 open/handled/resolved/stale、resolution mix、avg resolution hours 与 `auto_apply` 违规，dashboard control audit 可通过 `linked_strategy_parameter_suggestion_id` 回填处理状态**
 - **dashboard v2 已新增 `Strategy Parameter Governance` advanced block：直接展示 weekly strategy parameter suggestions、follow-up verdict 和 effectiveness summary，open/stale/degraded/auto-apply 违规会进入 warning，但仍保持只读**
 - **2026-05-10 后续开发报告已补充到 `docs/development_report_2026-05-10.md`：下一步优先拆 dashboard weekly artifact loader，再推进 execution quality decision evidence 与配置 defaults+overrides**
+- **paper 自动下单已补 readiness gate：有 2026-W19 `SIGNAL_RANKING_INVERTED` 证据的 ASX/CN/HK/XETRA paper configs 使用 paper-only layered strategy defaults，将 `mr_weight` 降到 `0.55`；supervisor 在 `submit_investment_execution=true` 前检查 preflight、weekly review、gateway budget 和 strategy suggestion follow-up，live submit 仍默认禁止**
+- **IBKR 子任务已补 clientId 隔离：supervisor 为 report/snapshot/opportunity/execution/guard/short-safety 等 Gateway 子进程注入稳定 clientId offset，连接层在短暂 orphan session 残留时有限尝试相邻 clientId，避免 `clientId already in use` 卡住 paper 自动下单链路**
+- **MarketDataService 已补历史行情失败 cooldown：当某个 symbol/request 组合返回空历史或请求错误后，会在 TTL 内跳过重复 Gateway 请求，优先使用 stale cache 或交给 yfinance fallback，从而减少 XETRA/HK/ASX 这类无权限/订阅不足场景的重复 IBKR 请求**
+- **multi-market readiness 已新增独立只读 CLI：`ibkr-quant-market-readiness` 会汇总 US/HK/ASX/XETRA/CN 的 execution artifact freshness、IB Gateway 降级状态、1000 AUD equity cap、small profile 后的 min_trade/max_order/cash buffer、fee/lot 摩擦和市场准备优先级；当前准备顺序是 US regular-session 小额整股 ETF -> 刷新 US overnight/XETRA/ASX artifact -> HK 只在 ETF/board-lot/post-cost edge 通过后推进，CN 继续 research-only**
+- **auto-order readiness 已消费 market readiness：`ibkr-quant-auto-order-readiness` 和 supervisor submit gate 会读取 `market_readiness.json`，当市场处于 stale/degraded gateway/market closed/config blocked 时加入 `market_readiness_not_ready` 硬阻断；如果产物缺失，CLI 和 supervisor 会即时构建只读 readiness payload 作为 fallback，避免 ASX/HK/XETRA/US 自动提交 gate 依赖人工先跑诊断**
+- **auto-order readiness 已新增 remediation plan：当 preflight、gateway budget、market readiness、strategy suggestion 同时阻断时，报告会按优先级和影响组合数输出修复顺序；当前顺序是 `preflight_stale` -> `gateway_budget_degraded` -> `market_readiness_not_ready` -> `strategy_suggestions_open`，避免只看第一条 primary reason 而漏掉真正的执行阻塞**
+- **auto-order readiness 已新增 submit plan 并接入 supervisor submit gate：即使所有治理检查通过，也只允许最多 1 个 portfolio、最多 1 笔小额 paper 订单、gross 不超过 100 AUD 的候选进入提交计划；supervisor 只有在当前 item 命中 `selected_portfolio_id` 时才会带 `--submit`，多个候选会要求 operator selection，订单数/金额超限会保持 blocked，避免小账户在多市场同时展开风险**
 
 ---
 
@@ -312,3 +319,126 @@
 ## 8. 一句话结论
 
 截至当前，`ibkr_quant_system` 已经是一个 **主线清晰、HK/US 闭环较完整、开始重视工程护栏和运行治理** 的个人投资操作系统；最近的真实推进方向不是再堆新策略，而是 **把关键启动链路、执行审计链路和 dashboard/复盘语义继续守稳并讲清楚**。
+
+---
+
+## 9. 2026-05-12 运行优化补充
+
+- Paper supervisor 已开启组合级 auto-order readiness gate：有 hard block 的组合不会自动提交，ready/warning 的 paper 组合可以继续生成并提交 paper 订单；live 自动提交仍默认关闭。
+- IBKR Gateway 子任务已注入任务级 `IBKR_CLIENT_ID_OFFSET`，减少 report / broker snapshot / opportunity / execution / guard 之间的 `clientId already in use` 冲突。
+- `MarketDataService` 已补历史行情失败 cooldown：同一 symbol/request 刚刚出现 empty/error 时，短时间内不再重复请求 IBKR，优先 stale cache 或 fallback。
+- Dashboard 构建已避开巨型 weekly summary 的重复 JSON parse：当 `weekly_review_summary.json` 或 standalone weekly evidence JSON 过大时，dashboard 使用独立 CSV/artifact 和 metadata-only health 读取。当前本地 `generate_dashboard` 从分钟级降到约 `1.31s`。
+
+## 10. 2026-05-13 周报输出瘦身补充
+
+- `weekly_review_summary.json` 不再嵌入 `decision_evidence_rows` / `unified_evidence_rows` 大明细，只保留 `decision_evidence_row_count`、`unified_evidence_row_count` 和 `evidence_artifacts` 文件引用。
+- `weekly_tuning_dataset.json` 不再重复嵌入完整 `unified_evidence`，只保留 row_count 与 artifact 引用。
+- 完整明细仍由 `weekly_decision_evidence.csv`、`weekly_unified_evidence.csv`、`weekly_unified_evidence.json` 等独立 artifact 承载，dashboard 和周报 summary 只消费轻量索引。
+
+## 11. 2026-05-13 SQLite 锁冲突修复
+
+- `Storage` 连接统一启用 30 秒 `busy_timeout`，文件型数据库初始化时尽量启用 WAL，并对短暂 `database is locked/busy` 的 `execute/executemany/commit` 做有限指数退避重试。
+- supervisor 报错的 broker snapshot reuse 写入路径已由锁冲突测试覆盖：短暂写锁释放后，`investment_execution_runs` 能正常落库，不再直接让 supervisor 退出。
+- 所有 `src/tools`、`src/common`、`src/app` 里的直接 `sqlite3.connect(...)` 已收敛到 `Storage` 或 `connect_sqlite()`，dashboard / weekly / reconcile / export 等读库工具也使用统一 busy timeout。
+
+## 12. 2026-05-14 Owner P0-P6 小账户增值路径
+
+- P0-P6 已归档到 `docs/change_archive_2026-05-14_owner_p0_p6_asset_growth_path.md`，把目标明确为“先证明 paper post-cost edge 和执行质量，再考虑 micro-live”，而不是通过高杠杆追求快速翻倍。
+- execution run 现在会输出 `investment_no_order_diagnostics.json/csv`，按 candidate -> target -> raw order -> blocked -> executable -> submitted 解释为什么没有订单。
+- execution run 现在会输出 `investment_owner_progression_assessment.json/csv`，把当前状态归类为 `PAPER_BLOCKED`、`PAPER_PLANNED` 或 `PAPER_SUBMITTED`。
+- `account_profiles.small` 已改为 1000-25000 AUD 小账户 profile：低 cash floor、低 min trade、whole-share preferred、自动 paper submit 阶段最多 1 单、limit order、仍保留 manual review。
+- dashboard overview 已接入 `primary_no_order_reason` 与 `owner_progression_status`，避免 paper 没有订单时只能人工猜测。
+
+## 13. 2026-05-14 IBKR clientId 收敛
+
+- `DEFAULT_CLIENT_ID_RETRY_SPAN` 已收敛为 `1`，supervisor 默认写入 `IBKR_CLIENT_ID_RETRY_SPAN=1`，避免 `clientId already in use` 后自动从 1411 递增到 1412、1413 并在 IB Gateway 留下更多 client 标签。
+- `config/supervisor.yaml` 新增 `ibkr_client_id_retry_span: 1` 与 `ibkr_connect_max_rounds: 3`。需要临时容忍相邻 clientId 时必须显式调大，默认路径以清理旧进程 / Gateway orphan session 为先。
+- `IBKRConnection` 在连接失败和断连时会无条件尝试 `disconnect()`，用于清掉本进程的半开 socket；无法清理其他旧进程持有的 clientId，因此刷新 preflight / paper execution 前应先停掉旧 supervisor。
+
+## 14. 2026-05-14 Owner 资金口径收敛
+
+- paper 账户的 IBKR `NetLiquidation` 可能是约 100 万级别，不能直接代表当前 owner 的 1000 AUD 生存资金目标。
+- `InvestmentExecutionConfig` 新增 `account_equity_cap`，当前 paper execution 配置统一设为 `1000.0`，让 profile、单笔上限、target equity、manual review 与 no-order diagnostics 按真实 owner 资金上限计算。
+- execution summary 同时保留 `broker_equity_raw` / `broker_cash_raw` 和 cap 后的 `broker_equity` / `broker_cash`，避免误把 paper 账户体验金当作真实可冒险资本。
+
+## 15. 2026-05-14 Gateway 请求降载
+
+- US/HK/XETRA/ASX paper 配置新增 `research_only_yfinance: true`，报告和候选生成阶段优先使用外部日线，IBKR Gateway 只保留账户、持仓、订单和必要快照职责。
+- `config/supervisor.yaml` 暂停 `run_investment_opportunity`，避免每 15-30 分钟重复拉 5m 历史行情。当前阶段先用低频 daily/weekly paper 证明 post-cost edge，不用高频 opportunity 扩大 Gateway 请求量。
+- readiness 仍然会因为过去 7 日 telemetry 超预算而阻断 submit；这是正确的。新配置的目标是让后续窗口自然降载，而不是通过调高预算掩盖过量请求。
+
+## 16. 2026-05-14 Opportunity / Cache 阻塞修复
+
+- `generate_investment_report` 在 `research_only_yfinance` 下不再被 universe.yaml 的 `include_scanner: true` 重新打开 IBKR scanner；如确实要在 research-only 下连 scanner，必须显式设置 `include_scanner_research_only: true`。
+- `InvestmentOpportunityEngine` 修复 CSV bool 解析：`"False"` 不再被 Python 当成 truthy，避免所有候选被误判为 `WAIT_EVENT`。
+- yfinance 日线 stale cache 现在按“最新 bar 时间”选择缓存，而不是固定使用当前 period 或最长 period，避免 `1y` 和 `5y` 缓存价格不一致导致 report 与 opportunity 互相打架。
+- 最新 US paper refresh 后，最强阻塞从假 `WAIT_EVENT` / 数据质量问题前移为 `NO_TARGET_WEIGHTS`：当前一致价格下 top candidates 全部为 `REDUCE`，且账户无持仓，所以没有买入目标。这个状态不应通过放宽 gate 强行下单。
+
+## 17. 2026-05-20 Auto-order dashboard submit gate
+
+- `generate_dashboard` 现在读取 `reports_supervisor/auto_order_readiness.json`，并把 `auto_order_status`、`auto_order_submit_plan_status`、`auto_order_submit_plan_reason`、选中 portfolio 和阻断原因写入 `ops_overview`。
+- Dashboard v2 新增 Home block `auto_order_readiness`，直接显示自动 paper submit 是否存在单一小额安全候选、被拒候选数量、选中组合、计划订单数和计划金额。
+- 简单模式运维总览新增“自动下单”行；高级模式通过 v2 block 展开 submit plan、remediation plan 和 portfolio readiness rows。
+- 当前本地 dashboard 生成结果仍为 `submit_plan=BLOCKED`，原因 `no_single_safe_submit_candidate`，首要组合阻断 `preflight_stale`。下一步不是放宽 risk/edge gate，而是刷新 preflight / weekly / market readiness 后，再按新的 dashboard block 判断是否出现唯一 READY 小额 paper 计划单。
+
+## 18. 2026-05-21 Auto-order submit frontier
+
+- `auto_order_readiness` 的 submit plan 新增 `frontier_candidates`，用于展示“最接近可提交但仍被挡住”的 portfolio 列表；这只是诊断排序，不会让硬阻断组合通过 `--submit`。
+- frontier 会同时展示 hard blocks、policy rejects、market readiness、计划订单数、计划金额、symbols 和 next action。当前真实排序第一位是 `US:watchlist`，已有计划单 `SCHX,SPLG`，但仍被 `preflight_stale`、`gateway_budget_degraded`、`market_readiness_not_ready` 以及小账户 policy 的 `order_count_exceeds_policy` / `planned_gross_value_exceeds_policy` 挡住。
+- `review_auto_order_readiness` markdown 新增 `Submit Frontier` 表，dashboard v2 的 `auto_order_readiness` block 也会展示 frontier count 与明细。
+- 下一步优化应聚焦把 `US:watchlist` 从两笔 116.65 AUD 调整为“一笔、<=100 AUD、整股/小额 ETF”的计划单，同时先刷新 preflight 并确认 Gateway budget 不再 degraded；不要通过关闭 readiness gate 强行 paper submit。
+
+## 19. 2026-05-22 Small-account auto-submit alignment
+
+- `account_profiles.small.max_orders_per_run` 从 2 收敛为 1，和 supervisor `auto_order_readiness.max_submit_orders_per_portfolio=1` 对齐，避免小账户计划生成阶段稳定制造 `order_count_exceeds_policy`。
+- 这不是放宽 risk / edge / market readiness gate；相反，系统现在只允许先验证单笔 25-100 AUD 等值、整股优先、limit order 的 paper fill / slippage / post-cost edge。
+- 当前已生成的 readiness artifact 仍可能显示旧的两笔 `SCHX,SPLG` 计划，必须重新跑 US report / paper execution dry-run / readiness review 后才会反映新的单笔 profile。
+- 2026-05-22 no-submit refresh 尝试连接 `127.0.0.1:4002` 被拒绝，`US:watchlist` execution artifact 正确降级为 `IBKR_GATEWAY_UNAVAILABLE`，没有提交订单。
+- `auto_order_readiness` 现在会把 `IBKR_GATEWAY_UNAVAILABLE` 提升为具体 hard block `ibkr_gateway_unavailable`，优先于泛化的 `preflight_stale`；frontier next action 也会指向“启动/解锁 IB Gateway paper API 并确认端口监听，再重跑 no-submit”。
+- 当前 dashboard 顶部 `auto_order_primary_block_reason=ibkr_gateway_unavailable`、`submit_plan=BLOCKED`、`frontier_candidate_count=6`。下一步应先恢复 Gateway/API 与 preflight，再刷新 US report + paper execution dry-run；在出现唯一 READY、1 单、<=100 AUD 的 paper 候选前不要运行 `--submit`。
+
+## 20. 2026-05-25 Auto-submit buy-leg guard
+
+- IBKR paper Gateway `127.0.0.1:4002` 已恢复监听；`supervisor_preflight_summary.json` 刷新后为 29 pass、0 warn、0 fail。
+- 最新 US report 刷新成功：`US:watchlist` 候选 169、ranked 15、plan 15。随后 no-submit execution 成功连接 Gateway，生成 1 笔计划单，金额约 29.30 AUD，但方向是 `SELL SCHX`，不是小账户建仓 BUY 样本。
+- `auto_order_readiness.require_buy_order_for_submit=true` 已启用：自动 owner-growth paper submit 必须包含 BUY leg。当前 `US:watchlist` frontier 因 `no_buy_order_for_growth_submit` 继续 blocked，避免系统把 sell-only 退出单误当作增值试单自动提交。
+- 旧 `python -m src.app.supervisor` 进程启动早于该 guard，已停止，避免旧内存配置继续运行自动 submit gate。后续必须用新代码/新配置重新启动 supervisor。
+- 当前主要剩余阻塞：weekly Gateway request budget 仍为 degraded，US 周请求约 8034/2000，top tool 为历史 `run_investment_opportunity:us:watchlist`；同时 US 常规交易时段关闭。下一步先保持 opportunity 关闭、等待/刷新预算窗口，并继续校准策略让小账户产生 BUY-side whole-share ETF 候选，而不是自动提交 sell-only 单。
+
+## 21. 2026-05-25 Whole-share ETF paper BUY frontier
+
+- 手动 US 刷新必须使用 `config/market_structure_us.yaml`；使用全局 `config/market_structure.yaml` 会漏掉 US 小账户 ETF-first / whole-share 规则，导致 SPLG/SPTM/SCHB 不被提升。
+- `account_profiles.small` 新增 `prioritize_buy_orders_for_growth_submit: true`，并在 allocator 中只对满足 `small_account_preferred_candidate=1`、`whole_share_tradable_preferred_candidate=1`、`whole_share_tradability_reason=PASS`、edge/cost/cash/order cap 通过的 BUY 候选跳过旧持仓 sell slot。这样 `max_orders_per_run=1` 不再让旧 `SCHX` 退出单抢掉唯一自动 paper submit 订单槽。
+- `investment_execution_us.yaml` 新增 paper-only `whole_share_missing_opportunity_paper_sample_*` 配置：当 opportunity scan 没覆盖到已通过 risk/quality/market-rule/edge 的 whole-share ETF BUY 时，允许生成一笔小额 LMT 样本单；明确的 `WAIT_EVENT` / 非 ETF / 超 100 AUD / edge 或 quality 未通过仍会阻塞。
+- runtime `US:watchlist` 已刷新到 supervisor 实际消费目录：当前计划单为 `SPLG BUY 1 @ 87.75`，`execution_order_type=LMT`，`limit_price_buffer_bps_effective=0.0`，`opportunity_status=WHOLE_SHARE_SAMPLE`，`edge_gate_status=PASS`，`quality_status=QUALITY_OK`，`market_rule_status=RULES_OK`。
+- `market_readiness` 对 `US:watchlist` 已为 `READY_FOR_PAPER_REVIEW`，`planned_buy_order_value=87.75`，`planned_sell_order_value=0.0`。`auto_order_readiness` 仍 blocked 的原因只剩历史 `gateway_budget_degraded`；US frontier 没有 policy reject，也没有 `market_readiness_not_ready`。
+- Gateway 降载继续推进：`_broker_positions()` 现在把成功但为空的 `portfolio(account_id)` 视为“无持仓”，不再继续请求 `portfolio()` 和 `positions()`；dry-run 没有实际 submit 时复用 before broker positions 作为 after snapshot，`investment_execution_summary.json` 输出 `broker_positions_after_reused=true`。这会降低后续 positions 类 Gateway 请求，但 7 日预算窗口需要自然滚动或重新生成周报后才会解除 degraded hard block。
+
+## 22. 2026-05-25 Gateway budget recovery diagnostics
+
+- `ibkr_gateway_budget` 现在保留 market/day 请求分布，并为每个市场输出 `excess_gateway_requests`、`daily_gateway_request_budget`、`projected_recovery_days`、`projected_recovery_at`。这不会放宽预算门，只把“何时可能恢复到预算内”显式写入 weekly review artifact。
+- `auto_order_readiness` 的 `gateway_budget_degraded` / `gateway_budget_warning` detail 现在会显示 `requests=current/budget`、`usage`、`top_request_kind`、`top_tool` 和 projected recovery；remediation 会明确建议继续关闭高请求扫描，并在恢复时间后重跑 weekly review / readiness。
+- 当前操作原则不变：`US:watchlist` 的 SPLG 小额整股 ETF 计划单已经 ready，但只允许在 Gateway 预算恢复、preflight 新鲜、market readiness 仍 ready 后进入 paper submit；不通过关闭 `block_on_gateway_budget_degraded` 来绕过 historical overuse。
+
+## 23. 2026-05-26 Non-CN multi-market paper auto-submit policy
+
+- `auto_order_readiness.excluded_markets=["CN"]` 已加入 supervisor policy；即使后续误把 CN report 的 `submit_investment_execution` 打开，readiness 层也会返回 `auto_submit_market_excluded`，深圳/上海继续 research-only。
+- 非 CN 市场的 paper submit plan 已从“只能选择单一 portfolio”升级为“多市场小额计划”：默认最多 4 个 portfolio、每个 market 最多 1 个 portfolio、每个 portfolio 最多 1 单、单组合 gross <= 100 AUD、总 gross <= 400 AUD，并继续要求 BUY leg。
+- supervisor submit gate 现在消费 `selected_portfolio_ids` 列表；只有被多市场 submit plan 选中的 portfolio 会带 `--submit`，同一市场的第二个 portfolio 会被 `market_portfolio_count_exceeds_policy` 拒绝，避免 HK/US 双 portfolio 同时抢风险额度。
+- 当前真实 artifact 状态：preflight 已刷新为 29 pass / 0 warn / 0 fail；`US:watchlist` 仍是第一 frontier，计划 `SPLG BUY 1`，但所有非 CN market 仍被历史 `gateway_budget_degraded` 阻断，ASX/HK/XETRA 还需要刷新 execution artifact 后才能进入 ready。该改动让市场具备自动下单资格，不绕过预算、市场准备度或风险门。
+
+## 24. 2026-05-26 Submit quality / frequency / growth guard
+
+- `market_readiness` 现在读取 `investment_execution_plan.csv`，为 planned orders 计算 `submit_quality_status`、post-cost net edge、edge margin、expected cost、order ADV 占比、order type，以及 edge/quality/market-rule/shadow/manual review 状态。
+- `auto_order_readiness` 新增 `block_on_submit_quality_not_pass=true`：自动 paper submit 必须看到 `submit_quality_status=PASS`。默认门槛为 `min_submit_net_edge_bps=8`、`min_submit_edge_margin_bps=3`、`max_submit_expected_cost_bps=35`、`require_limit_order_for_submit=true`、`max_submit_order_adv_pct=0.001`。
+- 频率层继续由 submit plan 控制：每市场最多 1 个 portfolio、每 portfolio 最多 1 单、非 CN 总 portfolio 最多 4、总 gross <= 400 AUD。这样可以让多市场具备自动下单能力，但不会在 1000 AUD 小账户里高频扩张。
+- 当前真实 `US:watchlist` SPLG 计划通过质量门：`submit_quality_status=PASS`、min net edge 约 `10.84bps`、min edge margin 约 `4.84bps`、max expected cost 约 `22.74bps`、order type 为 `LMT`。它仍被历史 `gateway_budget_degraded` 阻断，因此当前不提交订单。
+
+## 25. 2026-05-26 Quality-tier frequency and watchlist expansion
+
+- Submit quality 现在多一层 `submit_quality_tier`：`HIGH` 候选必须同时满足更高的 net edge、edge margin 和 cost 门槛；auto-order submit plan 会优先选择 `HIGH`，再选择普通 `PASS`，最后才按金额和市场排序。提高下单频率只发生在质量更高的候选上，而不是通过放宽风险门实现。
+- `config/supervisor.yaml` 新增 high-quality 门槛：`high_quality_min_net_edge_bps=16`、`high_quality_min_edge_margin_bps=8`、`high_quality_max_expected_cost_bps=25`。当前 SPLG 是普通 `PASS`，还不是 `HIGH`，所以不会因为频率层被额外加速。
+- 新增 `src/tools/expand_investment_watchlists.py` 与 `src/common/watchlist_expansion.py`：它们从本地最新 `investment_candidates.csv` 生成 auto-expanded watchlist，只纳入 `ACCUMULATE/HOLD`、execution-ready、whole-share tradable、成本/流动性/数据质量通过的候选。
+- US/HK/ASX/XETRA 的 `universe.yaml` 已接入 `config/watchlists/auto_expanded/*_quality_growth.yaml`，这些文件会进入 symbol master 扩展层；CN 不纳入自动下单扩展。
+- 非 CN report 的候选输出数已适度扩大：US/HK/ASX/XETRA 常规 report `top_n=15`，US overnight `top_n=10`。这会增加可分析候选面，但不增加自动提交上限。
+- 本次本地生成结果：US 选中 `SPLG, SPTM, SCHB`；ASX/HK/XETRA 暂无候选通过 whole-share/cost/liquidity 组合门。完整诊断在 `reports_supervisor/watchlist_expansion/watchlist_expansion_candidates.csv`，可看到每个被拒候选的原因。

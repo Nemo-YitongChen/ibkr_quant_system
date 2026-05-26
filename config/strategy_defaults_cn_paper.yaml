@@ -1,0 +1,5 @@
+defaults: "config/strategy_defaults_cn.yaml"
+
+engine:
+  # 2026-W19 evidence: SIGNAL_RANKING_INVERTED. CN remains research-only in supervisor.
+  mr_weight: 0.55

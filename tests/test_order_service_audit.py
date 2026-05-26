@@ -8,7 +8,11 @@ from types import SimpleNamespace
 import pytest
 
 from src.common.storage import Storage
-from src.ibkr.investment_orders import InvestmentOrderParams, InvestmentOrderService
+from src.ibkr.investment_orders import (
+    InvestmentContractQualificationError,
+    InvestmentOrderParams,
+    InvestmentOrderService,
+)
 from src.ibkr.orders import BracketParams, OrderService
 
 pytestmark = pytest.mark.guardrail
@@ -50,6 +54,12 @@ class _FakeIB:
         trade = SimpleNamespace(order=order, contract=contract)
         self.placed.append(trade)
         return trade
+
+
+class _UnqualifiedFakeIB(_FakeIB):
+    def qualifyContracts(self, contract):
+        self.qualified.append(contract)
+        return []
 
 
 def _fetch_orders(db_path: Path):
@@ -132,6 +142,95 @@ def test_investment_order_service_persists_order_and_execution_audit_rows(tmp_pa
     exec_details = json.loads(execution_rows[0][3])
     assert exec_details["expected_price"] == 100.0
     assert exec_details["plan_row"]["target_weight"] == 0.20
+
+
+def test_investment_order_service_blocks_unqualified_contract_before_order_creation(tmp_path) -> None:
+    db_path = tmp_path / "audit.db"
+    storage = Storage(str(db_path))
+    fake_ib = _UnqualifiedFakeIB()
+    service = InvestmentOrderService(
+        fake_ib,
+        "DUQ152001",
+        storage,
+        market="US",
+        portfolio_id="US:test",
+    )
+
+    contract = SimpleNamespace(symbol="SPLG", exchange="SMART", primaryExchange="ARCA", currency="USD")
+    with pytest.raises(InvestmentContractQualificationError, match="contract qualification returned no match"):
+        service.place_rebalance_order(
+            contract,
+            symbol="SPLG",
+            action="BUY",
+            qty=1.0,
+            params=InvestmentOrderParams(order_type="LMT", ref_price=87.37, limit_price_buffer_bps=10.0),
+            portfolio_id="US:test",
+            execution_run_id="US-exec-unqualified",
+            plan_row={
+                "market": "US",
+                "symbol": "SPLG",
+                "action": "BUY",
+                "delta_qty": 1.0,
+                "ref_price": 87.37,
+                "order_value": 87.37,
+                "reason": "unit-test",
+            },
+        )
+
+    assert len(fake_ib.qualified) == 1
+    assert fake_ib.placed == []
+    with storage._conn() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM investment_execution_orders").fetchone()[0] == 0
+
+
+def test_investment_order_warning_does_not_overwrite_active_broker_status(tmp_path) -> None:
+    db_path = tmp_path / "audit.db"
+    storage = Storage(str(db_path))
+    fake_ib = _FakeIB()
+    service = InvestmentOrderService(
+        fake_ib,
+        "DUQ152001",
+        storage,
+        market="US",
+        portfolio_id="US:test",
+    )
+
+    contract = SimpleNamespace(symbol="SCHX", exchange="SMART", primaryExchange="ARCA", currency="USD")
+    trade = service.place_rebalance_order(
+        contract,
+        symbol="SCHX",
+        action="BUY",
+        qty=1.0,
+        params=InvestmentOrderParams(order_type="LMT", ref_price=29.28, limit_price_buffer_bps=10.0),
+        portfolio_id="US:test",
+        execution_run_id="US-exec-warning",
+        plan_row={
+            "market": "US",
+            "symbol": "SCHX",
+            "action": "BUY",
+            "delta_qty": 1.0,
+            "ref_price": 29.28,
+            "order_value": 29.28,
+            "reason": "unit-test",
+        },
+    )
+    trade.orderStatus = SimpleNamespace(status="PreSubmitted", filled=0.0, remaining=1.0)
+
+    service._on_order_status(trade)
+    service._on_error(
+        trade.order.orderId,
+        399,
+        "Order Message: BUY 1 SCHX ARCA Warning: order will be placed at next open.",
+        None,
+    )
+
+    assert storage.get_order_by_order_id(trade.order.orderId)["status"] == "PreSubmitted"
+    with storage._conn() as conn:
+        risk_events = conn.execute(
+            "SELECT kind, order_id FROM risk_events WHERE kind='INVESTMENT_ORDER_WARNING'"
+        ).fetchall()
+    assert risk_events == [("INVESTMENT_ORDER_WARNING", trade.order.orderId)]
 
 
 def test_place_bracket_persists_parent_and_children(tmp_path) -> None:

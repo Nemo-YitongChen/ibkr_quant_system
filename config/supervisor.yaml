@@ -12,6 +12,8 @@ execution_timeout_sec: 300
 guard_timeout_sec: 240
 short_safety_timeout_sec: 300
 ibkr_task_min_gap_sec: 2.0
+ibkr_client_id_retry_span: 1
+ibkr_connect_max_rounds: 3
 ibkr_gateway_budgets:
   enabled: true
   default_weekly_gateway_request_budget: 1500
@@ -29,6 +31,37 @@ ibkr_gateway_budgets:
       weekly_gateway_request_budget: 800
     CN:
       weekly_gateway_request_budget: 500
+auto_order_readiness:
+  enabled: true
+  allow_live_submit: false
+  excluded_markets: ["CN"]
+  max_preflight_age_hours: 24
+  max_weekly_review_age_hours: 168
+  block_on_preflight_fail: true
+  block_on_stale_preflight: true
+  block_on_stale_weekly_review: true
+  block_on_gateway_budget_degraded: true
+  block_on_missing_market_readiness: false
+  block_on_market_readiness_not_ready: true
+  warn_on_missing_market_readiness: true
+  max_submit_portfolios_per_run: 4
+  max_submit_portfolios_per_market: 1
+  max_submit_orders_per_portfolio: 1
+  max_submit_gross_order_value: 100.0
+  max_submit_total_gross_order_value: 400.0
+  require_buy_order_for_submit: true
+  block_on_submit_quality_not_pass: true
+  min_submit_net_edge_bps: 8.0
+  min_submit_edge_margin_bps: 3.0
+  max_submit_expected_cost_bps: 35.0
+  require_limit_order_for_submit: true
+  max_submit_order_adv_pct: 0.001
+  high_quality_min_net_edge_bps: 16.0
+  high_quality_min_edge_margin_bps: 8.0
+  high_quality_max_expected_cost_bps: 25.0
+  block_on_strategy_auto_apply_violation: true
+  block_on_degraded_strategy_followup: true
+  warn_on_open_strategy_suggestions: true
 dashboard_enabled: true
 dashboard_auto_open: true
 dashboard_timeout_sec: 120
@@ -107,7 +140,7 @@ markets:
         execution_config: "config/investment_execution_hk.yaml"
         run_investment_guard: true
         guard_config: "config/investment_guard_hk.yaml"
-        run_investment_opportunity: true
+        run_investment_opportunity: false
         guard_start: "09:40"
         guard_end: "15:50"
         guard_interval_min: 15
@@ -121,7 +154,7 @@ markets:
         db: "audit.db"
         audit_limit: 500
         max_universe: 1000
-        top_n: 10
+        top_n: 15
       - out_dir: "reports_investment"
         kind: "investment"
         watchlist_yaml: "config/watchlists/resolved_hk_top100_tech_growth.yaml"
@@ -151,7 +184,7 @@ markets:
         execution_config: "config/investment_execution_hk.yaml"
         run_investment_guard: true
         guard_config: "config/investment_guard_hk.yaml"
-        run_investment_opportunity: true
+        run_investment_opportunity: false
         guard_start: "09:40"
         guard_end: "15:50"
         guard_interval_min: 15
@@ -165,7 +198,7 @@ markets:
         db: "audit.db"
         audit_limit: 500
         max_universe: 1000
-        top_n: 10
+        top_n: 15
     trading:
       enabled: false
       weekdays: [0, 1, 2, 3, 4]
@@ -220,7 +253,7 @@ markets:
         execution_config: "config/investment_execution_us.yaml"
         run_investment_guard: true
         guard_config: "config/investment_guard_us.yaml"
-        run_investment_opportunity: true
+        run_investment_opportunity: false
         guard_start: "09:40"
         guard_end: "15:40"
         guard_interval_min: 15
@@ -234,7 +267,7 @@ markets:
         db: "audit.db"
         audit_limit: 500
         max_universe: 1000
-        top_n: 10
+        top_n: 15
       - out_dir: "reports_investment_overnight"
         kind: "investment"
         watchlist_yaml: "config/watchlists/us_overnight_core.yaml"
@@ -259,7 +292,7 @@ markets:
         execution_config: "config/investment_execution_us_overnight.yaml"
         run_investment_guard: true
         guard_config: "config/investment_guard_us_overnight.yaml"
-        run_investment_opportunity: true
+        run_investment_opportunity: false
         guard_start: "20:10"
         guard_end: "03:40"
         guard_interval_min: 15
@@ -273,7 +306,7 @@ markets:
         db: "audit.db"
         audit_limit: 500
         max_universe: 50
-        top_n: 6
+        top_n: 10
     trading:
       enabled: false
       weekdays: [0, 1, 2, 3, 4]
@@ -322,7 +355,7 @@ markets:
         execution_timeout_sec: 300
         submit_investment_execution: true
         run_investment_guard: true
-        run_investment_opportunity: true
+        run_investment_opportunity: false
         guard_start: "09:25"
         guard_end: "17:20"
         guard_interval_min: 30
@@ -336,7 +369,7 @@ markets:
         db: "audit.db"
         audit_limit: 500
         max_universe: 1000
-        top_n: 10
+        top_n: 15
     trading:
       enabled: false
       weekdays: [0, 1, 2, 3, 4]
@@ -421,7 +454,7 @@ markets:
         execution_timeout_sec: 300
         submit_investment_execution: true
         run_investment_guard: true
-        run_investment_opportunity: true
+        run_investment_opportunity: false
         guard_start: "10:10"
         guard_end: "16:00"
         guard_interval_min: 15
@@ -435,7 +468,7 @@ markets:
         db: "audit.db"
         audit_limit: 500
         max_universe: 1000
-        top_n: 10
+        top_n: 15
     trading:
       enabled: false
       weekdays: [0, 1, 2, 3, 4]

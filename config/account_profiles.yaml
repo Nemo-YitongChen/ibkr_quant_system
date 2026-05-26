@@ -5,18 +5,29 @@ account_profiles:
       label: 小资金
       min_equity: 0
       max_equity: 25000
-      summary: 先做 ETF 和高流动性基础工具，减少小额高频调仓。
+      summary: 1000-25000 AUD 小账户先用可整股交易的高流动性低价 ETF 验证 paper 下单闭环，禁止靠杠杆放大风险。
       preferred_instruments:
         - ETF
         - Large Cap
       execution:
-        min_trade_value: 1000
-        max_order_value_pct: 0.12
-        max_orders_per_run: 5
+        min_cash_buffer_pct: 0.10
+        cash_buffer_floor: 100
+        min_trade_value: 25
+        max_order_value_pct: 0.10
+        max_orders_per_run: 1
         account_allocation_pct: 0.25
+        allow_whole_share_preferred_buy_override: true
+        whole_share_preferred_min_edge_margin_bps: 0.0
+        prioritize_buy_orders_for_growth_submit: true
+        allow_fractional_qty: false
+        fractional_qty_decimals: 4
+        manual_review_enabled: true
+        manual_review_order_value_pct: 0.12
+        order_type: "LMT"
       notes:
-        - 适合低频、低换手、先验证闭环。
-        - 小资金优先控制订单数量和过小单笔。
+        - 适合低频、低换手、先验证 paper 下单/fill/slippage/post-cost edge。
+        - 小资金优先用 last_close 不高于单笔上限的整股 ETF，避免 IBKR API fractional order 拒单，不使用 margin、options、futures、CFD。
+        - 自动 paper submit 阶段每轮最多 1 笔，每笔约 25-100 AUD 等值；先验证单笔 fill/slippage/post-cost edge，再考虑增加频率或组合数。
     - name: medium
       label: 中等资金
       min_equity: 25000

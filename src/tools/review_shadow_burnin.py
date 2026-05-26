@@ -11,6 +11,7 @@ from statistics import median
 from typing import Any, Dict, Iterable, List, Optional
 
 from ..analysis.report import write_json
+from ..common.sqlite_utils import connect_sqlite
 
 
 UTC = timezone.utc
@@ -444,8 +445,7 @@ def build_shadow_burnin_review(
     if int(days) > 0:
         cutoff = datetime.now(UTC) - timedelta(days=int(days))
 
-    conn = sqlite3.connect(str(path))
-    conn.row_factory = sqlite3.Row
+    conn = connect_sqlite(path, row_factory=sqlite3.Row)
     try:
         shadow_events = load_shadow_events(conn, cutoff)
         entry_fills = load_entry_fills(conn, cutoff)

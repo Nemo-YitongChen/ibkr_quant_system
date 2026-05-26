@@ -22,6 +22,7 @@ from ..common.cli import build_cli_parser, emit_cli_summary
 from ..common.cli_contracts import ArtifactBundle, WalkForwardSummary
 from ..common.markets import add_market_args, resolve_market_code
 from ..common.runtime_paths import resolve_repo_path
+from ..common.sqlite_utils import connect_sqlite
 
 UTC = timezone.utc
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -281,8 +282,7 @@ def _load_weekly_tuning_history(db_path: Path, markets: List[str] | None = None)
     path = Path(db_path)
     if not path.exists():
         raise FileNotFoundError(str(path))
-    conn = sqlite3.connect(str(path))
-    conn.row_factory = sqlite3.Row
+    conn = connect_sqlite(path, row_factory=sqlite3.Row)
     try:
         if not _table_exists(conn, "investment_weekly_tuning_history"):
             return []

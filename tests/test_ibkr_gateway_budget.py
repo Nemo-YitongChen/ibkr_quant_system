@@ -121,6 +121,10 @@ def test_ibkr_gateway_budget_missing_telemetry_warns():
             "event_count": 0,
             "cache_hit_ratio": 0.0,
             "budget_usage_pct": 0.0,
+            "excess_gateway_requests": 0,
+            "daily_gateway_request_budget": 14.29,
+            "projected_recovery_days": 0,
+            "projected_recovery_at": "",
             "telemetry_age_hours": 0.0,
             "top_request_kind": "",
             "top_tool": "",
@@ -153,3 +157,42 @@ def test_ibkr_gateway_budget_stale_telemetry_warns():
     assert hk["status"] == "warning"
     assert hk["reason"] == "stale_ibkr_request_telemetry"
     assert hk["telemetry_age_hours"] == 49.0
+
+
+def test_ibkr_gateway_budget_projects_recovery_from_daily_distribution():
+    rows = build_ibkr_gateway_budget_rows(
+        [
+            {
+                "date": "2026-05-03",
+                "market": "US",
+                "tool": "run_investment_opportunity:us:watchlist",
+                "request_kind": "historical_daily",
+                "event_count": 95,
+                "gateway_request_count": 90,
+                "cache_hit_count": 5,
+                "latest_event_ts": "2026-05-03T20:00:00+00:00",
+            },
+            {
+                "date": "2026-05-09",
+                "market": "US",
+                "tool": "run_investment_guard",
+                "request_kind": "positions",
+                "event_count": 5,
+                "gateway_request_count": 5,
+                "cache_hit_count": 0,
+                "latest_event_ts": "2026-05-09T10:00:00+00:00",
+            },
+        ],
+        config=_cfg(),
+        generated_at="2026-05-09T11:00:00+00:00",
+        window_start="2026-05-02T00:00:00+00:00",
+        window_end="2026-05-09T11:00:00+00:00",
+    )
+
+    us = next(row for row in rows if row["market"] == "US")
+    assert us["status"] == "degraded"
+    assert us["excess_gateway_requests"] == 85
+    assert us["daily_gateway_request_budget"] == 1.43
+    assert us["projected_recovery_days"] == 2
+    assert us["projected_recovery_at"] == "2026-05-10T23:59:59.999999+00:00"
+    assert us["top_tool"] == "run_investment_opportunity:us:watchlist"

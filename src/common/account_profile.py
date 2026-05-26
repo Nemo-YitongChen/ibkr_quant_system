@@ -11,10 +11,20 @@ from ..portfolio.investment_allocator import InvestmentExecutionConfig
 
 @dataclass
 class AccountProfileExecutionOverrides:
+    min_cash_buffer_pct: float | None = None
+    cash_buffer_floor: float | None = None
     min_trade_value: float | None = None
     max_order_value_pct: float | None = None
     max_orders_per_run: int | None = None
     account_allocation_pct: float | None = None
+    allow_whole_share_preferred_buy_override: bool | None = None
+    whole_share_preferred_min_edge_margin_bps: float | None = None
+    prioritize_buy_orders_for_growth_submit: bool | None = None
+    allow_fractional_qty: bool | None = None
+    fractional_qty_decimals: int | None = None
+    manual_review_enabled: bool | None = None
+    manual_review_order_value_pct: float | None = None
+    order_type: str | None = None
 
     @classmethod
     def from_dict(cls, raw: Dict[str, Any] | None) -> "AccountProfileExecutionOverrides":
@@ -167,12 +177,16 @@ def account_profile_summary(profile: AccountProfile | None, *, broker_equity: fl
         f"equity={float(broker_equity or 0.0):,.2f}",
     ]
     if overrides:
+        if "cash_buffer_floor" in overrides:
+            summary_parts.append(f"cash_floor={float(overrides['cash_buffer_floor']):,.0f}")
         if "min_trade_value" in overrides:
             summary_parts.append(f"min_trade={float(overrides['min_trade_value']):,.0f}")
         if "max_orders_per_run" in overrides:
             summary_parts.append(f"max_orders={int(overrides['max_orders_per_run'])}")
         if "account_allocation_pct" in overrides:
             summary_parts.append(f"alloc={float(overrides['account_allocation_pct']) * 100.0:.0f}%")
+        if "allow_fractional_qty" in overrides:
+            summary_parts.append(f"fractional={'on' if bool(overrides['allow_fractional_qty']) else 'off'}")
     return {
         "name": profile.name,
         "label": profile.display_label,

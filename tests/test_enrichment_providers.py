@@ -7,11 +7,40 @@ from datetime import datetime, timezone
 from unittest.mock import patch
 
 from src.enrichment.providers import EnrichmentProviders
-from src.enrichment.yfinance_history import fetch_daily_bars
+from src.enrichment.yfinance_history import _daily_period_fallbacks, _newer_history_rows, fetch_daily_bars
 from src.ibkr.market_data import OHLCVBar
 
 
 class EnrichmentProvidersTests(unittest.TestCase):
+    def test_yfinance_cache_selection_prefers_latest_bar_over_longer_history(self):
+        older_long = [
+            OHLCVBar(
+                time=datetime(2026, 1, day, tzinfo=timezone.utc),
+                open=100.0,
+                high=101.0,
+                low=99.0,
+                close=100.0 + day,
+                volume=1000.0,
+            )
+            for day in range(1, 5)
+        ]
+        newer_short = [
+            OHLCVBar(
+                time=datetime(2026, 2, 1, tzinfo=timezone.utc),
+                open=110.0,
+                high=111.0,
+                low=109.0,
+                close=120.0,
+                volume=1000.0,
+            )
+        ]
+
+        selected = _newer_history_rows(older_long, newer_short)
+        self.assertEqual(selected, newer_short)
+
+    def test_daily_period_fallbacks_compare_short_and_long_period_caches(self):
+        self.assertEqual(_daily_period_fallbacks(1260), ["1y", "2y", "5y", "10y"])
+
     def test_fetch_daily_bars_can_fallback_to_stale_cache_when_online_history_empty(self):
         stale_rows = [
             OHLCVBar(

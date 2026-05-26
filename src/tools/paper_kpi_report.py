@@ -12,6 +12,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from ..analysis.report import write_json
 from ..common.markets import add_market_args, resolve_market_code, symbol_matches_market
+from ..common.sqlite_utils import connect_sqlite
 
 
 UTC = timezone.utc
@@ -174,8 +175,7 @@ def build_paper_kpi_report(db_path: str, *, market: str = "", days: int = 14, si
     market_code = resolve_market_code(market)
     cutoff = _resolve_cutoff(days=int(days), since=since)
 
-    conn = sqlite3.connect(str(path))
-    conn.row_factory = sqlite3.Row
+    conn = connect_sqlite(path, row_factory=sqlite3.Row)
     try:
         commission_by_exec: Dict[str, float] = defaultdict(float)
         risk_event_rows = conn.execute(

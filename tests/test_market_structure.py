@@ -7,7 +7,11 @@ from unittest.mock import Mock
 
 from src.analysis.investment_portfolio import InvestmentPaperConfig
 from src.app.investment_engine import ExecutionSessionProfile, InvestmentExecutionEngine
-from src.app.investment_opportunity import InvestmentOpportunityConfig, InvestmentOpportunityEngine
+from src.app.investment_opportunity import (
+    InvestmentOpportunityConfig,
+    InvestmentOpportunityEngine,
+    _entry_anchor_diagnostics,
+)
 from src.common.adaptive_strategy import apply_adaptive_defensive_opportunity_policy, load_adaptive_strategy
 from src.common.market_structure import MarketStructureConfig, load_market_structure, market_structure_summary
 from src.common.storage import Storage
@@ -149,6 +153,76 @@ def test_investment_opportunity_engine_small_account_prefers_etf_entries() -> No
         assert rows[1]["entry_status"] == "ENTRY_NOW"
         assert rows[1]["market_structure_status"] == "CLEAR"
         assert rows[1]["user_reason_label"] == "可开始分批"
+
+
+def test_investment_opportunity_engine_uses_equity_cap_for_small_account_rules() -> None:
+    with NamedTemporaryFile(suffix=".db") as tmp:
+        engine = InvestmentOpportunityEngine(
+            ib=_FakeIB(),
+            account_id="DUQ152001",
+            storage=Storage(tmp.name),
+            market="US",
+            portfolio_id="US:test",
+            execution_cfg=InvestmentExecutionConfig(account_equity_cap=1000.0),
+            opportunity_cfg=InvestmentOpportunityConfig(),
+            market_structure=load_market_structure(Path("."), "US"),
+        )
+        broker_equity, broker_equity_raw, account_equity_cap = engine._effective_broker_equity({"netliq": 1000000.0})
+        assert broker_equity == 1000.0
+        assert broker_equity_raw == 1000000.0
+        assert account_equity_cap == 1000.0
+
+        rows = engine._apply_market_structure_guidance(
+            [{"symbol": "AAPL", "entry_status": "ENTRY_NOW", "entry_reason": "-", "asset_class": "equity"}],
+            broker_equity=broker_equity,
+        )
+        assert rows[0]["entry_status"] == "WAIT_ACCOUNT_RULE"
+        assert rows[0]["market_structure_status"] == "SMALL_ACCOUNT_ETF_FIRST"
+
+
+def test_etf_opportunity_anchor_uses_trend_pullback_profile() -> None:
+    cfg = InvestmentOpportunityConfig(
+        pullback_entry_pct=0.02,
+        ma_buffer_pct=0.01,
+        atr_discount_mult=0.30,
+        etf_pullback_entry_pct=0.012,
+        etf_ma_buffer_pct=0.012,
+        etf_atr_discount_mult=0.15,
+    )
+    diagnostics = _entry_anchor_diagnostics(
+        cfg,
+        asset_class="etf",
+        last_close=714.71,
+        ref_price=714.71,
+        ma_fast=673.39,
+        ma_slow=620.21,
+        atr=10.28,
+        regime_state="BULL",
+    )
+
+    assert diagnostics["entry_anchor_profile"] == "ETF_TREND_PULLBACK"
+    assert diagnostics["entry_anchor_selected_component"] == "atr"
+    assert diagnostics["entry_anchor"] > diagnostics["base_entry_anchor"]
+    assert diagnostics["entry_anchor_gap_pct"] < 0.5
+    assert diagnostics["base_entry_anchor_gap_pct"] > 4.0
+
+
+def test_equity_opportunity_anchor_keeps_standard_conservative_profile() -> None:
+    cfg = InvestmentOpportunityConfig(pullback_entry_pct=0.02, ma_buffer_pct=0.01, atr_discount_mult=0.30)
+    diagnostics = _entry_anchor_diagnostics(
+        cfg,
+        asset_class="equity",
+        last_close=714.71,
+        ref_price=714.71,
+        ma_fast=673.39,
+        ma_slow=620.21,
+        atr=10.28,
+        regime_state="BULL",
+    )
+
+    assert diagnostics["entry_anchor_profile"] == "STANDARD_CONSERVATIVE"
+    assert diagnostics["entry_anchor"] == diagnostics["base_entry_anchor"]
+    assert diagnostics["entry_anchor_selected_component"] == "ma"
 
 
 def test_xetra_opportunity_defaults_to_external_market_data_first() -> None:

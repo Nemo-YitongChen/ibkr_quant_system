@@ -34,6 +34,13 @@ def execution_user_explanation(row: Dict[str, Any]) -> Tuple[str, str]:
     hotspot_status = _text(row.get("hotspot_penalty_status")).upper()
     quality_status = _text(row.get("quality_status")).upper()
 
+    if status == "BLOCKED_PENDING_BROKER_ORDER":
+        order_id = _text(row.get("pending_broker_order_id"))
+        order_status = _text(row.get("pending_broker_order_status"))
+        suffix = f" broker_order_id={order_id} status={order_status}" if order_id or order_status else ""
+        return "已有未完成券商订单", f"该标的同方向已有未完成 IBKR 订单，先避免重复提交。{suffix}".strip()
+    if status == "BLOCKED_CONTRACT_QUALIFICATION":
+        return "合约校验失败", _text(row.get("contract_qualification_reason")) or "IBKR 未能确认该标的合约，先修正交易所/主交易所/币种映射。"
     if hotspot_status == "DEFERRED" or status == "DEFERRED_EXECUTION_HOTSPOT":
         return "执行热点延后", _text(row.get("hotspot_penalty_reason")) or "当前时段同名标的执行压力偏高，先延后。"
     if risk_alert_status == "DEFERRED" or status == "DEFERRED_RISK_ALERT":

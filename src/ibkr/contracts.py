@@ -12,6 +12,24 @@ class StockSpec:
     symbol: str
     exchange: str
     currency: str
+    primary_exchange: str = ""
+
+
+US_PRIMARY_EXCHANGE_BY_SYMBOL = {
+    "EFA": "ARCA",
+    "IEMG": "ARCA",
+    "IWM": "ARCA",
+    "QQQ": "NASDAQ",
+    "SCHA": "ARCA",
+    "SCHB": "ARCA",
+    "SCHX": "ARCA",
+    "SPLG": "ARCA",
+    "SPTM": "ARCA",
+    "SPY": "ARCA",
+    "VEA": "ARCA",
+    "VTI": "ARCA",
+    "VWO": "ARCA",
+}
 
 
 def parse_stock_spec(raw: str, default_exchange: str = "SMART", default_currency: str = "USD") -> StockSpec:
@@ -89,9 +107,17 @@ def parse_stock_spec(raw: str, default_exchange: str = "SMART", default_currency
         if base and len(suffix) == 1 and suffix.isalpha():
             return StockSpec(symbol=f"{base} {suffix}", exchange=default_exchange, currency=default_currency)
 
-    return StockSpec(symbol=s, exchange=default_exchange, currency=default_currency)
+    return StockSpec(
+        symbol=s,
+        exchange=default_exchange,
+        currency=default_currency,
+        primary_exchange=US_PRIMARY_EXCHANGE_BY_SYMBOL.get(s, ""),
+    )
 
 
 def make_stock_contract(raw: str, default_exchange: str = "SMART", default_currency: str = "USD") -> Stock:
     spec = parse_stock_spec(raw, default_exchange=default_exchange, default_currency=default_currency)
-    return Stock(spec.symbol, spec.exchange, spec.currency)
+    contract = Stock(spec.symbol, spec.exchange, spec.currency)
+    if str(spec.primary_exchange or "").strip():
+        contract.primaryExchange = str(spec.primary_exchange).strip()
+    return contract

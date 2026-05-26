@@ -11,6 +11,43 @@ COMMODITY_PROXY_THEMES = {
     "USO": "oil",
 }
 
+BROAD_MARKET_ETF_THEMES = {
+    "SPY": "us_large_cap",
+    "SPLG": "us_large_cap",
+    "QQQ": "nasdaq_100",
+    "IWM": "us_small_cap",
+    "SCHA": "us_small_cap",
+    "DIA": "us_dow_30",
+    "VTI": "us_total_market",
+    "VOO": "us_large_cap",
+    "IVV": "us_large_cap",
+    "ITOT": "us_total_market",
+    "SCHB": "us_total_market",
+    "SCHX": "us_large_cap",
+    "SPTM": "us_total_market",
+    "VEA": "developed_ex_us",
+    "EFA": "developed_ex_us",
+    "VWO": "emerging_markets",
+    "IEMG": "emerging_markets",
+    "TLT": "long_treasury",
+    "IEF": "intermediate_treasury",
+    "SHY": "short_treasury",
+    "XLK": "sector_technology",
+    "XLF": "sector_financials",
+    "XLE": "sector_energy",
+    "XLV": "sector_healthcare",
+    "XLI": "sector_industrials",
+    "XLP": "sector_consumer_staples",
+    "XLU": "sector_utilities",
+    "XLY": "sector_consumer_discretionary",
+    "XLB": "sector_materials",
+    "SMH": "sector_semiconductors",
+    "XBI": "sector_biotech",
+    "KWEB": "china_internet",
+    "FXI": "china_large_cap",
+    "EWH": "hong_kong_equity",
+}
+
 
 def _clamp(value: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, value))
@@ -153,9 +190,15 @@ def score_investment_candidate(
     asset_theme = str(fundamentals.get("asset_theme", "") or "").strip().lower()
     if not asset_class and symbol in COMMODITY_PROXY_THEMES:
         asset_class = "commodity_proxy"
+    if not asset_class and symbol in BROAD_MARKET_ETF_THEMES:
+        asset_class = "etf"
     if not asset_theme and symbol in COMMODITY_PROXY_THEMES:
         asset_theme = COMMODITY_PROXY_THEMES[symbol]
+    if not asset_theme and symbol in BROAD_MARKET_ETF_THEMES:
+        asset_theme = BROAD_MARKET_ETF_THEMES[symbol]
     is_commodity_proxy = asset_class == "commodity_proxy"
+    is_etf = asset_class == "etf"
+    is_fund_like = is_commodity_proxy or is_etf
     data_quality_score = _clamp(float(data_quality_score or 0.0), 0.0, 1.0)
     source_coverage = _clamp(float(source_coverage or 0.0), 0.0, 1.0)
     missing_ratio = _clamp(float(missing_ratio or 0.0), 0.0, 1.0)
@@ -213,10 +256,10 @@ def score_investment_candidate(
 
     pe_for_scoring = forward_pe if forward_pe > 0 else trailing_pe
     valuation_score = 0.0
-    if pe_for_scoring > 0 and not is_commodity_proxy:
+    if pe_for_scoring > 0 and not is_fund_like:
         valuation_score = _clamp((float(cfg.valuation_anchor_pe) - pe_for_scoring) / float(cfg.valuation_anchor_pe), -1.0, 1.0)
-    if is_commodity_proxy:
-        # Commodity proxy ETFs do not map cleanly to equity-style PE/margin/ROE fields.
+    if is_fund_like:
+        # Fund-like products do not map cleanly to equity-style PE/margin/ROE fields.
         # Treat missing fundamentals as neutral instead of structurally bearish.
         margin_score = 0.0
         operating_margin_score = 0.0
@@ -268,9 +311,9 @@ def score_investment_candidate(
         risk += float(cfg.vix_high_penalty)
     elif vix >= float(cfg.vix_elevated_threshold):
         risk += float(cfg.vix_elevated_penalty)
-    if trailing_pe > float(cfg.trailing_pe_cap) and trailing_pe > 0 and not is_commodity_proxy:
+    if trailing_pe > float(cfg.trailing_pe_cap) and trailing_pe > 0 and not is_fund_like:
         risk += min(0.25, (trailing_pe - float(cfg.trailing_pe_cap)) / max(float(cfg.trailing_pe_cap), 1.0))
-    if forward_pe > float(cfg.forward_pe_cap) and forward_pe > 0 and not is_commodity_proxy:
+    if forward_pe > float(cfg.forward_pe_cap) and forward_pe > 0 and not is_fund_like:
         risk += min(0.25, (forward_pe - float(cfg.forward_pe_cap)) / max(float(cfg.forward_pe_cap), 1.0))
     if data_quality_score < float(cfg.low_data_quality_threshold):
         risk += float(cfg.low_data_quality_penalty) * (

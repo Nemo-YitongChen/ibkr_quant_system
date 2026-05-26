@@ -1,0 +1,131 @@
+from __future__ import annotations
+
+from src.common.watchlist_expansion import (
+    WatchlistExpansionPolicy,
+    build_watchlist_expansion_rows,
+    selected_watchlist_symbols,
+)
+
+
+def test_watchlist_expansion_selects_whole_share_quality_candidates() -> None:
+    rows = build_watchlist_expansion_rows(
+        [
+            {
+                "symbol": "SPLG",
+                "action": "ACCUMULATE",
+                "execution_ready": 1,
+                "asset_class": "etf",
+                "score": 0.61,
+                "data_quality_score": 0.9,
+                "liquidity_score": 0.82,
+                "expected_cost_bps": 21.0,
+                "whole_share_expected_edge_bps": 39.0,
+                "whole_share_edge_margin_bps": 12.0,
+                "whole_share_tradability_reason": "PASS",
+                "last_close": 88.0,
+            },
+            {
+                "symbol": "QQQ",
+                "action": "ACCUMULATE",
+                "execution_ready": 1,
+                "asset_class": "etf",
+                "score": 0.75,
+                "data_quality_score": 0.9,
+                "liquidity_score": 0.9,
+                "expected_cost_bps": 18.0,
+                "whole_share_expected_edge_bps": 60.0,
+                "whole_share_edge_margin_bps": 30.0,
+                "whole_share_tradability_reason": "PRICE_ABOVE_MAX_ORDER_VALUE",
+                "last_close": 700.0,
+            },
+        ],
+        market="US",
+        base_symbols=["SPLG"],
+        policy=WatchlistExpansionPolicy(min_whole_share_edge_margin_bps=8.0),
+    )
+
+    by_symbol = {row["symbol"]: row for row in rows}
+    assert by_symbol["SPLG"]["selection_status"] == "SELECTED"
+    assert by_symbol["SPLG"]["already_in_base_watchlist"] is True
+    assert by_symbol["QQQ"]["selection_status"] == "REJECTED"
+    assert "whole_share_not_tradable" in by_symbol["QQQ"]["selection_reason"]
+    assert selected_watchlist_symbols(rows) == ["SPLG"]
+
+
+def test_watchlist_expansion_rejects_high_cost_or_low_quality_rows() -> None:
+    rows = build_watchlist_expansion_rows(
+        [
+            {
+                "symbol": "CHEAP",
+                "action": "ACCUMULATE",
+                "execution_ready": 1,
+                "asset_class": "equity",
+                "score": 0.58,
+                "data_quality_score": 0.4,
+                "liquidity_score": 0.75,
+                "expected_cost_bps": 18.0,
+                "expected_edge_bps": 40.0,
+                "whole_share_edge_margin_bps": 10.0,
+                "whole_share_tradability_reason": "PASS",
+            },
+            {
+                "symbol": "COSTLY",
+                "action": "ACCUMULATE",
+                "execution_ready": 1,
+                "asset_class": "equity",
+                "score": 0.62,
+                "data_quality_score": 0.9,
+                "liquidity_score": 0.8,
+                "expected_cost_bps": 80.0,
+                "expected_edge_bps": 120.0,
+                "whole_share_edge_margin_bps": 20.0,
+                "whole_share_tradability_reason": "PASS",
+            },
+        ],
+        market="US",
+        policy=WatchlistExpansionPolicy(max_expected_cost_bps=45.0),
+    )
+
+    reasons = {row["symbol"]: row["selection_reason"] for row in rows}
+    assert "data_quality_below_min" in reasons["CHEAP"]
+    assert "expected_cost_above_max" in reasons["COSTLY"]
+    assert selected_watchlist_symbols(rows) == []
+
+
+def test_watchlist_expansion_applies_market_limit_after_quality_sort() -> None:
+    rows = build_watchlist_expansion_rows(
+        [
+            {
+                "symbol": "LOW",
+                "action": "ACCUMULATE",
+                "execution_ready": 1,
+                "asset_class": "etf",
+                "score": 0.5,
+                "data_quality_score": 0.9,
+                "liquidity_score": 0.9,
+                "expected_cost_bps": 20.0,
+                "expected_edge_bps": 35.0,
+                "whole_share_edge_margin_bps": 5.0,
+                "whole_share_tradability_reason": "PASS",
+            },
+            {
+                "symbol": "HIGH",
+                "action": "ACCUMULATE",
+                "execution_ready": 1,
+                "asset_class": "etf",
+                "score": 0.7,
+                "data_quality_score": 0.9,
+                "liquidity_score": 0.9,
+                "expected_cost_bps": 20.0,
+                "expected_edge_bps": 45.0,
+                "whole_share_edge_margin_bps": 15.0,
+                "whole_share_tradability_reason": "PASS",
+            },
+        ],
+        market="US",
+        policy=WatchlistExpansionPolicy(max_symbols_per_market=1),
+    )
+
+    assert selected_watchlist_symbols(rows) == ["HIGH"]
+    by_symbol = {row["symbol"]: row for row in rows}
+    assert by_symbol["LOW"]["selection_reason"] == "market_symbol_limit_reached"

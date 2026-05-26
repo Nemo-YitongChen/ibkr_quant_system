@@ -833,6 +833,7 @@ def build_target_allocations(
             )
             or 0.0
         )
+        score += max(0.0, _to_float(by_symbol.get(symbol, {}).get("allocation_priority_boost"), 0.0))
         if direction == "SHORT":
             mult = float(cfg.short_hold_weight_multiplier) if action == "HOLD" else 1.0
         else:

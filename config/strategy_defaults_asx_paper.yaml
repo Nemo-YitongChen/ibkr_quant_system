@@ -1,0 +1,5 @@
+defaults: "config/strategy_defaults_asx.yaml"
+
+engine:
+  # 2026-W19 evidence: SIGNAL_RANKING_INVERTED. Paper-only one-step reduction.
+  mr_weight: 0.55

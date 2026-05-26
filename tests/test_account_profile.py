@@ -26,10 +26,16 @@ def test_apply_account_profile_overrides_execution_config_for_small_account() ->
         broker_equity=10000.0,
     )
     assert summary["name"] == "small"
-    assert effective_cfg.min_trade_value == 1000.0
-    assert effective_cfg.max_order_value_pct == 0.12
-    assert effective_cfg.max_orders_per_run == 5
+    assert effective_cfg.cash_buffer_floor == 100.0
+    assert effective_cfg.min_trade_value == 25.0
+    assert effective_cfg.max_order_value_pct == 0.10
+    assert effective_cfg.max_orders_per_run == 1
     assert effective_cfg.account_allocation_pct == 0.25
+    assert effective_cfg.allow_whole_share_preferred_buy_override is True
+    assert effective_cfg.whole_share_preferred_min_edge_margin_bps == 0.0
+    assert effective_cfg.prioritize_buy_orders_for_growth_submit is True
+    assert effective_cfg.allow_fractional_qty is False
+    assert effective_cfg.order_type == "LMT"
 
 
 def test_resolved_account_profile_summary_exposes_preferred_instruments() -> None:

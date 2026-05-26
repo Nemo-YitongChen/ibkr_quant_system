@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import argparse
-import sqlite3
 import csv
 from pathlib import Path
+
+from ..common.sqlite_utils import connect_sqlite
 
 
 def main():
@@ -17,7 +18,7 @@ def main():
     if not db.exists():
         raise SystemExit(f"DB not found: {db}")
 
-    conn = sqlite3.connect(str(db))
+    conn = connect_sqlite(db)
     cur = conn.cursor()
 
     if args.day is None:

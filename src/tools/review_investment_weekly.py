@@ -19,6 +19,7 @@ from ..common.ibkr_gateway_budget import (
     build_ibkr_gateway_budget_rows,
     load_ibkr_gateway_budget_config,
 )
+from ..common.sqlite_utils import connect_sqlite
 from .review_weekly_io import (
     read_csv_rows as _read_csv,
     read_json as _read_json,
@@ -1150,8 +1151,7 @@ def main(argv: List[str] | None = None) -> None:
     include_legacy = bool(args.include_legacy)
     labeling_dir = _resolve_labeling_summary_dir(str(args.labeling_dir or ""), market_filter)
 
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
+    conn = connect_sqlite(db_path, row_factory=sqlite3.Row)
     try:
         where = ["ts >= ?"]
         params: List[Any] = [since_ts]

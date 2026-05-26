@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import sqlite3
 import time
 import json
 import sys
@@ -26,6 +25,7 @@ from ..common.markets import (
     symbol_matches_market,
 )
 from ..common.runtime_paths import resolve_repo_path
+from ..common.sqlite_utils import connect_sqlite
 from ..common.storage import Storage
 from ..enrichment.providers import EnrichmentProviders
 from ..ibkr.universe import UniverseService, UniverseConfig, scanner_location_codes_from_config
@@ -210,7 +210,7 @@ def _load_blacklist(db_path: str) -> Set[str]:
 
 def _scanner_cache_get(db_path: str, codes_key: str, ttl_sec: int) -> List[str]:
     try:
-        c = sqlite3.connect(db_path)
+        c = connect_sqlite(db_path)
         try:
             c.execute(
                 """create table if not exists scanner_cache(
@@ -240,7 +240,7 @@ def _scanner_cache_get(db_path: str, codes_key: str, ttl_sec: int) -> List[str]:
 
 def _scanner_cache_put(db_path: str, codes_key: str, symbols: List[str]) -> None:
     try:
-        c = sqlite3.connect(db_path)
+        c = connect_sqlite(db_path)
         try:
             c.execute(
                 """create table if not exists scanner_cache(

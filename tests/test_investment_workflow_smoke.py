@@ -159,6 +159,7 @@ def test_investment_workflow_cli_smoke_generates_contract_artifacts(tmp_path, mo
         execution_cfg_path,
         {
             "execution": {
+                "account_equity_cap": 1000.0,
                 "min_cash_buffer_pct": 0.0,
                 "cash_buffer_floor": 0.0,
                 "min_trade_value": 100.0,
@@ -267,6 +268,16 @@ def test_investment_workflow_cli_smoke_generates_contract_artifacts(tmp_path, mo
     )
     execution_stdout = capsys.readouterr().out
     assert "ibkr-quant-execution: investment execution run complete" in execution_stdout
+    execution_summary = json.loads((report_dir / "investment_execution_summary.json").read_text(encoding="utf-8"))
+    assert execution_summary["broker_equity_raw"] == 100000.0
+    assert execution_summary["broker_equity"] == 1000.0
+    assert execution_summary["account_equity_cap"] == 1000.0
+    no_order_diag = json.loads((report_dir / "investment_no_order_diagnostics.json").read_text(encoding="utf-8"))
+    owner_progression = json.loads((report_dir / "investment_owner_progression_assessment.json").read_text(encoding="utf-8"))
+    assert no_order_diag["primary_no_order_reason"] in {"BLOCKED_EDGE", "ORDERS_PLANNED_NOT_SUBMITTED", "PAPER_ORDERS_SUBMITTED"}
+    assert owner_progression["overall_status"] in {"PAPER_BLOCKED", "PAPER_PLANNED", "PAPER_SUBMITTED"}
+    assert (report_dir / "investment_no_order_diagnostics.csv").exists()
+    assert (report_dir / "investment_owner_progression_assessment.csv").exists()
 
     storage = Storage(str(db_path))
     storage.insert_investment_candidate_snapshot(
@@ -486,9 +497,9 @@ def test_investment_workflow_cli_smoke_generates_contract_artifacts(tmp_path, mo
     assert execution_summary["strategy_effective_controls_applied"] is True
     assert "当前使用 US trend-first 市场档案" in execution_summary["adaptive_strategy_active_market_note"]
     assert execution_summary["strategy_effective_controls"]["base_effective_target_invested_weight"] == pytest.approx(0.36)
-    assert execution_summary["strategy_effective_controls"]["effective_target_invested_weight"] == pytest.approx(0.30)
-    assert execution_summary["strategy_effective_controls"]["effective_account_allocation_pct"] == pytest.approx(0.50)
-    assert execution_summary["strategy_effective_controls"]["effective_max_order_value_pct"] == pytest.approx(0.4166666667)
+    assert execution_summary["strategy_effective_controls"]["effective_target_invested_weight"] == pytest.approx(0.20)
+    assert execution_summary["strategy_effective_controls"]["effective_account_allocation_pct"] == pytest.approx(1.0 / 3.0)
+    assert execution_summary["strategy_effective_controls"]["effective_max_order_value_pct"] == pytest.approx(0.2777777778)
     assert "risk_base_gross_exposure" in execution_summary
     assert execution_summary["risk_gross_exposure_tightening"] >= 0.0
 
@@ -501,7 +512,9 @@ def test_investment_workflow_cli_smoke_generates_contract_artifacts(tmp_path, mo
     assert weekly_summary["weekly_tuning_history_overview"][0]["portfolio_id"] == portfolio_id
     assert weekly_summary["decision_evidence_history_overview"][0]["portfolio_id"] == portfolio_id
     assert weekly_summary["trading_quality_evidence"][0]["portfolio_id"] == portfolio_id
-    assert weekly_summary["unified_evidence_rows"][0]["portfolio_id"] == portfolio_id
+    assert "unified_evidence_rows" not in weekly_summary
+    assert weekly_summary["unified_evidence_row_count"] >= 1
+    assert weekly_summary["evidence_artifacts"]["unified_evidence_rows"]["json"] == "weekly_unified_evidence.json"
     assert weekly_unified_evidence["artifact_type"] == "weekly_unified_evidence"
     assert weekly_unified_evidence["row_count"] >= 1
     assert weekly_unified_evidence["rows"][0]["portfolio_id"] == portfolio_id
@@ -525,7 +538,7 @@ def test_investment_workflow_cli_smoke_generates_contract_artifacts(tmp_path, mo
     assert str(weekly_summary["portfolio_strategy_context"][0]["market_profile_tuning_note"])
     assert weekly_summary["portfolio_strategy_context"][0]["strategy_effective_controls_applied"] is True
     assert "策略主动转入防守" in weekly_summary["portfolio_strategy_context"][0]["strategy_effective_controls_note"]
-    assert weekly_summary["attribution_summary"][0]["strategy_control_weight_delta"] == pytest.approx(0.06)
+    assert weekly_summary["attribution_summary"][0]["strategy_control_weight_delta"] == pytest.approx(0.16)
     assert execution_summary["blocked_edge_order_count"] == 1
     assert weekly_summary["attribution_summary"][0]["execution_gate_blocked_order_count"] == 1
     assert "策略" in weekly_summary["attribution_summary"][0]["control_split_text"]
@@ -556,9 +569,10 @@ def test_investment_workflow_cli_smoke_generates_contract_artifacts(tmp_path, mo
     assert dashboard_payload["cards"][0]["execution_weekly_row"]["portfolio_id"] == portfolio_id
     assert dashboard_payload["execution_weekly"]["portfolio_id"] == portfolio_id
     assert "control_split_text" in dashboard_payload["cards"][0]["weekly_attribution"]
-    assert len(dashboard_payload["dashboard_v2_blocks"]) == 11
+    assert len(dashboard_payload["dashboard_v2_blocks"]) == 12
     assert [block.get("id") for block in dashboard_payload["dashboard_v2_blocks"] if block.get("category") == "home"] == [
         "ops_health",
+        "auto_order_readiness",
         "evidence_focus_actions",
         "evidence_quality",
         "dashboard_control_actions",

@@ -73,9 +73,21 @@ def test_build_weekly_output_bundle_adds_evidence_focus_effectiveness(tmp_path) 
         outcome_spread_rows=[],
         edge_realization_rows=[],
         blocked_edge_attribution_rows=[],
-        decision_evidence_rows=[],
+        decision_evidence_rows=[
+            {
+                "market": "US",
+                "portfolio_id": "US:watchlist",
+                "symbol": "AAPL",
+            }
+        ],
         decision_evidence_summary_rows=[],
-        unified_evidence_rows=[],
+        unified_evidence_rows=[
+            {
+                "market": "US",
+                "portfolio_id": "US:watchlist",
+                "symbol": "AAPL",
+            }
+        ],
         blocked_vs_allowed_expost_rows=[
             {
                 "market": "US",
@@ -133,6 +145,17 @@ def test_build_weekly_output_bundle_adds_evidence_focus_effectiveness(tmp_path) 
     summary = bundle["summary_payload"]["evidence_focus_effectiveness"]
     assert summary["new_action_count"] == 1
     assert summary["urgent_action_count"] == 1
+    assert "decision_evidence_rows" not in bundle["summary_payload"]
+    assert "unified_evidence_rows" not in bundle["summary_payload"]
+    assert bundle["summary_payload"]["decision_evidence_row_count"] == 1
+    assert bundle["summary_payload"]["unified_evidence_row_count"] == 1
+    evidence_artifacts = bundle["summary_payload"]["evidence_artifacts"]
+    assert evidence_artifacts["decision_evidence_rows"]["csv"] == "weekly_decision_evidence.csv"
+    assert evidence_artifacts["decision_evidence_rows"]["row_count"] == 1
+    assert evidence_artifacts["unified_evidence_rows"]["json"] == "weekly_unified_evidence.json"
+    assert evidence_artifacts["unified_evidence_rows"]["embedded"] is False
+    assert "unified_evidence" not in bundle["weekly_tuning_dataset_payload"]
+    assert bundle["weekly_tuning_dataset_payload"]["unified_evidence_row_count"] == 1
     assert bundle["summary_payload"]["evidence_focus_actions"][0]["primary_action"] == "review_gate_thresholds"
     assert bundle["weekly_tuning_dataset_payload"]["evidence_focus_effectiveness"]["new_action_count"] == 1
     suggestions = bundle["summary_payload"]["strategy_parameter_suggestions"]

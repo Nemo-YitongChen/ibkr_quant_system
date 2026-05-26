@@ -11,6 +11,10 @@ from ..common.storage import Storage
 log = get_logger("ibkr.investment_orders")
 
 
+class InvestmentContractQualificationError(RuntimeError):
+    """Raised before order creation when IBKR cannot qualify the contract."""
+
+
 @dataclass
 class InvestmentOrderParams:
     order_type: str = "MKT"
@@ -25,6 +29,7 @@ class InvestmentOrderParams:
 class InvestmentOrderService:
     HEALTH_INFO_CODES = {162, 2104, 2106, 2108, 2119, 1102, 10167}
     HEALTH_ERROR_CODES = {1100, 165, 322, 354, 2103, 2105, 2157, 2158}
+    ORDER_WARNING_CODES = {399}
 
     def __init__(
         self,
@@ -46,8 +51,17 @@ class InvestmentOrderService:
         self.ib.errorEvent += self._on_error
 
     def qualify(self, contract: Contract) -> Contract:
-        self.ib.qualifyContracts(contract)
-        return contract
+        qualified = list(self.ib.qualifyContracts(contract) or [])
+        if not qualified:
+            symbol = str(getattr(contract, "symbol", "") or "")
+            exchange = str(getattr(contract, "exchange", "") or "")
+            primary = str(getattr(contract, "primaryExchange", "") or "")
+            currency = str(getattr(contract, "currency", "") or "")
+            raise InvestmentContractQualificationError(
+                f"IBKR contract qualification returned no match: symbol={symbol} exchange={exchange} "
+                f"primaryExchange={primary} currency={currency}"
+            )
+        return qualified[0]
 
     def _on_order_status(self, trade):
         try:
@@ -84,6 +98,20 @@ class InvestmentOrderService:
                 portfolio_id=self.portfolio_id or None,
                 system_kind=self.system_kind,
             )
+        if req_id > 0 and code in self.ORDER_WARNING_CODES:
+            order_meta = self.storage.get_order_by_order_id(req_id)
+            self.storage.insert_risk_event(
+                "INVESTMENT_ORDER_WARNING",
+                float(code),
+                f"reqId={reqId} code={errorCode} msg={msg}",
+                symbol=str(order_meta.get("symbol") or ""),
+                order_id=req_id,
+                portfolio_id=order_meta.get("portfolio_id"),
+                system_kind=order_meta.get("system_kind"),
+                execution_run_id=order_meta.get("execution_run_id"),
+            )
+            log.warning("IBKR Order Warning: reqId=%s code=%s msg=%s contract=%s", reqId, errorCode, msg, contract)
+            return
         if req_id > 0:
             status = f"ERROR_{code}"
             self.storage.update_order_status(req_id, status)

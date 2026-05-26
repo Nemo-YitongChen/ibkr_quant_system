@@ -100,7 +100,7 @@ class MarketDataAdapter:
                 return
 
     def _daily_yfinance_bars(self, symbol: str, days: int, key: tuple[str, int]) -> Tuple[List[BarData], str]:
-        bars = fetch_daily_bars_yf(symbol, days=days)
+        bars = fetch_daily_bars_yf(symbol, days=days, allow_stale_cache=True)
         if not bars:
             return [], ""
         converted = _to_bar_data(bars, "yfinance")

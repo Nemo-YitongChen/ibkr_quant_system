@@ -1,0 +1,32 @@
+version: 1
+name: auto_expanded_us_quality_growth
+generated_at: '2026-05-26T12:45:34.285645+00:00'
+market: US
+selection_policy:
+  max_symbols_per_market: 25
+  min_score: 0.45
+  min_data_quality_score: 0.65
+  min_liquidity_score: 0.45
+  max_expected_cost_bps: 45.0
+  min_expected_edge_bps: 0.0
+  min_whole_share_edge_margin_bps: 0.0
+  require_execution_ready: true
+  require_whole_share_tradability: true
+  allowed_actions:
+  - ACCUMULATE
+  - HOLD
+  preferred_asset_classes:
+  - etf
+  - equity
+source_candidate_files:
+- runtime_data/paper_investment_only_duq152001/reports_investment/watchlist/investment_candidates.csv
+- runtime_data/paper_investment_only_duq152001/reports_investment_overnight/us_overnight_core/investment_candidates.csv
+selected_count: 3
+symbols:
+- SPLG
+- SPTM
+- SCHB
+notes:
+- Generated from local investment candidate artifacts.
+- Selection is paper-oriented and keeps whole-share tradability, cost, data-quality,
+  and liquidity filters.

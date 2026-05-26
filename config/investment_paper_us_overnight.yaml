@@ -10,5 +10,5 @@ paper:
   max_net_exposure: 0.60
   min_position_weight: 0.04
   hold_weight_multiplier: 0.85
-  allow_fractional_qty: true
+  allow_fractional_qty: false
   fractional_qty_decimals: 4

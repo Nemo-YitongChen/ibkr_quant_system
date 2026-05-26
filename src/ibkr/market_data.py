@@ -170,8 +170,11 @@ class MarketDataService:
         hist_5m_cache_stale_fallback_sec: int = 900,
         hist_daily_cache_ttl_sec: int = 21600,
         hist_daily_cache_stale_fallback_sec: int = 604800,
+        hist_empty_cooldown_sec: int = 1800,
+        hist_error_cooldown_sec: int = 21600,
         hist_cache_dir: Path | str | None = None,
         hist_daily_cache_dir: Path | str | None = None,
+        hist_failure_cache_dir: Path | str | None = None,
     ):
         self.ib = ib
         self.request_timeout_sec = request_timeout_sec
@@ -190,6 +193,8 @@ class MarketDataService:
             self.hist_daily_cache_ttl_sec,
             int(hist_daily_cache_stale_fallback_sec),
         )
+        self.hist_empty_cooldown_sec = max(0, int(hist_empty_cooldown_sec))
+        self.hist_error_cooldown_sec = max(0, int(hist_error_cooldown_sec))
         self._contracts: Dict[str, Contract] = {}
         default_cache_dir = Path(__file__).resolve().parents[2] / ".cache" / "market_data_5m"
         self._hist_cache_dir = Path(hist_cache_dir or default_cache_dir)
@@ -197,6 +202,9 @@ class MarketDataService:
         default_daily_cache_dir = Path(__file__).resolve().parents[2] / ".cache" / "market_data_daily"
         self._hist_daily_cache_dir = Path(hist_daily_cache_dir or default_daily_cache_dir)
         self._hist_daily_cache_dir.mkdir(parents=True, exist_ok=True)
+        default_failure_cache_dir = Path(__file__).resolve().parents[2] / ".cache" / "market_data_failures"
+        self._hist_failure_cache_dir = Path(hist_failure_cache_dir or default_failure_cache_dir)
+        self._hist_failure_cache_dir.mkdir(parents=True, exist_ok=True)
 
     @staticmethod
     def _same_contract(left: Contract, right: Contract) -> bool:
@@ -323,6 +331,65 @@ class MarketDataService:
 
     def _historical_5m_cache_path(self, cache_key: str) -> Path:
         return self._hist_cache_dir / f"{cache_key}.json"
+
+    def _historical_failure_cache_path(self, cache_key: str) -> Path:
+        return self._hist_failure_cache_dir / f"{cache_key}.json"
+
+    def _write_historical_failure(self, cache_key: str, *, status: str, detail: str = "") -> None:
+        payload = {
+            "ts": time.time(),
+            "status": str(status or ""),
+            "detail": str(detail or "")[:240],
+        }
+        try:
+            self._historical_failure_cache_path(cache_key).write_text(
+                json.dumps(payload, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except Exception:
+            return
+
+    def _clear_historical_failure(self, cache_key: str) -> None:
+        try:
+            self._historical_failure_cache_path(cache_key).unlink(missing_ok=True)
+        except Exception:
+            return
+
+    def _read_historical_failure(
+        self,
+        cache_key: str,
+        *,
+        empty_cooldown_sec: int | None = None,
+        error_cooldown_sec: int | None = None,
+    ) -> Dict[str, object] | None:
+        cache_path = self._historical_failure_cache_path(cache_key)
+        if not cache_path.exists():
+            return None
+        try:
+            payload = json.loads(cache_path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        ts = float(payload.get("ts", 0.0) or 0.0)
+        if ts <= 0:
+            return None
+        status = str(payload.get("status", "") or "")
+        cooldown = self.hist_error_cooldown_sec
+        if status == "empty":
+            cooldown = self.hist_empty_cooldown_sec
+        if empty_cooldown_sec is not None and status == "empty":
+            cooldown = max(0, int(empty_cooldown_sec))
+        if error_cooldown_sec is not None and status != "empty":
+            cooldown = max(0, int(error_cooldown_sec))
+        age_sec = max(0.0, time.time() - ts)
+        if int(cooldown or 0) <= 0 or age_sec > int(cooldown):
+            try:
+                cache_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+            return None
+        payload["age_sec"] = age_sec
+        payload["cooldown_sec"] = int(cooldown)
+        return dict(payload)
 
     def _write_historical_5m_cache(self, cache_key: str, bars: List[OHLCVBar]) -> None:
         payload = {
@@ -602,6 +669,49 @@ class MarketDataService:
             )
             log.info("[%s] Using cached historical %s bars age=%.1fs", symbol, hist_bar_size, cached_age or 0.0)
             return cached[-need:]
+        failure_key = f"5m_{cache_key}"
+        recent_failure = self._read_historical_failure(failure_key)
+        if recent_failure:
+            record_ibkr_request(
+                "historical_5m",
+                status="cooldown_skip",
+                symbol=symbol,
+                actual_gateway_request=False,
+                details={
+                    "bar_size": hist_bar_size,
+                    "duration": hist_duration,
+                    "failure_status": str(recent_failure.get("status", "") or ""),
+                    "failure_age_sec": float(recent_failure.get("age_sec", 0.0) or 0.0),
+                    "cooldown_sec": int(recent_failure.get("cooldown_sec", 0) or 0),
+                },
+            )
+            stale, stale_age = self._read_historical_5m_cache(
+                cache_key,
+                max_age_sec=self.hist_5m_cache_stale_fallback_sec,
+            )
+            if len(stale) >= min(need, 30):
+                record_ibkr_request(
+                    "historical_5m",
+                    status="stale_fallback",
+                    symbol=symbol,
+                    actual_gateway_request=False,
+                    details={"bar_size": hist_bar_size, "duration": hist_duration, "age_sec": stale_age or 0.0},
+                )
+                log.warning(
+                    "[%s] Skipping historical %s request during cooldown; using stale cache age=%.1fs",
+                    symbol,
+                    hist_bar_size,
+                    stale_age or 0.0,
+                )
+                return stale[-need:]
+            log.info(
+                "[%s] Skipping historical %s request during cooldown status=%s age=%.1fs",
+                symbol,
+                hist_bar_size,
+                recent_failure.get("status", ""),
+                float(recent_failure.get("age_sec", 0.0) or 0.0),
+            )
+            return bars[-need:]
         keep = bool(self.hist_keep_up_to_date)
         log.info(f"[{symbol}] Realtime bars unavailable/insufficient -> fallback to historical {hist_bar_size} {hist_duration}")
         try:
@@ -621,6 +731,7 @@ class MarketDataService:
                     details={"bar_size": hist_bar_size, "duration": hist_duration, "bars": len(out)},
                 )
                 self._write_historical_5m_cache(cache_key, out)
+                self._clear_historical_failure(failure_key)
             else:
                 record_ibkr_request(
                     "historical_5m",
@@ -629,6 +740,7 @@ class MarketDataService:
                     actual_gateway_request=True,
                     details={"bar_size": hist_bar_size, "duration": hist_duration},
                 )
+                self._write_historical_failure(failure_key, status="empty", detail="historical_5m_empty")
             return out[-need:]
         except Exception as e:
             record_ibkr_request(
@@ -638,6 +750,7 @@ class MarketDataService:
                 actual_gateway_request=True,
                 details={"bar_size": hist_bar_size, "duration": hist_duration, "error": str(e)[:240]},
             )
+            self._write_historical_failure(failure_key, status="error", detail=str(e))
             log.warning(f"Historical fallback failed for {symbol}: {e}")
             stale, stale_age = self._read_historical_5m_cache(
                 cache_key,
@@ -694,6 +807,48 @@ class MarketDataService:
             )
             log.info("[%s] Using cached historical daily bars age=%.1fs", symbol, cached_age or 0.0)
             return cached
+        failure_key = f"daily_{cache_key}"
+        recent_failure = self._read_historical_failure(failure_key)
+        if recent_failure:
+            record_ibkr_request(
+                "historical_daily",
+                status="cooldown_skip",
+                symbol=symbol,
+                actual_gateway_request=False,
+                details={
+                    "duration": duration,
+                    "what_to_show": what_to_show,
+                    "use_rth": bool(use_rth),
+                    "failure_status": str(recent_failure.get("status", "") or ""),
+                    "failure_age_sec": float(recent_failure.get("age_sec", 0.0) or 0.0),
+                    "cooldown_sec": int(recent_failure.get("cooldown_sec", 0) or 0),
+                },
+            )
+            stale, stale_age = self._read_historical_daily_cache(
+                cache_key,
+                max_age_sec=self.hist_daily_cache_stale_fallback_sec,
+            )
+            if stale:
+                record_ibkr_request(
+                    "historical_daily",
+                    status="stale_fallback",
+                    symbol=symbol,
+                    actual_gateway_request=False,
+                    details={"duration": duration, "age_sec": stale_age or 0.0},
+                )
+                log.warning(
+                    "[%s] Skipping historical daily request during cooldown; using stale cache age=%.1fs",
+                    symbol,
+                    stale_age or 0.0,
+                )
+                return stale
+            log.info(
+                "[%s] Skipping historical daily request during cooldown status=%s age=%.1fs",
+                symbol,
+                recent_failure.get("status", ""),
+                float(recent_failure.get("age_sec", 0.0) or 0.0),
+            )
+            return []
 
         try:
             self._ensure_sync_ib_call_ready(context="IB.reqHistoricalData(daily)")
@@ -719,6 +874,7 @@ class MarketDataService:
                     details={"duration": duration, "what_to_show": what_to_show, "use_rth": bool(use_rth), "bars": len(out)},
                 )
                 self._write_historical_daily_cache(cache_key, out)
+                self._clear_historical_failure(failure_key)
                 return out
             record_ibkr_request(
                 "historical_daily",
@@ -727,6 +883,7 @@ class MarketDataService:
                 actual_gateway_request=True,
                 details={"duration": duration, "what_to_show": what_to_show, "use_rth": bool(use_rth)},
             )
+            self._write_historical_failure(failure_key, status="empty", detail="historical_daily_empty")
             stale, stale_age = self._read_historical_daily_cache(
                 cache_key,
                 max_age_sec=self.hist_daily_cache_stale_fallback_sec,
@@ -754,6 +911,7 @@ class MarketDataService:
                 actual_gateway_request=True,
                 details={"duration": duration, "what_to_show": what_to_show, "use_rth": bool(use_rth), "error": str(e)[:240]},
             )
+            self._write_historical_failure(failure_key, status="error", detail=str(e))
             stale, stale_age = self._read_historical_daily_cache(
                 cache_key,
                 max_age_sec=self.hist_daily_cache_stale_fallback_sec,

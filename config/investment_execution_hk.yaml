@@ -1,4 +1,5 @@
 execution:
+  account_equity_cap: 1000.0
   min_cash_buffer_pct: 0.08
   cash_buffer_floor: 1500.0
   min_trade_value: 2000.0

@@ -7,10 +7,12 @@ seed_watchlist_yaml: "config/watchlists/asx_top_quality.yaml"
 report_watchlist_yaml: "config/watchlists/asx_top_quality.yaml"
 symbol_master_watchlists:
   - "config/watchlists/asx_market_core.yaml"
+  - "config/watchlists/auto_expanded/asx_quality_growth.yaml"
 notes:
   - "Default ASX equity universe for investment report and paper execution."
   - "Uses a curated liquid large-cap quality list for final reporting."
   - "Symbol master is expanded by a broader ASX market-core watchlist for layered scan stage-1 coverage."
+  - "Auto-expanded quality-growth watchlist is generated from local candidate evidence and remains empty unless ASX symbols pass whole-share/cost/liquidity filters."
 layered_scan:
   enabled: true
   include_symbol_master: true

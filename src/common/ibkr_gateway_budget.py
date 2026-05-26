@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
+from math import ceil
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
@@ -42,6 +43,17 @@ def _parse_ts(value: Any) -> datetime | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def _parse_date(value: Any) -> date | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(raw[:10])
+    except Exception:
+        parsed = _parse_ts(raw)
+        return parsed.date() if parsed is not None else None
 
 
 def _status_rank(status: str) -> int:
@@ -133,6 +145,7 @@ def _group_request_rows(rows: Iterable[Dict[str, Any]]) -> Dict[str, Dict[str, A
                 "cache_hit_count": 0,
                 "by_request_kind": {},
                 "by_tool": {},
+                "by_date_gateway": {},
                 "latest_event_ts": "",
             },
         )
@@ -146,6 +159,10 @@ def _group_request_rows(rows: Iterable[Dict[str, Any]]) -> Dict[str, Dict[str, A
         tool = str(row.get("tool") or "unknown").strip() or "unknown"
         bucket["by_request_kind"][kind] = int(bucket["by_request_kind"].get(kind, 0)) + gateway_count
         bucket["by_tool"][tool] = int(bucket["by_tool"].get(tool, 0)) + gateway_count
+        request_date = _parse_date(row.get("date") or row.get("latest_event_ts"))
+        if request_date is not None:
+            date_key = request_date.isoformat()
+            bucket["by_date_gateway"][date_key] = int(bucket["by_date_gateway"].get(date_key, 0)) + gateway_count
         row_ts = _parse_ts(row.get("latest_event_ts") or row.get("date"))
         current_ts = _parse_ts(bucket.get("latest_event_ts"))
         if row_ts is not None and (current_ts is None or row_ts > current_ts):
@@ -157,6 +174,52 @@ def _top_key(counts: Dict[str, int]) -> str:
     if not counts:
         return ""
     return sorted(counts.items(), key=lambda item: (-int(item[1]), item[0]))[0][0]
+
+
+def _gateway_budget_recovery_projection(
+    *,
+    gateway_count: int,
+    budget: int,
+    by_date_gateway: Dict[str, int],
+    generated_dt: datetime,
+) -> Dict[str, Any]:
+    excess = max(0, int(gateway_count) - int(budget))
+    daily_budget = round((float(budget) / 7.0), 2) if budget > 0 else 0.0
+    if excess <= 0:
+        return {
+            "excess_gateway_requests": 0,
+            "daily_gateway_request_budget": daily_budget,
+            "projected_recovery_days": 0,
+            "projected_recovery_at": "",
+        }
+
+    generated_dt = generated_dt.astimezone(timezone.utc)
+    remaining = int(gateway_count)
+    for day_text, count in sorted(dict(by_date_gateway or {}).items()):
+        request_day = _parse_date(day_text)
+        if request_day is None:
+            continue
+        remaining -= max(0, _safe_int(count))
+        if remaining <= budget:
+            recovery_dt = datetime.combine(request_day + timedelta(days=7), time.max, tzinfo=timezone.utc)
+            if recovery_dt < generated_dt:
+                recovery_dt = generated_dt
+            days = int(ceil(max(0.0, (recovery_dt - generated_dt).total_seconds()) / 86400.0))
+            return {
+                "excess_gateway_requests": int(excess),
+                "daily_gateway_request_budget": daily_budget,
+                "projected_recovery_days": int(days),
+                "projected_recovery_at": recovery_dt.isoformat(),
+            }
+
+    fallback_days = int(ceil(float(excess) / max(daily_budget, 1.0)))
+    recovery_dt = generated_dt + timedelta(days=fallback_days)
+    return {
+        "excess_gateway_requests": int(excess),
+        "daily_gateway_request_budget": daily_budget,
+        "projected_recovery_days": int(fallback_days),
+        "projected_recovery_at": recovery_dt.isoformat(),
+    }
 
 
 def build_ibkr_gateway_budget_rows(
@@ -180,6 +243,10 @@ def build_ibkr_gateway_budget_rows(
                 "event_count": 0,
                 "cache_hit_ratio": 0.0,
                 "budget_usage_pct": 0.0,
+                "excess_gateway_requests": 0,
+                "daily_gateway_request_budget": 0.0,
+                "projected_recovery_days": 0,
+                "projected_recovery_at": "",
                 "telemetry_age_hours": 0.0,
                 "top_request_kind": "",
                 "top_tool": "",
@@ -204,6 +271,13 @@ def build_ibkr_gateway_budget_rows(
                 "event_count": 0,
                 "cache_hit_ratio": 0.0,
                 "budget_usage_pct": 0.0,
+                "excess_gateway_requests": 0,
+                "daily_gateway_request_budget": round(
+                    _safe_int(cfg.get("default_weekly_gateway_request_budget"), 1500) / 7.0,
+                    2,
+                ),
+                "projected_recovery_days": 0,
+                "projected_recovery_at": "",
                 "telemetry_age_hours": 0.0,
                 "top_request_kind": "",
                 "top_tool": "",
@@ -223,6 +297,12 @@ def build_ibkr_gateway_budget_rows(
         cache_count = _safe_int(bucket.get("cache_hit_count"))
         event_count = _safe_int(bucket.get("event_count"))
         budget = _market_budget(cfg, market)
+        recovery = _gateway_budget_recovery_projection(
+            gateway_count=gateway_count,
+            budget=budget,
+            by_date_gateway=dict(bucket.get("by_date_gateway") or {}),
+            generated_dt=generated_dt,
+        )
         usage_pct = round((gateway_count / budget) * 100.0, 2) if budget > 0 else 0.0
         cache_hit_ratio = round(cache_count / event_count, 4) if event_count > 0 else 0.0
         latest_ts = _parse_ts(bucket.get("latest_event_ts"))
@@ -251,6 +331,10 @@ def build_ibkr_gateway_budget_rows(
                 "event_count": int(event_count),
                 "cache_hit_ratio": cache_hit_ratio,
                 "budget_usage_pct": usage_pct,
+                "excess_gateway_requests": int(recovery.get("excess_gateway_requests", 0)),
+                "daily_gateway_request_budget": float(recovery.get("daily_gateway_request_budget", 0.0)),
+                "projected_recovery_days": int(recovery.get("projected_recovery_days", 0)),
+                "projected_recovery_at": str(recovery.get("projected_recovery_at") or ""),
                 "telemetry_age_hours": age_hours,
                 "top_request_kind": _top_key(dict(bucket.get("by_request_kind") or {})),
                 "top_tool": _top_key(dict(bucket.get("by_tool") or {})),

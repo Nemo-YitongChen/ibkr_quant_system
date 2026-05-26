@@ -9,6 +9,10 @@ opportunity:
   pullback_entry_pct: 0.02
   ma_buffer_pct: 0.01
   atr_discount_mult: 0.30
+  etf_pullback_entry_pct: 0.012
+  etf_ma_buffer_pct: 0.012
+  etf_atr_discount_mult: 0.15
   include_hold_candidates: true
-  use_intraday_5m: true
+  use_intraday_5m: false
   intraday_lookback_bars: 24
+  prefer_external_market_data: true

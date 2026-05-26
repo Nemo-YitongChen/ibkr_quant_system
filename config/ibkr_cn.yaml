@@ -14,7 +14,7 @@ market_data:
   hist_daily_cache_ttl_sec: 21600
   hist_daily_cache_stale_fallback_sec: 604800
 risk_config: "config/risk.yaml"
-strategy_config: "config/strategy_defaults_cn.yaml"
+strategy_config: "config/strategy_defaults_cn_paper.yaml"
 report_config: "config/report_scoring.yaml"
 investment_config: "config/investment_cn.yaml"
 regime_adaptor_config: "config/regime_adaptor_cn.yaml"

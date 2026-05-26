@@ -15,6 +15,7 @@ from ..common.cli_contracts import ArtifactBundle, ExecutionReviewSummary
 from ..common.logger import get_logger
 from ..common.markets import add_market_args, resolve_market_code, symbol_matches_market
 from ..common.runtime_paths import resolve_repo_path
+from ..common.sqlite_utils import connect_sqlite
 
 log = get_logger("tools.review_investment_execution")
 UTC = timezone.utc
@@ -166,6 +167,147 @@ def _status_breakdown(rows: List[Dict[str, Any]]) -> str:
     return ",".join(f"{status}:{counts[status]}" for status in sorted(counts))
 
 
+BROKER_ACCEPTED_STATUS_TOKENS = {
+    "APIPENDING",
+    "PENDINGSUBMIT",
+    "PRESUBMITTED",
+    "SUBMITTED",
+    "PENDINGCANCEL",
+    "PARTIAL",
+    "PARTIALLYFILLED",
+    "FILLED",
+}
+BROKER_PENDING_STATUS_TOKENS = {
+    "APIPENDING",
+    "PENDINGSUBMIT",
+    "PRESUBMITTED",
+    "SUBMITTED",
+    "PENDINGCANCEL",
+    "PARTIAL",
+    "PARTIALLYFILLED",
+}
+BROKER_REJECTED_STATUS_TOKENS = {
+    "APICANCELLED",
+    "CANCELLED",
+    "INACTIVE",
+    "REJECTED",
+}
+BROKER_WARNING_CODES = {399}
+BROKER_ACCEPTED_STATUS_COMPACT = {item.replace("_", "") for item in BROKER_ACCEPTED_STATUS_TOKENS}
+BROKER_PENDING_STATUS_COMPACT = {item.replace("_", "") for item in BROKER_PENDING_STATUS_TOKENS}
+BROKER_REJECTED_STATUS_COMPACT = {item.replace("_", "") for item in BROKER_REJECTED_STATUS_TOKENS}
+
+
+def _status_token(value: Any) -> str:
+    return "".join(ch for ch in str(value or "").upper().strip() if ch.isalnum() or ch == "_")
+
+
+def _status_code(value: Any) -> Optional[int]:
+    token = _status_token(value)
+    for prefix in ("ERROR_", "WARNING_", "IB_WARNING_"):
+        if token.startswith(prefix):
+            return _safe_int(token[len(prefix) :])
+    return None
+
+
+def _is_broker_warning_status(status: Any) -> bool:
+    code = _status_code(status)
+    return code in BROKER_WARNING_CODES
+
+
+def _is_broker_accepted_status(status: Any) -> bool:
+    compact = _status_token(status).replace("_", "")
+    return compact in BROKER_ACCEPTED_STATUS_COMPACT or _is_broker_warning_status(status)
+
+
+def _is_broker_pending_status(status: Any) -> bool:
+    compact = _status_token(status).replace("_", "")
+    return compact in BROKER_PENDING_STATUS_COMPACT or _is_broker_warning_status(status)
+
+
+def _is_broker_rejected_status(status: Any) -> bool:
+    token = _status_token(status)
+    compact = token.replace("_", "")
+    if _is_broker_warning_status(status):
+        return False
+    if token.startswith("ERROR_") or compact.startswith("ERROR"):
+        return True
+    return compact in BROKER_REJECTED_STATUS_COMPACT
+
+
+def _is_broker_error_status(status: Any) -> bool:
+    token = _status_token(status)
+    compact = token.replace("_", "")
+    if _is_broker_warning_status(status):
+        return False
+    return token.startswith("ERROR_") or compact.startswith("ERROR")
+
+
+def _is_broker_warning_event(row: Dict[str, Any]) -> bool:
+    kind = str(row.get("kind") or "").upper().strip()
+    code = _safe_int(row.get("value"))
+    return kind == "INVESTMENT_ORDER_WARNING" or (kind == "INVESTMENT_ORDER_ERROR" and code in BROKER_WARNING_CODES)
+
+
+def _is_broker_error_event(row: Dict[str, Any]) -> bool:
+    kind = str(row.get("kind") or "").upper().strip()
+    return kind in {"INVESTMENT_ORDER_ERROR", "INVESTMENT_CONTRACT_QUALIFICATION_ERROR"} and not _is_broker_warning_event(row)
+
+
+def _is_pending_broker_duplicate_block(status: Any) -> bool:
+    return _status_token(status).replace("_", "") == "BLOCKEDPENDINGBROKERORDER"
+
+
+def _execution_review_decision(summary: Dict[str, Any]) -> tuple[str, str]:
+    pending = _safe_int(summary.get("pending_broker_order_rows"))
+    rejected = _safe_int(summary.get("rejected_broker_order_rows"))
+    warnings = _safe_int(summary.get("broker_warning_status_rows")) + _safe_int(summary.get("broker_warning_event_rows"))
+    fills = _safe_int(summary.get("fill_rows"))
+    accepted = _safe_int(summary.get("accepted_broker_order_rows"))
+    planned = _safe_int(summary.get("planned_order_rows"))
+    pending_blocks = _safe_int(summary.get("blocked_pending_broker_order_rows"))
+    if pending > 0 and rejected > 0:
+        return "PENDING_AND_REJECTIONS", "wait_for_pending_fill_and_fix_rejected_contracts"
+    if pending > 0:
+        return "PENDING_BROKER_ORDER", "wait_for_fill_or_broker_status_update"
+    if rejected > 0:
+        return "BROKER_REJECTION_REVIEW", "fix_rejected_contract_or_order_before_next_submit"
+    if accepted > 0 and fills <= 0:
+        return "ACCEPTED_NO_FILL_SAMPLE", "wait_for_fill_sample_before_expanding_order_count"
+    if fills > 0:
+        return "FILL_SAMPLE_AVAILABLE", "review_slippage_and_post_cost_edge"
+    if pending_blocks > 0:
+        return "DUPLICATE_PROTECTION_ACTIVE", "wait_or_cancel_existing_pending_broker_order_before_resubmit"
+    if warnings > 0:
+        return "BROKER_WARNING_REVIEW", "review_broker_warnings_before_next_submit"
+    if planned > 0:
+        return "PLANNED_NOT_SUBMITTED_OR_BLOCKED", "run_submit_only_after_paper_readiness_passes"
+    return "NO_EXECUTION_SAMPLE", "generate_ready_paper_order_sample"
+
+
+def _symbol_list(rows: Iterable[Dict[str, Any]]) -> str:
+    symbols = sorted({str(row.get("symbol") or "").upper().strip() for row in rows if str(row.get("symbol") or "").strip()})
+    return ",".join(symbols)
+
+
+def _status_count_text(rows: Iterable[Dict[str, Any]]) -> str:
+    counts: Dict[str, int] = {}
+    for row in rows:
+        status = str(row.get("status") or "").upper().strip()
+        if status:
+            counts[status] = int(counts.get(status, 0)) + 1
+    return ",".join(f"{status}:{counts[status]}" for status in sorted(counts))
+
+
+def _risk_event_code_count_text(rows: Iterable[Dict[str, Any]]) -> str:
+    counts: Dict[str, int] = {}
+    for row in rows:
+        code = str(int(_safe_float(row.get("value")))) if row.get("value") not in (None, "") else ""
+        if code:
+            counts[code] = int(counts.get(code, 0)) + 1
+    return ",".join(f"{code}:{counts[code]}" for code in sorted(counts, key=lambda item: int(item)))
+
+
 def _latest_after_positions(
     broker_positions: List[Dict[str, Any]],
     *,
@@ -193,8 +335,7 @@ def build_investment_execution_report(
     cutoff = _resolve_cutoff(days=int(days), since=since)
     wanted_portfolio = str(portfolio_id or "").strip()
 
-    conn = sqlite3.connect(str(path))
-    conn.row_factory = sqlite3.Row
+    conn = connect_sqlite(path, row_factory=sqlite3.Row)
     try:
         if not _table_exists(conn, "investment_execution_runs"):
             raise RuntimeError("investment_execution_runs table is missing")
@@ -346,7 +487,13 @@ def build_investment_execution_report(
                 order_id = _safe_int(row.get("order_id"))
                 exec_id = str(row.get("exec_id") or "").strip()
                 run_id = str(row.get("execution_run_id") or "").strip()
-                if kind not in {"COMMISSION", "EXECUTION_SLIPPAGE_BPS", "INVESTMENT_ORDER_ERROR"}:
+                if kind not in {
+                    "COMMISSION",
+                    "EXECUTION_SLIPPAGE_BPS",
+                    "INVESTMENT_ORDER_ERROR",
+                    "INVESTMENT_ORDER_WARNING",
+                    "INVESTMENT_CONTRACT_QUALIFICATION_ERROR",
+                }:
                     continue
                 if run_ids and run_id not in run_ids and order_id not in order_ids and exec_id not in exec_ids:
                     continue
@@ -378,7 +525,13 @@ def build_investment_execution_report(
             slippage_values = [_safe_float(fill.get("actual_slippage_bps")) for fill in order_fills if fill.get("actual_slippage_bps") not in (None, "")]
             slippage_dev_values = [_safe_float(fill.get("slippage_bps_deviation")) for fill in order_fills if fill.get("slippage_bps_deviation") not in (None, "")]
             generic_status = str(generic_orders.get(broker_order_id, {}).get("status") or "")
-            status = str(generic_status or row.get("status") or "").upper()
+            status = str(generic_status or row.get("status") or "").upper().strip()
+            broker_ack = int(broker_order_id > 0)
+            broker_accepted = int(broker_ack and _is_broker_accepted_status(status))
+            broker_pending = int(broker_ack and _is_broker_pending_status(status))
+            broker_rejected = int(broker_ack and _is_broker_rejected_status(status))
+            broker_warning_status = int(broker_ack and _is_broker_warning_status(status))
+            blocked_pending_broker_order = int(_is_pending_broker_duplicate_block(status))
             execution_intent = _parse_json_dict(row.get("execution_intent_json"))
             opportunity_status = str(
                 execution_intent.get("opportunity_status")
@@ -400,6 +553,12 @@ def build_investment_execution_report(
                     "action": str(row.get("action") or ""),
                     "broker_order_id": broker_order_id,
                     "status": status,
+                    "broker_ack": broker_ack,
+                    "broker_accepted": broker_accepted,
+                    "broker_pending": broker_pending,
+                    "broker_rejected": broker_rejected,
+                    "broker_warning_status": broker_warning_status,
+                    "blocked_pending_broker_order": blocked_pending_broker_order,
                     "reason": str(row.get("reason") or ""),
                     "execution_intent_json": str(row.get("execution_intent_json") or ""),
                     "opportunity_status": opportunity_status,
@@ -440,6 +599,12 @@ def build_investment_execution_report(
             run_after_positions = _latest_after_positions(broker_positions, run_id=run_id)
             slippage_values = [float(item["avg_actual_slippage_bps"]) for item in run_orders if item.get("avg_actual_slippage_bps") is not None]
             slippage_dev_values = [float(item["avg_slippage_bps_deviation"]) for item in run_orders if item.get("avg_slippage_bps_deviation") is not None]
+            broker_ack_order_rows = int(sum(_safe_int(item.get("broker_ack")) for item in run_orders))
+            accepted_broker_order_rows = int(sum(_safe_int(item.get("broker_accepted")) for item in run_orders))
+            pending_broker_order_rows = int(sum(_safe_int(item.get("broker_pending")) for item in run_orders))
+            rejected_broker_order_rows = int(sum(_safe_int(item.get("broker_rejected")) for item in run_orders))
+            broker_warning_status_rows = int(sum(_safe_int(item.get("broker_warning_status")) for item in run_orders))
+            blocked_pending_broker_order_rows = int(sum(_safe_int(item.get("blocked_pending_broker_order")) for item in run_orders))
             run_summary_rows.append(
                 {
                     "run_id": run_id,
@@ -450,10 +615,16 @@ def build_investment_execution_report(
                     "account_id": str(row.get("account_id") or ""),
                     "report_dir": str(row.get("report_dir") or ""),
                     "planned_order_rows": len(run_orders),
-                    "submitted_order_rows": int(sum(1 for item in run_orders if int(item.get("broker_order_id") or 0) > 0)),
+                    "broker_ack_order_rows": broker_ack_order_rows,
+                    "accepted_broker_order_rows": accepted_broker_order_rows,
+                    "pending_broker_order_rows": pending_broker_order_rows,
+                    "rejected_broker_order_rows": rejected_broker_order_rows,
+                    "broker_warning_status_rows": broker_warning_status_rows,
+                    "blocked_pending_broker_order_rows": blocked_pending_broker_order_rows,
+                    "submitted_order_rows": accepted_broker_order_rows,
                     "filled_order_rows": int(sum(1 for item in run_orders if str(item.get("status") or "").upper() == "FILLED")),
                     "filled_with_audit_rows": int(sum(1 for item in run_orders if int(item.get("has_fill_audit") or 0) == 1)),
-                    "error_order_rows": int(sum(1 for item in run_orders if str(item.get("status") or "").upper().startswith("ERROR_"))),
+                    "error_order_rows": int(sum(1 for item in run_orders if _is_broker_error_status(item.get("status")))),
                     "status_breakdown": _status_breakdown(run_orders),
                     "order_value": _safe_float(row.get("order_value")),
                     "filled_trade_value": float(sum(_safe_float(item.get("filled_trade_value")) for item in run_orders)),
@@ -537,6 +708,12 @@ def build_investment_execution_report(
                     "execution_run_rows": 0,
                     "submitted_runs": 0,
                     "planned_order_rows": 0,
+                    "broker_ack_order_rows": 0,
+                    "accepted_broker_order_rows": 0,
+                    "pending_broker_order_rows": 0,
+                    "rejected_broker_order_rows": 0,
+                    "broker_warning_status_rows": 0,
+                    "blocked_pending_broker_order_rows": 0,
                     "submitted_order_rows": 0,
                     "filled_order_rows": 0,
                     "filled_with_audit_rows": 0,
@@ -589,12 +766,18 @@ def build_investment_execution_report(
                 str(row.get("portfolio_id") or wanted_portfolio or "ALL"),
             )
             bucket["planned_order_rows"] = int(bucket["planned_order_rows"]) + 1
-            bucket["submitted_order_rows"] = int(bucket["submitted_order_rows"]) + int(_safe_int(row.get("broker_order_id")) > 0)
+            bucket["broker_ack_order_rows"] = int(bucket["broker_ack_order_rows"]) + _safe_int(row.get("broker_ack"))
+            bucket["accepted_broker_order_rows"] = int(bucket["accepted_broker_order_rows"]) + _safe_int(row.get("broker_accepted"))
+            bucket["pending_broker_order_rows"] = int(bucket["pending_broker_order_rows"]) + _safe_int(row.get("broker_pending"))
+            bucket["rejected_broker_order_rows"] = int(bucket["rejected_broker_order_rows"]) + _safe_int(row.get("broker_rejected"))
+            bucket["broker_warning_status_rows"] = int(bucket["broker_warning_status_rows"]) + _safe_int(row.get("broker_warning_status"))
+            bucket["blocked_pending_broker_order_rows"] = int(bucket["blocked_pending_broker_order_rows"]) + _safe_int(row.get("blocked_pending_broker_order"))
+            bucket["submitted_order_rows"] = int(bucket["submitted_order_rows"]) + _safe_int(row.get("broker_accepted"))
             status = str(row.get("status") or "").upper()
             bucket["filled_order_rows"] = int(bucket["filled_order_rows"]) + int(status == "FILLED")
             bucket["filled_with_audit_rows"] = int(bucket["filled_with_audit_rows"]) + int(int(row.get("has_fill_audit") or 0) == 1)
             bucket["blocked_opportunity_rows"] = int(bucket["blocked_opportunity_rows"]) + int(status == "BLOCKED_OPPORTUNITY")
-            bucket["error_order_rows"] = int(bucket["error_order_rows"]) + int(status.startswith("ERROR_"))
+            bucket["error_order_rows"] = int(bucket["error_order_rows"]) + int(_is_broker_error_status(status))
             if row.get("avg_actual_slippage_bps") is not None:
                 bucket["_slippage"].append(_safe_float(row.get("avg_actual_slippage_bps")))
             if row.get("avg_slippage_bps_deviation") is not None:
@@ -645,9 +828,21 @@ def build_investment_execution_report(
         latest_run = next((row for row in reversed(run_summary_rows) if str(row.get("run_id") or "") == latest_run_id), None)
         filled_order_rows = int(sum(1 for row in order_summary_rows if str(row.get("status") or "").upper() == "FILLED"))
         filled_with_audit_rows = int(sum(1 for row in order_summary_rows if int(row.get("has_fill_audit") or 0) == 1))
-        submitted_order_rows = int(sum(1 for row in order_summary_rows if int(row.get("broker_order_id") or 0) > 0))
+        broker_ack_order_rows = int(sum(_safe_int(row.get("broker_ack")) for row in order_summary_rows))
+        accepted_broker_order_rows = int(sum(_safe_int(row.get("broker_accepted")) for row in order_summary_rows))
+        pending_broker_order_rows = int(sum(_safe_int(row.get("broker_pending")) for row in order_summary_rows))
+        rejected_broker_order_rows = int(sum(_safe_int(row.get("broker_rejected")) for row in order_summary_rows))
+        broker_warning_status_rows = int(sum(_safe_int(row.get("broker_warning_status")) for row in order_summary_rows))
+        blocked_pending_broker_order_rows = int(sum(_safe_int(row.get("blocked_pending_broker_order")) for row in order_summary_rows))
+        submitted_order_rows = accepted_broker_order_rows
         blocked_opportunity_rows = int(sum(1 for row in order_summary_rows if str(row.get("status") or "").upper() == "BLOCKED_OPPORTUNITY"))
-        error_rows = [row for row in order_summary_rows if str(row.get("status") or "").upper().startswith("ERROR_")]
+        error_rows = [row for row in order_summary_rows if _is_broker_error_status(row.get("status"))]
+        rejected_rows = [row for row in order_summary_rows if _safe_int(row.get("broker_rejected")) > 0]
+        contract_rejection_rows = [row for row in rejected_rows if _status_code(row.get("status")) == 200]
+        fractional_rejection_rows = [row for row in rejected_rows if _status_code(row.get("status")) == 10243]
+        broker_warning_event_rows = int(sum(1 for row in risk_events if _is_broker_warning_event(row)))
+        broker_error_events = [row for row in risk_events if _is_broker_error_event(row)]
+        broker_error_event_rows = int(len(broker_error_events))
         opportunity_status_counts: Dict[str, int] = defaultdict(int)
         for row in order_summary_rows:
             status = str(row.get("opportunity_status") or "").upper().strip()
@@ -667,6 +862,12 @@ def build_investment_execution_report(
             "execution_run_rows": len(execution_runs),
             "submitted_runs": int(sum(_safe_int(row.get("submitted")) for row in execution_runs)),
             "planned_order_rows": len(order_summary_rows),
+            "broker_ack_order_rows": broker_ack_order_rows,
+            "accepted_broker_order_rows": accepted_broker_order_rows,
+            "pending_broker_order_rows": pending_broker_order_rows,
+            "rejected_broker_order_rows": rejected_broker_order_rows,
+            "broker_warning_status_rows": broker_warning_status_rows,
+            "blocked_pending_broker_order_rows": blocked_pending_broker_order_rows,
             "submitted_order_rows": submitted_order_rows,
             "filled_order_rows": filled_order_rows,
             "filled_with_audit_rows": filled_with_audit_rows,
@@ -674,6 +875,13 @@ def build_investment_execution_report(
             "fill_audit_gap_rows": max(0, filled_order_rows - filled_with_audit_rows),
             "blocked_opportunity_rows": blocked_opportunity_rows,
             "error_order_rows": len(error_rows),
+            "broker_warning_event_rows": broker_warning_event_rows,
+            "broker_error_event_rows": broker_error_event_rows,
+            "rejected_order_symbols": _symbol_list(rejected_rows),
+            "contract_rejection_symbols": _symbol_list(contract_rejection_rows),
+            "fractional_rejection_symbols": _symbol_list(fractional_rejection_rows),
+            "rejected_order_status_breakdown": _status_count_text(rejected_rows),
+            "broker_error_event_code_breakdown": _risk_event_code_count_text(broker_error_events),
             "fill_rate_status": _ratio(filled_order_rows, submitted_order_rows),
             "fill_rate_audit": _ratio(filled_with_audit_rows, submitted_order_rows),
             "fill_rate": _ratio(filled_with_audit_rows, submitted_order_rows),
@@ -699,6 +907,9 @@ def build_investment_execution_report(
             ),
             "weekly_rows": len(weekly_rows),
         }
+        review_status, review_action = _execution_review_decision(summary)
+        summary["execution_review_status"] = review_status
+        summary["execution_review_primary_action"] = review_action
 
         return {
             "summary": summary,
@@ -730,9 +941,17 @@ def _write_md(path: Path, report: Dict[str, Any]) -> None:
         f"- Market: {summary.get('market', '')}",
         f"- Portfolio: {summary.get('portfolio_id', '')}",
         f"- Cutoff: {summary.get('cutoff', '') or 'all history'}",
+        f"- Review status: {summary.get('execution_review_status', '') or 'n/a'}",
+        f"- Primary action: {summary.get('execution_review_primary_action', '') or 'n/a'}",
         f"- Execution runs: {int(summary.get('execution_run_rows', 0) or 0)}",
         f"- Submitted runs: {int(summary.get('submitted_runs', 0) or 0)}",
         f"- Planned orders: {int(summary.get('planned_order_rows', 0) or 0)}",
+        f"- Broker ack orders: {int(summary.get('broker_ack_order_rows', 0) or 0)}",
+        f"- Broker accepted orders: {int(summary.get('accepted_broker_order_rows', 0) or 0)}",
+        f"- Pending broker orders: {int(summary.get('pending_broker_order_rows', 0) or 0)}",
+        f"- Rejected broker orders: {int(summary.get('rejected_broker_order_rows', 0) or 0)}",
+        f"- Broker warning status orders: {int(summary.get('broker_warning_status_rows', 0) or 0)}",
+        f"- Blocked pending broker duplicate orders: {int(summary.get('blocked_pending_broker_order_rows', 0) or 0)}",
         f"- Submitted orders: {int(summary.get('submitted_order_rows', 0) or 0)}",
         f"- Filled orders (status): {int(summary.get('filled_order_rows', 0) or 0)}",
         f"- Filled orders (audit): {int(summary.get('filled_with_audit_rows', 0) or 0)}",
@@ -740,6 +959,13 @@ def _write_md(path: Path, report: Dict[str, Any]) -> None:
         f"- Fill audit gap rows: {int(summary.get('fill_audit_gap_rows', 0) or 0)}",
         f"- Blocked by opportunity: {int(summary.get('blocked_opportunity_rows', 0) or 0)}",
         f"- Error orders: {int(summary.get('error_order_rows', 0) or 0)}",
+        f"- Broker warning events: {int(summary.get('broker_warning_event_rows', 0) or 0)}",
+        f"- Broker error events: {int(summary.get('broker_error_event_rows', 0) or 0)}",
+        f"- Rejected symbols: {summary.get('rejected_order_symbols', '') or 'n/a'}",
+        f"- Contract rejection symbols: {summary.get('contract_rejection_symbols', '') or 'n/a'}",
+        f"- Fractional rejection symbols: {summary.get('fractional_rejection_symbols', '') or 'n/a'}",
+        f"- Rejected status breakdown: {summary.get('rejected_order_status_breakdown', '') or 'n/a'}",
+        f"- Broker error code breakdown: {summary.get('broker_error_event_code_breakdown', '') or 'n/a'}",
         f"- Fill rate (status): {summary.get('fill_rate_status') if summary.get('fill_rate_status') is not None else 'n/a'}",
         f"- Fill rate (audit): {summary.get('fill_rate_audit') if summary.get('fill_rate_audit') is not None else 'n/a'}",
         f"- Planned order value: {float(summary.get('planned_order_value', 0.0) or 0.0):.2f}",
@@ -777,7 +1003,12 @@ def _write_md(path: Path, report: Dict[str, Any]) -> None:
         for row in weekly_rows[-8:]:
             lines.append(
                 f"- {row.get('week', '')} runs={int(row.get('execution_run_rows') or 0)} "
+                f"ack={int(row.get('broker_ack_order_rows') or 0)} "
                 f"submitted_orders={int(row.get('submitted_order_rows') or 0)} "
+                f"pending={int(row.get('pending_broker_order_rows') or 0)} "
+                f"rejected={int(row.get('rejected_broker_order_rows') or 0)} "
+                f"warning_status={int(row.get('broker_warning_status_rows') or 0)} "
+                f"pending_block={int(row.get('blocked_pending_broker_order_rows') or 0)} "
                 f"filled_status={int(row.get('filled_order_rows') or 0)} "
                 f"filled_audit={int(row.get('filled_with_audit_rows') or 0)} "
                 f"blocked={int(row.get('blocked_opportunity_rows') or 0)} "
@@ -793,6 +1024,12 @@ def _write_md(path: Path, report: Dict[str, Any]) -> None:
             lines.append(
                 f"- {row.get('ts', '')} run={row.get('run_id', '')} submitted={int(row.get('submitted') or 0)} "
                 f"orders={int(row.get('planned_order_rows') or 0)} "
+                f"ack={int(row.get('broker_ack_order_rows') or 0)} "
+                f"accepted={int(row.get('accepted_broker_order_rows') or 0)} "
+                f"pending={int(row.get('pending_broker_order_rows') or 0)} "
+                f"rejected={int(row.get('rejected_broker_order_rows') or 0)} "
+                f"warning_status={int(row.get('broker_warning_status_rows') or 0)} "
+                f"pending_block={int(row.get('blocked_pending_broker_order_rows') or 0)} "
                 f"filled_status={int(row.get('filled_order_rows') or 0)} "
                 f"filled_audit={int(row.get('filled_with_audit_rows') or 0)} "
                 f"gap={int(row.get('gap_symbols') or 0)} status={row.get('status_breakdown', '') or 'n/a'}"
@@ -805,6 +1042,10 @@ def _write_md(path: Path, report: Dict[str, Any]) -> None:
         for row in order_rows[-10:]:
             lines.append(
                 f"- {row.get('symbol', '')} {row.get('action', '')} status={row.get('status', '')} "
+                f"ack={int(row.get('broker_ack') or 0)} accepted={int(row.get('broker_accepted') or 0)} "
+                f"pending={int(row.get('broker_pending') or 0)} rejected={int(row.get('broker_rejected') or 0)} "
+                f"warning_status={int(row.get('broker_warning_status') or 0)} "
+                f"pending_block={int(row.get('blocked_pending_broker_order') or 0)} "
                 f"qty={float(row.get('delta_qty') or 0.0):.2f} filled_qty={float(row.get('filled_qty') or 0.0):.2f} "
                 f"order_value={float(row.get('order_value') or 0.0):.2f} commission={float(row.get('commission_total') or 0.0):.4f}"
             )

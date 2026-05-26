@@ -674,6 +674,19 @@ def build_weekly_tuning_dataset_payload(
     evidence_focus_effectiveness_summary: Dict[str, Any],
     strategy_parameter_suggestion_effectiveness_summary: Dict[str, Any],
 ) -> Dict[str, Any]:
+    evidence_artifacts = {
+        "unified_evidence_rows": {
+            "embedded": False,
+            "row_count": _artifact_row_count(unified_evidence_rows),
+            "csv": "weekly_unified_evidence.csv",
+            "json": "weekly_unified_evidence.json",
+        },
+        "weekly_tuning_dataset": {
+            "embedded": True,
+            "row_count": _artifact_row_count(weekly_tuning_dataset_rows),
+            "csv": "weekly_tuning_dataset.csv",
+        },
+    }
     return {
         "generated_at": str(generated_at or ""),
         "schema_version": ARTIFACT_SCHEMA_VERSION,
@@ -683,7 +696,8 @@ def build_weekly_tuning_dataset_payload(
         "summary": weekly_tuning_dataset_summary,
         "decision_evidence_summary": decision_evidence_summary_rows,
         "trading_quality_evidence": trading_quality_evidence_rows,
-        "unified_evidence": unified_evidence_rows,
+        "unified_evidence_row_count": _artifact_row_count(unified_evidence_rows),
+        "evidence_artifacts": evidence_artifacts,
         "blocked_vs_allowed_expost_review": blocked_vs_allowed_expost_rows,
         "candidate_model_review": candidate_model_review_rows,
         "history_overview": weekly_tuning_history_overview_rows,
@@ -722,6 +736,50 @@ def build_weekly_rows_artifact_payload(
         "artifact_type": str(artifact_type or ""),
         "row_count": len(artifact_rows),
         "rows": artifact_rows,
+    }
+
+
+def _artifact_row_count(rows: List[Dict[str, Any]]) -> int:
+    return len([row for row in list(rows or []) if isinstance(row, dict)])
+
+
+def build_weekly_evidence_artifact_references(
+    *,
+    decision_evidence_rows: List[Dict[str, Any]],
+    unified_evidence_rows: List[Dict[str, Any]],
+    blocked_vs_allowed_expost_rows: List[Dict[str, Any]],
+    trading_quality_evidence_rows: List[Dict[str, Any]],
+    weekly_tuning_dataset_rows: List[Dict[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
+    return {
+        "decision_evidence_rows": {
+            "embedded": False,
+            "row_count": _artifact_row_count(decision_evidence_rows),
+            "csv": "weekly_decision_evidence.csv",
+        },
+        "unified_evidence_rows": {
+            "embedded": False,
+            "row_count": _artifact_row_count(unified_evidence_rows),
+            "csv": "weekly_unified_evidence.csv",
+            "json": "weekly_unified_evidence.json",
+        },
+        "blocked_vs_allowed_expost_review": {
+            "embedded": True,
+            "row_count": _artifact_row_count(blocked_vs_allowed_expost_rows),
+            "csv": "weekly_blocked_vs_allowed_expost.csv",
+            "json": "weekly_blocked_vs_allowed_expost.json",
+        },
+        "trading_quality_evidence": {
+            "embedded": True,
+            "row_count": _artifact_row_count(trading_quality_evidence_rows),
+            "csv": "weekly_trading_quality_evidence.csv",
+        },
+        "weekly_tuning_dataset": {
+            "embedded": True,
+            "row_count": _artifact_row_count(weekly_tuning_dataset_rows),
+            "csv": "weekly_tuning_dataset.csv",
+            "json": "weekly_tuning_dataset.json",
+        },
     }
 
 
@@ -797,6 +855,13 @@ def build_weekly_review_summary_payload(
     worst_portfolio: str,
     strategy_context_rows: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
+    evidence_artifacts = build_weekly_evidence_artifact_references(
+        decision_evidence_rows=decision_evidence_rows,
+        unified_evidence_rows=unified_evidence_rows,
+        blocked_vs_allowed_expost_rows=blocked_vs_allowed_expost_rows,
+        trading_quality_evidence_rows=trading_quality_evidence_rows,
+        weekly_tuning_dataset_rows=weekly_tuning_dataset_rows,
+    )
     return {
         "generated_at": str(generated_at or ""),
         "schema_version": ARTIFACT_SCHEMA_VERSION,
@@ -829,9 +894,10 @@ def build_weekly_review_summary_payload(
         "edge_realization_summary": edge_realization_rows,
         "blocked_edge_attribution_summary": blocked_edge_attribution_rows,
         "decision_evidence_summary": decision_evidence_summary_rows,
-        "decision_evidence_rows": decision_evidence_rows,
+        "decision_evidence_row_count": len(decision_evidence_rows),
         "trading_quality_evidence": trading_quality_evidence_rows,
-        "unified_evidence_rows": unified_evidence_rows,
+        "unified_evidence_row_count": len(unified_evidence_rows),
+        "evidence_artifacts": evidence_artifacts,
         "blocked_vs_allowed_expost_review": blocked_vs_allowed_expost_rows,
         "candidate_model_review": candidate_model_review_rows,
         "decision_evidence_history_overview": weekly_decision_evidence_history_overview_rows,

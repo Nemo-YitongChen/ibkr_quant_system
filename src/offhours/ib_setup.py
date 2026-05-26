@@ -126,13 +126,24 @@ def market_data_service_from_config(
             _market_data_config_value(ibkr_cfg, "hist_daily_cache_stale_fallback_sec", 604800),
             604800,
         ),
+        "hist_empty_cooldown_sec": _config_int(
+            _market_data_config_value(ibkr_cfg, "hist_empty_cooldown_sec", 1800),
+            1800,
+        ),
+        "hist_error_cooldown_sec": _config_int(
+            _market_data_config_value(ibkr_cfg, "hist_error_cooldown_sec", 21600),
+            21600,
+        ),
     }
     hist_cache_dir = _market_data_config_value(ibkr_cfg, "hist_cache_dir", "")
     hist_daily_cache_dir = _market_data_config_value(ibkr_cfg, "hist_daily_cache_dir", "")
+    hist_failure_cache_dir = _market_data_config_value(ibkr_cfg, "hist_failure_cache_dir", "")
     if str(hist_cache_dir or "").strip():
         kwargs["hist_cache_dir"] = str(hist_cache_dir)
     if str(hist_daily_cache_dir or "").strip():
         kwargs["hist_daily_cache_dir"] = str(hist_daily_cache_dir)
+    if str(hist_failure_cache_dir or "").strip():
+        kwargs["hist_failure_cache_dir"] = str(hist_failure_cache_dir)
     return MarketDataService(ib, **kwargs)
 
 

@@ -17,6 +17,13 @@ import yaml
 
 from src.app.supervisor import BASE_DIR as SUPERVISOR_BASE_DIR
 from src.app.supervisor import ManagedProcess, Supervisor, parse_args
+from src.common.ibkr_client_id import (
+    IBKR_CLIENT_ID_OFFSET_ENV,
+    IBKR_CLIENT_ID_RETRY_SPAN_ENV,
+    IBKR_CONNECT_MAX_ROUNDS_ENV,
+    DEFAULT_CLIENT_ID_RETRY_SPAN,
+    ibkr_task_client_id_offset,
+)
 from src.common.runtime_paths import resolve_scoped_runtime_path, scope_from_ibkr_config
 from src.tools.generate_dashboard import build_dashboard, write_dashboard
 from src.common.storage import Storage, build_investment_risk_history_row
@@ -40,6 +47,67 @@ class SupervisorCliTests(unittest.TestCase):
             path = report_dir / name
             if path.exists():
                 os.utime(path, (ts, ts))
+
+    def test_auto_order_submit_plan_allows_only_selected_portfolio(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = Path(tmp) / "supervisor.yaml"
+            ibkr_cfg_path = Path(tmp) / "ibkr_test.yaml"
+            ibkr_cfg_path.write_text(
+                "\n".join(
+                    [
+                        'mode: "paper"',
+                        'execution_mode: "investment_only"',
+                        'account_id: "DU_TEST_AUTO_SUBMIT_PLAN"',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        f'summary_out_dir: "{Path(tmp) / "reports_supervisor"}"',
+                        "auto_order_readiness:",
+                        "  enabled: true",
+                        "markets:",
+                        '  - name: "us"',
+                        '    market: "US"',
+                        '    local_timezone: "America/New_York"',
+                        "    enabled: true",
+                        "    watchlists: []",
+                        "    reports:",
+                        '      - kind: "investment"',
+                        f'        ibkr_config: "{ibkr_cfg_path}"',
+                        '        watchlist_yaml: "config/watchlist.yaml"',
+                        "        run_investment_execution: true",
+                        "        submit_investment_execution: true",
+                        "    short_safety_sync:",
+                        "      enabled: false",
+                        "    trading:",
+                        "      enabled: false",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(cfg_path))
+            item = supervisor.markets[0].reports[0]
+            selected_plan = {
+                "ready": True,
+                "status": "READY_SINGLE_CANDIDATE",
+                "reason": "single_safe_paper_submit_candidate",
+                "selected_portfolio_id": "US:watchlist",
+                "selected_portfolio_ids": ["US:watchlist", "HK:resolved_hk_top100_bluechip"],
+            }
+            with patch.object(supervisor, "_auto_order_submit_plan", return_value=selected_plan):
+                allowed, plan = supervisor._auto_order_submit_plan_allows_item(item, "US")
+            self.assertTrue(allowed)
+            self.assertEqual(plan["selected_portfolio_id"], "US:watchlist")
+
+            blocked_plan = dict(selected_plan, selected_portfolio_id="ASX:asx_top_quality", selected_portfolio_ids=["ASX:asx_top_quality"])
+            with patch.object(supervisor, "_auto_order_submit_plan", return_value=blocked_plan):
+                allowed, plan = supervisor._auto_order_submit_plan_allows_item(item, "US")
+            self.assertFalse(allowed)
+            self.assertEqual(plan["reason"], "not_selected_by_submit_plan")
 
     def test_managed_process_stop_clears_handle_after_graceful_shutdown(self):
         proc = unittest.mock.Mock()
@@ -6990,6 +7058,39 @@ class SupervisorCliTests(unittest.TestCase):
             env = dict(mock_run.call_args.kwargs.get("env") or {})
             self.assertEqual(env.get("IBKR_TELEMETRY_TOOL"), "run_investment_guard:us:watchlist")
             self.assertEqual(env.get("IBKR_TELEMETRY_MARKET"), "US")
+            self.assertEqual(
+                env.get(IBKR_CLIENT_ID_OFFSET_ENV),
+                str(ibkr_task_client_id_offset("run_investment_guard:us:watchlist")),
+            )
+            self.assertEqual(env.get(IBKR_CLIENT_ID_RETRY_SPAN_ENV), str(DEFAULT_CLIENT_ID_RETRY_SPAN))
+            self.assertEqual(env.get(IBKR_CONNECT_MAX_ROUNDS_ENV), "3")
+
+    def test_run_cmd_uses_configured_ibkr_client_id_retry_span(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = Path(tmp) / "supervisor.yaml"
+            summary_dir = Path(tmp) / "reports_supervisor"
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        f'summary_out_dir: "{summary_dir}"',
+                        "ibkr_task_min_gap_sec: 0.0",
+                        "ibkr_client_id_retry_span: 2",
+                        "ibkr_connect_max_rounds: 4",
+                        "poll_sec: 30",
+                        "markets: []",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(cfg_path))
+            completed = subprocess.CompletedProcess(args=["python"], returncode=0)
+            with patch("src.app.supervisor.subprocess.run", return_value=completed) as mock_run:
+                self.assertTrue(supervisor._run_cmd("run_investment_execution:hk:watchlist", ["python"]))
+
+            env = dict(mock_run.call_args.kwargs.get("env") or {})
+            self.assertEqual(env.get(IBKR_CLIENT_ID_RETRY_SPAN_ENV), "2")
+            self.assertEqual(env.get(IBKR_CONNECT_MAX_ROUNDS_ENV), "4")
 
     def test_investment_execution_waits_for_offset_day(self):
         with tempfile.TemporaryDirectory() as tmp:

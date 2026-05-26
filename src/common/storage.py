@@ -1,7 +1,68 @@
 import sqlite3
-from typing import Any, Dict, List
+import time
+from typing import Any, Callable, Dict, List, TypeVar
 from datetime import datetime, timedelta, timezone
 import json
+
+
+_T = TypeVar("_T")
+_SQLITE_BUSY_FRAGMENTS = (
+    "database is locked",
+    "database table is locked",
+    "database is busy",
+)
+
+
+def _is_sqlite_busy_error(exc: BaseException) -> bool:
+    if not isinstance(exc, sqlite3.OperationalError):
+        return False
+    message = str(exc).lower()
+    return any(fragment in message for fragment in _SQLITE_BUSY_FRAGMENTS)
+
+
+def _retry_sqlite_busy(
+    op: Callable[[], _T],
+    *,
+    attempts: int,
+    initial_delay_sec: float,
+) -> _T:
+    attempts = max(1, int(attempts))
+    delay = max(0.0, float(initial_delay_sec))
+    for attempt_idx in range(attempts):
+        try:
+            return op()
+        except sqlite3.OperationalError as exc:
+            if not _is_sqlite_busy_error(exc) or attempt_idx >= attempts - 1:
+                raise
+            if delay > 0:
+                time.sleep(delay)
+            delay = min(max(delay * 2.0, 0.01), 2.0)
+    return op()
+
+
+class _RetryingSqliteConnection(sqlite3.Connection):
+    """SQLite connection that retries short-lived busy/locked failures."""
+
+    def execute(self, sql: str, parameters: Any = (), /):  # type: ignore[override]
+        return _retry_sqlite_busy(
+            lambda: sqlite3.Connection.execute(self, sql, parameters),
+            attempts=int(getattr(self, "_storage_retry_attempts", 1)),
+            initial_delay_sec=float(getattr(self, "_storage_retry_initial_delay_sec", 0.0)),
+        )
+
+    def executemany(self, sql: str, seq_of_parameters: Any, /):  # type: ignore[override]
+        return _retry_sqlite_busy(
+            lambda: sqlite3.Connection.executemany(self, sql, seq_of_parameters),
+            attempts=int(getattr(self, "_storage_retry_attempts", 1)),
+            initial_delay_sec=float(getattr(self, "_storage_retry_initial_delay_sec", 0.0)),
+        )
+
+    def commit(self) -> None:  # type: ignore[override]
+        return _retry_sqlite_busy(
+            lambda: sqlite3.Connection.commit(self),
+            attempts=int(getattr(self, "_storage_retry_attempts", 1)),
+            initial_delay_sec=float(getattr(self, "_storage_retry_initial_delay_sec", 0.0)),
+        )
 
 
 def build_investment_risk_history_row(
@@ -76,22 +137,59 @@ def build_investment_risk_history_row(
 class Storage:
     """SQLite-backed audit/risk event store used by execution and risk modules."""
 
-    def __init__(self, db_path: str = "audit.db"):
+    def __init__(
+        self,
+        db_path: str = "audit.db",
+        sqlite_timeout_sec: float = 30.0,
+        sqlite_write_retry_attempts: int = 6,
+        sqlite_write_retry_initial_delay_sec: float = 0.25,
+    ):
         self.db_path = db_path
+        self.sqlite_timeout_sec = max(0.001, float(sqlite_timeout_sec or 30.0))
+        self.sqlite_write_retry_attempts = max(1, int(sqlite_write_retry_attempts or 1))
+        self.sqlite_write_retry_initial_delay_sec = max(0.0, float(sqlite_write_retry_initial_delay_sec or 0.0))
         self._init_db()
 
     def _conn(self):
         # Keep connections short-lived; context managers commit/rollback automatically.
-        return sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(
+            self.db_path,
+            timeout=float(self.sqlite_timeout_sec),
+            factory=_RetryingSqliteConnection,
+        )
+        setattr(conn, "_storage_retry_attempts", int(self.sqlite_write_retry_attempts))
+        setattr(conn, "_storage_retry_initial_delay_sec", float(self.sqlite_write_retry_initial_delay_sec))
+        try:
+            sqlite3.Connection.execute(conn, f"PRAGMA busy_timeout={int(self.sqlite_timeout_sec * 1000)}")
+        except sqlite3.Error:
+            pass
+        return conn
+
+    def _should_enable_wal(self) -> bool:
+        db_path = str(self.db_path or "").strip()
+        return bool(db_path and db_path != ":memory:" and not db_path.startswith("file::memory:"))
+
+    def _configure_database(self, conn: sqlite3.Connection) -> None:
+        if not self._should_enable_wal():
+            return
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+        except sqlite3.Error:
+            # WAL is an optimization; busy_timeout/retry still protects short lock conflicts.
+            pass
 
     def _ensure_column(self, conn: sqlite3.Connection, table: str, column_def: str) -> None:
         try:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column_def}")
-        except Exception:
+        except sqlite3.OperationalError as exc:
+            if _is_sqlite_busy_error(exc):
+                raise
             pass
 
     def _init_db(self):
         with self._conn() as c:
+            self._configure_database(c)
             c.execute("""
             CREATE TABLE IF NOT EXISTS orders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

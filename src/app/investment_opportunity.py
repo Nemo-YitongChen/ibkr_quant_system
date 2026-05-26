@@ -54,6 +54,21 @@ def _avg_true_range(bars: List[OHLCVBar], lookback: int) -> float:
     return float(sum(use) / len(use)) if use else 0.0
 
 
+def _to_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in {"1", "true", "t", "yes", "y", "on"}:
+        return True
+    if text in {"0", "false", "f", "no", "n", "off", ""}:
+        return False
+    return bool(value)
+
+
 @dataclass
 class InvestmentOpportunityConfig:
     history_days: int = 180
@@ -66,6 +81,9 @@ class InvestmentOpportunityConfig:
     pullback_entry_pct: float = 0.025
     ma_buffer_pct: float = 0.01
     atr_discount_mult: float = 0.35
+    etf_pullback_entry_pct: float = 0.012
+    etf_ma_buffer_pct: float = 0.012
+    etf_atr_discount_mult: float = 0.15
     include_hold_candidates: bool = True
     use_intraday_5m: bool = True
     intraday_lookback_bars: int = 24
@@ -75,6 +93,110 @@ class InvestmentOpportunityConfig:
     def from_dict(cls, raw: Dict[str, Any] | None) -> "InvestmentOpportunityConfig":
         raw = raw or {}
         return cls(**{k: raw[k] for k in cls.__dataclass_fields__ if k in raw})
+
+
+def _positive_float(value: Any, fallback: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return float(fallback)
+    if parsed > 0:
+        return parsed
+    return float(fallback)
+
+
+def _anchor_components(
+    *,
+    last_close: float,
+    ma_fast: float,
+    atr: float,
+    pullback_entry_pct: float,
+    ma_buffer_pct: float,
+    atr_discount_mult: float,
+) -> Dict[str, float]:
+    anchor_from_pullback = float(last_close) * (1.0 - float(pullback_entry_pct)) if last_close > 0 else 0.0
+    anchor_from_ma = float(ma_fast) * (1.0 + float(ma_buffer_pct)) if ma_fast > 0 else anchor_from_pullback
+    anchor_from_atr = float(last_close) - float(atr_discount_mult) * float(atr) if last_close > 0 and atr > 0 else anchor_from_pullback
+    return {
+        "pullback": float(anchor_from_pullback),
+        "ma": float(anchor_from_ma),
+        "atr": float(anchor_from_atr),
+    }
+
+
+def _select_anchor(components: Dict[str, float], *, mode: str) -> tuple[float, str]:
+    usable = {key: float(value) for key, value in components.items() if float(value or 0.0) > 0.0}
+    if not usable:
+        return 0.0, ""
+    if mode == "max":
+        selected = max(usable, key=usable.get)
+    else:
+        selected = min(usable, key=usable.get)
+    return float(usable[selected]), str(selected)
+
+
+def _gap_pct(ref_price: float, anchor: float) -> float:
+    if ref_price <= 0 or anchor <= 0:
+        return 0.0
+    return round(max(0.0, (float(ref_price) - float(anchor)) / float(ref_price) * 100.0), 4)
+
+
+def _entry_anchor_diagnostics(
+    cfg: InvestmentOpportunityConfig,
+    *,
+    asset_class: str,
+    last_close: float,
+    ref_price: float,
+    ma_fast: float,
+    ma_slow: float,
+    atr: float,
+    regime_state: str = "",
+) -> Dict[str, Any]:
+    base_components = _anchor_components(
+        last_close=float(last_close),
+        ma_fast=float(ma_fast),
+        atr=float(atr),
+        pullback_entry_pct=float(cfg.pullback_entry_pct),
+        ma_buffer_pct=float(cfg.ma_buffer_pct),
+        atr_discount_mult=float(cfg.atr_discount_mult),
+    )
+    base_anchor, base_selected = _select_anchor(base_components, mode="min")
+    regime = str(regime_state or "").strip().upper()
+    trend_ok = (ma_slow <= 0.0 or ref_price >= ma_slow) and regime not in {"RISK_OFF", "BEAR", "STRESS"}
+    is_etf = str(asset_class or "").strip().lower() == "etf"
+
+    selected_components = dict(base_components)
+    selected_anchor = float(base_anchor)
+    selected_component = str(base_selected)
+    profile = "STANDARD_CONSERVATIVE"
+    selection_rule = "min_of_standard_components"
+
+    if is_etf and trend_ok:
+        etf_components = _anchor_components(
+            last_close=float(last_close),
+            ma_fast=float(ma_fast),
+            atr=float(atr),
+            pullback_entry_pct=_positive_float(cfg.etf_pullback_entry_pct, float(cfg.pullback_entry_pct)),
+            ma_buffer_pct=_positive_float(cfg.etf_ma_buffer_pct, float(cfg.ma_buffer_pct)),
+            atr_discount_mult=_positive_float(cfg.etf_atr_discount_mult, float(cfg.atr_discount_mult)),
+        )
+        selected_anchor, selected_component = _select_anchor(etf_components, mode="max")
+        selected_components = dict(etf_components)
+        profile = "ETF_TREND_PULLBACK"
+        selection_rule = "max_of_etf_components"
+
+    return {
+        "entry_anchor": float(selected_anchor),
+        "entry_anchor_profile": profile,
+        "entry_anchor_selection_rule": selection_rule,
+        "entry_anchor_selected_component": selected_component,
+        "entry_anchor_gap_pct": _gap_pct(float(ref_price), float(selected_anchor)),
+        "base_entry_anchor": float(base_anchor),
+        "base_entry_anchor_selected_component": str(base_selected),
+        "base_entry_anchor_gap_pct": _gap_pct(float(ref_price), float(base_anchor)),
+        "entry_anchor_components": selected_components,
+        "base_entry_anchor_components": base_components,
+    }
 
 
 @dataclass
@@ -154,8 +276,9 @@ class InvestmentOpportunityEngine:
     def _candidate_metrics(self, symbols: List[str]) -> Dict[str, Dict[str, Any]]:
         if not symbols:
             return {}
-        set_delayed_frozen(self.ib)
-        register_contracts(self.ib, self.md, symbols)
+        if not bool(self.prefer_external_market_data):
+            set_delayed_frozen(self.ib)
+            register_contracts(self.ib, self.md, symbols)
         out: Dict[str, Dict[str, Any]] = {}
         for symbol in symbols:
             bars, _ = self.data_adapter.get_daily_bars(symbol, days=int(self.opportunity_cfg.history_days))
@@ -267,6 +390,8 @@ class InvestmentOpportunityEngine:
                     f"ref_price={float(row.get('ref_price', 0.0) or 0.0):.2f} "
                     f"ref_source={row.get('ref_price_source', '')} "
                     f"entry_anchor={float(row.get('entry_anchor', 0.0) or 0.0):.2f} "
+                    f"anchor_gap={float(row.get('entry_anchor_gap_pct', 0.0) or 0.0):.2f}% "
+                    f"anchor_profile={row.get('entry_anchor_profile', '')} "
                     f"ma20={float(row.get('ma_fast', 0.0) or 0.0):.2f} "
                     f"ma50={float(row.get('ma_slow', 0.0) or 0.0):.2f}"
                 )
@@ -335,6 +460,13 @@ class InvestmentOpportunityEngine:
             annotate_opportunity_user_explanation(row)
         return rows
 
+    def _effective_broker_equity(self, broker_account: Dict[str, Any]) -> tuple[float, float, float]:
+        broker_equity_raw = float(broker_account.get("netliq", 0.0) or 0.0)
+        account_equity_cap = max(0.0, float(getattr(self.execution_cfg, "account_equity_cap", 0.0) or 0.0))
+        if account_equity_cap > 0.0:
+            return min(broker_equity_raw, account_equity_cap), broker_equity_raw, account_equity_cap
+        return broker_equity_raw, broker_equity_raw, 0.0
+
     def run(self, *, report_dir: str) -> InvestmentOpportunityResult:
         report_path = Path(report_dir)
         ranked_rows = self._read_csv(report_path / "investment_candidates.csv")
@@ -344,7 +476,7 @@ class InvestmentOpportunityEngine:
             raise ValueError(f"missing investment_candidates.csv in {report_path}")
         plan_map = {str(row.get("symbol", "")).upper(): dict(row) for row in plan_rows}
         broker_account = self.execution_engine._account_snapshot()
-        broker_equity = float(broker_account.get("netliq", 0.0) or 0.0)
+        broker_equity, broker_equity_raw, account_equity_cap = self._effective_broker_equity(broker_account)
         broker_positions = self.execution_engine._broker_positions()
 
         eligible: List[Dict[str, Any]] = []
@@ -370,12 +502,19 @@ class InvestmentOpportunityEngine:
             ma_fast = _to_float(metric.get("ma_fast"), 0.0)
             ma_slow = _to_float(metric.get("ma_slow"), 0.0)
             atr = _to_float(metric.get("atr"), 0.0)
-            anchor_from_pullback = last_close * (1.0 - float(self.opportunity_cfg.pullback_entry_pct))
-            anchor_from_ma = ma_fast * (1.0 + float(self.opportunity_cfg.ma_buffer_pct)) if ma_fast > 0 else anchor_from_pullback
-            anchor_from_atr = last_close - float(self.opportunity_cfg.atr_discount_mult) * atr if atr > 0 else anchor_from_pullback
-            entry_anchor = min(anchor_from_pullback, anchor_from_ma, anchor_from_atr)
             held_qty = _to_float((broker_positions.get(symbol) or {}).get("qty"), 0.0)
-            earnings_in_14d = bool(row.get("earnings_in_14d", False))
+            earnings_in_14d = _to_bool(row.get("earnings_in_14d", False))
+            anchor_diagnostics = _entry_anchor_diagnostics(
+                self.opportunity_cfg,
+                asset_class=str(row.get("asset_class", "") or ""),
+                last_close=float(last_close),
+                ref_price=float(ref_price),
+                ma_fast=float(ma_fast),
+                ma_slow=float(ma_slow),
+                atr=float(atr),
+                regime_state=str(row.get("regime_state", "") or ""),
+            )
+            entry_anchor = float(anchor_diagnostics.get("entry_anchor", 0.0) or 0.0)
 
             if earnings_in_14d:
                 entry_status = "WAIT_EVENT"
@@ -402,6 +541,15 @@ class InvestmentOpportunityEngine:
                     "ref_price": float(ref_price),
                     "last_close": float(last_close),
                     "entry_anchor": float(entry_anchor),
+                    "entry_anchor_profile": str(anchor_diagnostics.get("entry_anchor_profile", "") or ""),
+                    "entry_anchor_selection_rule": str(anchor_diagnostics.get("entry_anchor_selection_rule", "") or ""),
+                    "entry_anchor_selected_component": str(anchor_diagnostics.get("entry_anchor_selected_component", "") or ""),
+                    "entry_anchor_gap_pct": float(anchor_diagnostics.get("entry_anchor_gap_pct", 0.0) or 0.0),
+                    "base_entry_anchor": float(anchor_diagnostics.get("base_entry_anchor", 0.0) or 0.0),
+                    "base_entry_anchor_selected_component": str(anchor_diagnostics.get("base_entry_anchor_selected_component", "") or ""),
+                    "base_entry_anchor_gap_pct": float(anchor_diagnostics.get("base_entry_anchor_gap_pct", 0.0) or 0.0),
+                    "entry_anchor_components_json": json.dumps(anchor_diagnostics.get("entry_anchor_components", {}) or {}, sort_keys=True),
+                    "base_entry_anchor_components_json": json.dumps(anchor_diagnostics.get("base_entry_anchor_components", {}) or {}, sort_keys=True),
                     "ma_fast": float(ma_fast),
                     "ma_slow": float(ma_slow),
                     "atr": float(atr),
@@ -480,6 +628,9 @@ class InvestmentOpportunityEngine:
             "analysis_lifecycle_counts": dict(analysis_tracking.get("lifecycle_counts", {}) or {}),
             "market_structure": market_rules,
             "adaptive_strategy": adaptive_strategy_context(self.adaptive_strategy) if self.adaptive_strategy is not None else {},
+            "broker_equity": float(broker_equity),
+            "broker_equity_raw": float(broker_equity_raw),
+            "account_equity_cap": float(account_equity_cap),
         }
         write_csv(str(report_path / "investment_opportunity_scan.csv"), rows)
         write_json(str(report_path / "investment_opportunity_summary.json"), summary)

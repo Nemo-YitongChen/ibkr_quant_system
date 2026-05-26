@@ -14,6 +14,7 @@ from ..common.cli_contracts import ArtifactBundle, BrokerSyncSummary
 from ..common.logger import get_logger
 from ..common.markets import add_market_args, resolve_market_code
 from ..common.runtime_paths import resolve_repo_path
+from ..common.sqlite_utils import connect_sqlite
 from ..common.storage import Storage
 
 log = get_logger("tools.sync_investment_paper_from_broker")
@@ -112,8 +113,7 @@ def main(argv: List[str] | None = None) -> None:
     out_dir = _resolve_project_path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
+    conn = connect_sqlite(db_path, row_factory=sqlite3.Row)
     try:
         broker_run = conn.execute(
             "SELECT * FROM investment_execution_runs WHERE market=? AND portfolio_id=? ORDER BY ts DESC, id DESC LIMIT 1",

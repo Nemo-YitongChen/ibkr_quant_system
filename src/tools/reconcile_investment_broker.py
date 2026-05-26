@@ -19,6 +19,7 @@ from ..common.cli_contracts import ArtifactBundle, ReconciliationSummary
 from ..common.logger import get_logger
 from ..common.markets import add_market_args, resolve_market_code
 from ..common.runtime_paths import resolve_repo_path
+from ..common.sqlite_utils import connect_sqlite
 
 log = get_logger("tools.reconcile_investment_broker")
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -226,8 +227,7 @@ def main(argv: List[str] | None = None) -> None:
     out_dir = _resolve_project_path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
+    conn = connect_sqlite(db_path, row_factory=sqlite3.Row)
     try:
         local_run = conn.execute(
             "SELECT * FROM investment_runs WHERE market=? AND portfolio_id=? ORDER BY ts DESC, id DESC LIMIT 1",

@@ -29,10 +29,13 @@ def _daily_period_for_days(days: int) -> str:
 
 
 def _daily_period_fallbacks(days: int) -> List[str]:
-    preferred = _daily_period_for_days(days)
     order = ["1y", "2y", "5y", "10y"]
-    start_idx = order.index(preferred) if preferred in order else 0
-    return order[start_idx:]
+    preferred = _daily_period_for_days(days)
+    if preferred not in order:
+        return list(order)
+    # Always compare all local periods when stale fallback is allowed. A shorter
+    # period can be newer than a longer cache after interrupted offline runs.
+    return list(order)
 
 
 def _history_cache_path(symbol: str, *, interval: str, period: str) -> Path:
@@ -47,6 +50,19 @@ def _history_cache_path(symbol: str, *, interval: str, period: str) -> Path:
     )
     digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()
     return _CACHE_DIR / f"{digest}.json"
+
+
+def _history_recency_key(rows: List[OHLCVBar]) -> tuple[float, int]:
+    if not rows:
+        return (0.0, 0)
+    last = rows[-1].time
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=timezone.utc)
+    return (float(last.timestamp()), int(len(rows)))
+
+
+def _newer_history_rows(left: List[OHLCVBar], right: List[OHLCVBar]) -> List[OHLCVBar]:
+    return list(left if _history_recency_key(left) >= _history_recency_key(right) else right)
 
 
 def _read_history_cache(symbol: str, *, interval: str, period: str, ttl_sec: int) -> List[OHLCVBar]:
@@ -116,8 +132,7 @@ def _read_stale_history_cache(symbol: str, *, interval: str, periods: List[str])
                     volume=float(item.get("volume", 0.0) or 0.0),
                 )
             )
-        if len(rows) > len(best_rows):
-            best_rows = rows
+        best_rows = _newer_history_rows(rows, best_rows)
     return best_rows
 
 
@@ -154,6 +169,9 @@ def fetch_daily_bars(symbol: str, days: int, *, allow_stale_cache: bool = False)
     period = _daily_period_for_days(lookback_days)
     cached = _read_history_cache(symbol, interval="1d", period=period, ttl_sec=1800)
     if cached:
+        if allow_stale_cache:
+            stale = _read_stale_history_cache(symbol, interval="1d", periods=_daily_period_fallbacks(lookback_days))
+            cached = _newer_history_rows(cached, stale)
         return list(cached[-lookback_days:])
     try:
         import yfinance as yf  # type: ignore

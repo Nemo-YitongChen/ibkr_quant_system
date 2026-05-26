@@ -1,4 +1,5 @@
 execution:
+  account_equity_cap: 1000.0
   min_cash_buffer_pct: 0.05
   cash_buffer_floor: 1000.0
   min_trade_value: 500.0
@@ -13,6 +14,17 @@ execution:
   poll_interval_sec: 1.0
   allow_buys: true
   allow_sells: true
+  near_entry_paper_test_enabled: true
+  near_entry_paper_test_max_gap_pct: 0.30
+  near_entry_paper_test_max_order_value: 100.0
+  near_entry_paper_test_asset_classes:
+    - etf
+  near_entry_paper_test_limit_buffer_bps: 0.0
+  whole_share_missing_opportunity_paper_sample_enabled: true
+  whole_share_missing_opportunity_paper_sample_max_order_value: 100.0
+  whole_share_missing_opportunity_paper_sample_asset_classes:
+    - etf
+  whole_share_missing_opportunity_paper_sample_limit_buffer_bps: 0.0
   account_allocation_pct: 0.30
   min_model_recommendation_score: 0.15
   min_execution_score: 0.05
@@ -23,6 +35,9 @@ execution:
   shadow_ml_min_score_auto_submit: 0.00
   shadow_ml_min_positive_prob_auto_submit: 0.50
   shadow_ml_min_training_samples: 80
+  shadow_ml_allow_whole_share_paper_sample: true
+  shadow_ml_paper_sample_min_positive_prob: 0.55
+  shadow_ml_paper_sample_min_edge_margin_bps: 0.0
   adv_max_participation_pct: 0.05
   adv_split_trigger_pct: 0.02
   max_slices_per_symbol: 4

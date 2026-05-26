@@ -7,10 +7,12 @@ seed_watchlist_yaml: "config/watchlists/xetra_top_quality.yaml"
 report_watchlist_yaml: "config/watchlists/xetra_top_quality.yaml"
 symbol_master_watchlists:
   - "config/watchlists/xetra_market_core.yaml"
+  - "config/watchlists/auto_expanded/xetra_quality_growth.yaml"
 notes:
   - "Default XETRA equity universe for investment report and paper execution."
   - "Symbol master is expanded by a broader XETRA market-core watchlist for layered scan stage-1 coverage."
   - "Uses a curated liquid large-cap quality list while the broader symbol master is still optional."
+  - "Auto-expanded quality-growth watchlist is generated from local candidate evidence and remains empty unless XETRA symbols pass whole-share/cost/liquidity filters."
 layered_scan:
   enabled: true
   include_symbol_master: true

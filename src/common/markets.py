@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-import sqlite3
 from typing import Any, Dict, Optional
 
 import yaml
+
+from .sqlite_utils import connect_sqlite
 
 MARKET_ALIASES: Dict[str, str] = {
     "US": "US",
@@ -132,7 +133,7 @@ def load_symbols_from_symbol_master(db_path: str | Path, market: str | None) -> 
     if not code:
         return []
     try:
-        c = sqlite3.connect(str(db_path))
+        c = connect_sqlite(db_path)
         try:
             rows = c.execute(
                 "select symbol from symbol_master where market=? order by symbol asc",

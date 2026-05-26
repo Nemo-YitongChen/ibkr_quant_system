@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import yaml
-
+from src.common.config_layers import load_layered_config
 from src.strategies.engine_strategy import EngineStrategy, StrategyConfig, combine_short_signals
 
 
@@ -80,10 +79,11 @@ def test_project_strategy_defaults_expose_engine_parameters() -> None:
     base_dir = Path(__file__).resolve().parents[1]
 
     for cfg_path in sorted((base_dir / "config").glob("strategy_defaults*.yaml")):
-        raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+        raw = load_layered_config(base_dir, str(cfg_path)).payload
         cfg = StrategyConfig.from_dict(raw)
 
-        assert cfg.mr_weight == 0.60
+        expected_mr_weight = 0.55 if cfg_path.stem.endswith("_paper") else 0.60
+        assert cfg.mr_weight == expected_mr_weight
         assert cfg.bo_weight == 0.40
         assert cfg.mid_qty_min == 0.25
         assert cfg.mid_qty_max == 1.25

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+import src.tools.generate_dashboard as generate_dashboard
 from src.tools.generate_dashboard import (
     _build_dashboard_status_rollout_summary,
     _build_evidence_focus_actions,
@@ -14,6 +15,7 @@ from src.tools.generate_dashboard import (
     _build_market_evidence_action_summary,
     _build_overview,
     _build_ops_overview,
+    _build_review_artifact_health_rows,
     _dashboard_v2_block_metrics_text,
     _load_weekly_blocked_vs_allowed_expost_rows,
     _load_weekly_unified_evidence_rows,
@@ -630,12 +632,15 @@ def test_simple_ops_overview_rows_include_status_rollout_counts() -> None:
             "evidence_focus_urgent_count": 1,
             "evidence_focus_primary_market": "HK",
             "evidence_focus_primary_action": "Review gate thresholds",
+            "auto_order_submit_plan_status": "READY_SINGLE_CANDIDATE",
+            "auto_order_submit_selected_portfolio_id": "US:watchlist",
             "control_service_status": "configured",
         }
     )
     assert any(row[0] == "市场状态缺口" and "2" in row[1] for row in rows)
     assert any(row[0] == "市场数据健康" and "研究Fallback" in row[1] for row in rows)
     assert any(row[0] == "量化客户端" and "量化客户端空闲" in row[1] for row in rows)
+    assert any(row[0] == "自动下单" and "US:watchlist" in row[1] for row in rows)
     assert any(row[0] == "Evidence复核" and "HK Review gate thresholds" in row[1] for row in rows)
 
 
@@ -771,6 +776,50 @@ def test_build_ops_overview_surfaces_ibkr_gateway_budget_alert() -> None:
     assert "gateway_requests=2200" in categories["IBKR_GATEWAY"]["detail"]
 
 
+def test_build_ops_overview_surfaces_auto_order_submit_plan_alert() -> None:
+    overview = _build_ops_overview(
+        [],
+        preflight_summary={"pass_count": 1, "warn_count": 0, "fail_count": 0, "checks": []},
+        control_payload={"service": {"status": "configured"}, "actions": {}},
+        execution_mode_summary={"mismatch_count": 0},
+        status_rollout_summary={
+            "market_state_missing_count": 0,
+            "data_attention_count": 0,
+            "data_research_fallback_count": 0,
+            "market_rows": [],
+        },
+        artifact_health_summary={"warning_count": 0, "degraded_count": 0},
+        governance_health_summary={"status": "ready"},
+        auto_order_readiness={
+            "summary": {
+                "status": "blocked",
+                "summary_text": "auto_order_readiness portfolios=2 ready=1 warning=0 blocked=1 disabled=0",
+                "blocked_count": 1,
+                "ready_count": 1,
+                "primary_block_reason": "preflight_stale",
+                "submit_plan": {
+                    "status": "BLOCKED",
+                    "ready": False,
+                    "reason": "no_single_safe_submit_candidate",
+                    "frontier_candidates": [{"portfolio_id": "US:watchlist"}],
+                    "rejected_candidates": [{"portfolio_id": "HK:bluechip"}],
+                },
+            }
+        },
+    )
+
+    categories = {row["category"]: row for row in overview["alert_rows"]}
+    assert overview["auto_order_status"] == "blocked"
+    assert overview["auto_order_submit_plan_status"] == "BLOCKED"
+    assert overview["auto_order_submit_plan_reason"] == "no_single_safe_submit_candidate"
+    assert overview["auto_order_frontier_candidate_count"] == 1
+    assert overview["auto_order_rejected_candidate_count"] == 1
+    assert "auto_submit_plan=BLOCKED" in overview["summary_text"]
+    assert categories["AUTO_ORDER"]["status"] == "WARN"
+    assert categories["AUTO_ORDER"]["alert_class"] == "auto_order"
+    assert "no_single_safe_submit_candidate" in categories["AUTO_ORDER"]["detail"]
+
+
 def test_build_ops_overview_classifies_preflight_gateway_port_alerts() -> None:
     overview = _build_ops_overview(
         [],
@@ -824,6 +873,65 @@ def test_weekly_unified_evidence_loader_prefers_standalone_json(tmp_path) -> Non
     rows = _load_weekly_unified_evidence_rows(tmp_path)
 
     assert rows == [{"portfolio_id": "standalone", "symbol": "AAPL"}]
+
+
+def test_weekly_unified_evidence_loader_skips_oversized_json(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(generate_dashboard, "DASHBOARD_WEEKLY_JSON_ARTIFACT_MAX_BYTES", 1)
+    (tmp_path / "weekly_unified_evidence.json").write_text(
+        json.dumps(
+            {
+                "artifact_type": "weekly_unified_evidence",
+                "row_count": 1,
+                "rows": [{"portfolio_id": "standalone", "symbol": "AAPL"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "weekly_unified_evidence.csv").write_text(
+        "portfolio_id,symbol\ncsv,MSFT\n",
+        encoding="utf-8",
+    )
+
+    rows = _load_weekly_unified_evidence_rows(tmp_path)
+
+    assert rows == [{"portfolio_id": "csv", "symbol": "MSFT"}]
+
+
+def test_review_artifact_health_uses_metadata_only_for_oversized_json(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(generate_dashboard, "DASHBOARD_WEEKLY_SUMMARY_MAX_BYTES", 1)
+    (tmp_path / "weekly_review_summary.json").write_text(
+        json.dumps(
+            {
+                "generated_at": "2026-05-01T10:00:00+00:00",
+                "schema_version": "test",
+                "window_start": "2026-04-24T10:00:00+00:00",
+                "window_end": "2026-05-01T10:00:00+00:00",
+                "portfolio_count": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "weekly_unified_evidence.json").write_text(
+        json.dumps(
+            {
+                "generated_at": "2026-05-01T10:00:00+00:00",
+                "schema_version": "test",
+                "artifact_type": "weekly_unified_evidence",
+                "row_count": 2,
+                "rows": [{"portfolio_id": "US:watchlist"}, {"portfolio_id": "HK:watchlist"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rows, _ = _build_review_artifact_health_rows(tmp_path)
+    by_key = {row["artifact_key"]: row for row in rows}
+
+    assert by_key["weekly_review_summary"]["source"] == "file:metadata_only"
+    assert by_key["weekly_review_summary"]["missing_fields"] == []
+    assert by_key["weekly_unified_evidence"]["source"] == "file:metadata_only"
+    assert by_key["weekly_unified_evidence"]["row_count"] == 2
+    assert by_key["weekly_unified_evidence"]["missing_fields"] == []
 
 
 def test_weekly_blocked_vs_allowed_loader_prefers_standalone_json(tmp_path) -> None:

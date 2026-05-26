@@ -14,7 +14,7 @@ market_data:
   hist_daily_cache_ttl_sec: 21600
   hist_daily_cache_stale_fallback_sec: 604800
 risk_config: "config/risk_hk.yaml"
-strategy_config: "config/strategy_defaults_hk.yaml"
+strategy_config: "config/strategy_defaults_hk_paper.yaml"
 report_config: "config/report_scoring_hk.yaml"
 investment_config: "config/investment_hk.yaml"
 investment_paper_config: "config/investment_paper_hk.yaml"
@@ -26,6 +26,7 @@ paper_allowed_execution_sources:
   - REALTIME
 entry_timeout_sec: 60
 enforce_pretrade_risk_gate: true
+research_only_yfinance: true
 
 scanner_enabled: true
 scanner_instrument: "STOCK.HK"

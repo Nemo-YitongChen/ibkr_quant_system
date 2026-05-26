@@ -11,6 +11,7 @@ DASHBOARD_BLOCK_CATEGORY_ADVANCED = "advanced"
 
 HOME_DASHBOARD_BLOCK_IDS = [
     "ops_health",
+    "auto_order_readiness",
     "evidence_focus_actions",
     "evidence_quality",
     "dashboard_control_actions",
@@ -259,8 +260,100 @@ def build_ops_health_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "ibkr_gateway_budget_missing_telemetry_market_count": _int(
                 ops.get("ibkr_gateway_budget_missing_telemetry_market_count")
             ),
+            "auto_order_status": str(ops.get("auto_order_status") or ""),
+            "auto_order_blocked_count": _int(ops.get("auto_order_blocked_count")),
+            "auto_order_ready_count": _int(ops.get("auto_order_ready_count")),
+            "auto_order_primary_block_reason": str(ops.get("auto_order_primary_block_reason") or ""),
+            "auto_order_submit_plan_status": str(ops.get("auto_order_submit_plan_status") or ""),
+            "auto_order_submit_plan_reason": str(ops.get("auto_order_submit_plan_reason") or ""),
+            "auto_order_submit_selected_portfolio_id": str(
+                ops.get("auto_order_submit_selected_portfolio_id") or ""
+            ),
         },
         "rows": alert_rows,
+    }
+
+
+def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
+    auto_order = _dict(payload.get("auto_order_readiness"))
+    summary = _dict(auto_order.get("summary"))
+    submit_plan = _dict(summary.get("submit_plan"))
+    rows = _rows(auto_order.get("rows"), limit=50)
+    remediation_plan = _rows(summary.get("remediation_plan"), limit=20)
+    frontier_candidates = _rows(submit_plan.get("frontier_candidates"), limit=20)
+    top_frontier = dict(frontier_candidates[0]) if frontier_candidates else {}
+    frontier_quality_pass_count = sum(
+        1 for row in frontier_candidates if str(row.get("submit_quality_status") or "").strip().upper() == "PASS"
+    )
+    frontier_high_quality_count = sum(
+        1 for row in frontier_candidates if str(row.get("submit_quality_tier") or "").strip().upper() == "HIGH"
+    )
+    submit_status = str(submit_plan.get("status") or "").strip().upper()
+    summary_status = str(summary.get("status") or "").strip().lower()
+    if not auto_order:
+        status = "warn"
+        summary_text = "auto_order_readiness artifact missing"
+    elif submit_status in {"READY_SINGLE_CANDIDATE", "READY_MULTI_CANDIDATE"} and bool(submit_plan.get("ready", False)):
+        status = "ok"
+        summary_text = str(summary.get("summary_text") or "safe paper submit candidate ready")
+    elif submit_status == "DISABLED":
+        status = "warn"
+        summary_text = str(summary.get("summary_text") or "auto order readiness policy disabled")
+    else:
+        status = "fail" if summary_status in {"fail", "failed", "error", "degraded"} else "warn"
+        summary_text = str(summary.get("summary_text") or f"submit_plan={submit_status or 'missing'}")
+    return {
+        "id": "auto_order_readiness",
+        "title": "Auto Order Submit Gate",
+        "status": status,
+        "summary": (
+            f"{summary_text} | submit_plan={submit_status or '-'} "
+            f"reason={submit_plan.get('reason') or summary.get('primary_block_reason') or '-'}"
+        ),
+        "metrics": {
+            "portfolio_count": _int(summary.get("portfolio_count")),
+            "ready_count": _int(summary.get("ready_count")),
+            "warning_count": _int(summary.get("warning_count")),
+            "blocked_count": _int(summary.get("blocked_count")),
+            "disabled_count": _int(summary.get("disabled_count")),
+            "primary_block_reason": str(summary.get("primary_block_reason") or ""),
+            "submit_plan_status": submit_status,
+            "submit_plan_ready": bool(submit_plan.get("ready", False)),
+            "submit_plan_reason": str(submit_plan.get("reason") or ""),
+            "candidate_count": _int(submit_plan.get("candidate_count")),
+            "frontier_candidate_count": _int(submit_plan.get("frontier_candidate_count"))
+            or len(frontier_candidates),
+            "frontier_quality_pass_count": int(frontier_quality_pass_count),
+            "frontier_high_quality_count": int(frontier_high_quality_count),
+            "frontier_top_submit_quality_status": str(top_frontier.get("submit_quality_status") or ""),
+            "frontier_top_submit_quality_tier": str(top_frontier.get("submit_quality_tier") or ""),
+            "frontier_top_submit_quality_min_net_edge_bps": float(
+                top_frontier.get("submit_quality_min_net_edge_bps", 0.0) or 0.0
+            ),
+            "frontier_top_submit_quality_min_edge_margin_bps": float(
+                top_frontier.get("submit_quality_min_edge_margin_bps", 0.0) or 0.0
+            ),
+            "selected_market": str(submit_plan.get("selected_market") or ""),
+            "selected_markets": list(submit_plan.get("selected_markets") or []),
+            "selected_portfolio_id": str(submit_plan.get("selected_portfolio_id") or ""),
+            "selected_portfolio_ids": list(submit_plan.get("selected_portfolio_ids") or []),
+            "selected_order_count": _int(submit_plan.get("selected_order_count")),
+            "selected_total_order_count": _int(submit_plan.get("selected_total_order_count")),
+            "selected_planned_gross_order_value": float(
+                submit_plan.get("selected_planned_gross_order_value", 0.0) or 0.0
+            ),
+            "selected_total_planned_gross_order_value": float(
+                submit_plan.get("selected_total_planned_gross_order_value", 0.0) or 0.0
+            ),
+            "selected_planned_order_symbols": str(submit_plan.get("selected_planned_order_symbols") or ""),
+            "rejected_candidate_count": len(_rows(submit_plan.get("rejected_candidates"), limit=100)),
+        },
+        "rows": {
+            "submit_plan": submit_plan,
+            "remediation_plan": remediation_plan,
+            "frontier_candidates": frontier_candidates,
+            "portfolios": rows,
+        },
     }
 
 
@@ -743,6 +836,7 @@ def build_blocked_vs_allowed_expost_block(payload: Dict[str, Any]) -> Dict[str, 
 def build_dashboard_v2_blocks(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     blocks = [
         build_ops_health_block(payload),
+        build_auto_order_readiness_block(payload),
         build_evidence_focus_actions_block(payload),
         build_evidence_quality_block(payload),
         build_control_actions_block(payload),

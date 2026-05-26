@@ -10,5 +10,6 @@ opportunity:
   ma_buffer_pct: 0.01
   atr_discount_mult: 0.32
   include_hold_candidates: true
-  use_intraday_5m: true
+  use_intraday_5m: false
   intraday_lookback_bars: 24
+  prefer_external_market_data: true

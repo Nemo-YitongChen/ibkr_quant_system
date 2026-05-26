@@ -29,6 +29,7 @@ from src.portfolio.investment_allocator import (
 from src.offhours.compute_mid import compute_mid_from_bars
 from src.offhours.compute_long import compute_long_from_bars
 from src.app.investment_engine import ExecutionSessionProfile, InvestmentExecutionEngine, _is_placeholder_account_id
+from src.app.investment_opportunity import _to_bool as _opportunity_to_bool
 from src.app.investment_guard import InvestmentGuardConfig, build_investment_guard_orders
 from src.common.storage import Storage, build_investment_risk_history_row
 from src.data.adapters import MarketDataAdapter
@@ -43,6 +44,7 @@ from src.tools.generate_investment_report import (
     _layered_scan_config,
     _maybe_collect_research_scanner_symbols,
     _normalize_market_symbol,
+    _promote_small_account_preferred_candidates,
 )
 from src.tools.label_investment_snapshots import (
     _build_skip_summary_rows,
@@ -72,6 +74,13 @@ def _bars(n: int = 500, start: float = 100.0, step: float = 0.2):
 
 
 class InvestmentModuleTests(unittest.TestCase):
+    def test_opportunity_bool_parser_handles_csv_false_strings(self):
+        self.assertFalse(_opportunity_to_bool("False"))
+        self.assertFalse(_opportunity_to_bool("0"))
+        self.assertFalse(_opportunity_to_bool(""))
+        self.assertTrue(_opportunity_to_bool("True"))
+        self.assertTrue(_opportunity_to_bool("1"))
+
     def test_labeling_daily_bars_prefers_yfinance_cache_before_ibkr_loader(self):
         class _FakeLoader:
             def __init__(self):
@@ -323,11 +332,29 @@ class InvestmentModuleTests(unittest.TestCase):
         self.assertAlmostEqual(cfg.network_reserve_ratio, 0.45, places=6)
         self.assertFalse(cfg.include_scanner)
 
-    def test_layered_scan_config_allows_explicit_scanner_override_for_research_only(self):
+    def test_layered_scan_config_requires_research_only_scanner_override(self):
         cfg = _layered_scan_config(
             market_universe_cfg={
                 "layered_scan": {
                     "include_scanner": True,
+                }
+            },
+            investment_cfg={},
+            ibkr_cfg={"scanner_enabled": True},
+            max_universe=100,
+            top_n=10,
+            fundamentals_top_k=8,
+            backtest_top_k=6,
+            use_audit_recent=False,
+            research_only_yfinance=True,
+        )
+        self.assertFalse(cfg.include_scanner)
+
+        cfg = _layered_scan_config(
+            market_universe_cfg={
+                "layered_scan": {
+                    "include_scanner": True,
+                    "include_scanner_research_only": True,
                 }
             },
             investment_cfg={},
@@ -350,7 +377,7 @@ class InvestmentModuleTests(unittest.TestCase):
         mock_scanner_symbols.return_value = ["600519.SS", "000858.SZ", "688981.SS"]
 
         cfg = _layered_scan_config(
-            market_universe_cfg={"layered_scan": {"include_scanner": True}},
+            market_universe_cfg={"layered_scan": {"include_scanner": True, "include_scanner_research_only": True}},
             investment_cfg={},
             ibkr_cfg={"scanner_enabled": True},
             max_universe=100,
@@ -1055,6 +1082,413 @@ class InvestmentModuleTests(unittest.TestCase):
         self.assertEqual(scored["operating_margin_score"], 0.0)
         self.assertEqual(scored["revenue_growth_score"], 0.0)
         self.assertEqual(scored["roe_score"], 0.0)
+
+    def test_broad_market_etf_is_scored_neutrally_without_equity_fundamentals(self):
+        long_row = {
+            "symbol": "SPY",
+            "market": "US",
+            "long_score": 0.18,
+            "trend_vs_ma200": 0.06,
+            "mdd_1y": -0.10,
+            "rebalance_flag": 0,
+            "last_close": 520.0,
+        }
+        mid_row = {
+            "symbol": "SPY",
+            "market": "US",
+            "mid_scale": 0.64,
+            "trend_slope_60d": 0.08,
+            "regime_composite": 0.12,
+            "regime_state": "RISK_ON",
+            "regime_reason": "test",
+            "risk_on": True,
+            "last_close": 520.0,
+        }
+        scored = score_investment_candidate(
+            long_row,
+            mid_row,
+            vix=16.0,
+            earnings_in_14d=False,
+            macro_high_risk=False,
+            fundamentals={},
+            recommendation={},
+            cfg=InvestmentScoringConfig(),
+        )
+        self.assertEqual(scored["asset_class"], "etf")
+        self.assertEqual(scored["asset_theme"], "us_large_cap")
+        self.assertEqual(scored["valuation_score"], 0.0)
+        self.assertEqual(scored["margin_score"], 0.0)
+        self.assertEqual(scored["operating_margin_score"], 0.0)
+        self.assertEqual(scored["revenue_growth_score"], 0.0)
+        self.assertEqual(scored["roe_score"], 0.0)
+        self.assertNotEqual(scored["action"], "REDUCE")
+
+    def test_small_account_candidate_selection_promotes_ready_etfs(self):
+        from src.common.market_structure import MarketStructureConfig
+
+        structure = MarketStructureConfig.from_dict(
+            {
+                "market": "US",
+                "account_rules": {"prefer_etf_only_below_equity": 25000.0},
+                "portfolio_preferences": {"small_account_preferred_asset_classes": ["etf"]},
+            }
+        )
+        rows = [
+            {
+                "symbol": f"STK{idx}",
+                "score": 2.0 - (idx * 0.05),
+                "action": "ACCUMULATE",
+                "execution_ready": 1,
+                "asset_class": "equity",
+                "last_close": 20.0,
+            }
+            for idx in range(10)
+        ] + [
+            {
+                "symbol": "QQQ",
+                "score": 0.65,
+                "action": "ACCUMULATE",
+                "execution_ready": 1,
+                "asset_class": "etf",
+                "last_close": 700.0,
+                "expected_edge_bps": 120.0,
+                "expected_cost_bps": 20.0,
+            },
+            {
+                "symbol": "SCHB",
+                "score": 0.55,
+                "action": "ACCUMULATE",
+                "execution_ready": 1,
+                "asset_class": "etf",
+                "last_close": 24.0,
+                "expected_edge_bps": 80.0,
+                "expected_cost_bps": 20.0,
+            },
+            {
+                "symbol": "SCHX",
+                "score": 0.42,
+                "action": "ACCUMULATE",
+                "execution_ready": 1,
+                "asset_class": "etf",
+                "last_close": 28.0,
+                "expected_edge_bps": 50.0,
+                "expected_cost_bps": 20.0,
+            },
+            {
+                "symbol": "SPTM",
+                "score": 0.40,
+                "action": "ACCUMULATE",
+                "execution_ready": 1,
+                "asset_class": "etf",
+                "last_close": 72.0,
+                "expected_edge_bps": 60.0,
+                "expected_cost_bps": 18.0,
+            },
+            {
+                "symbol": "SPLG",
+                "score": 0.39,
+                "action": "ACCUMULATE",
+                "execution_ready": 1,
+                "asset_class": "etf",
+                "last_close": 76.0,
+                "expected_edge_bps": 15.0,
+                "expected_cost_bps": 20.0,
+            },
+        ]
+        selected = _promote_small_account_preferred_candidates(
+            rows,
+            market_structure=structure,
+            account_equity_cap=1000.0,
+            max_order_value=100.0,
+            min_expected_edge_bps=18.0,
+            edge_cost_buffer_bps=6.0,
+            top_n=10,
+        )
+        selected_symbols = {str(row["symbol"]) for row in selected}
+        self.assertEqual(len(selected), 10)
+        self.assertTrue({"SCHB", "SCHX", "SPTM"}.issubset(selected_symbols))
+        self.assertNotIn("QQQ", selected_symbols)
+        self.assertNotIn("SPLG", selected_symbols)
+        self.assertEqual(sum(1 for row in selected if row["asset_class"] == "etf"), 3)
+        self.assertTrue(
+            all(
+                float(row.get("allocation_priority_boost", 0.0) or 0.0) >= 3.0
+                and float(row.get("execution_priority_boost", 0.0) or 0.0) >= 3.0
+                and int(row.get("whole_share_tradable_preferred_candidate", 0) or 0) == 1
+                and str(row.get("whole_share_tradability_reason") or "") == "PASS"
+                for row in selected
+                if row["asset_class"] == "etf"
+            )
+        )
+
+        large_account = _promote_small_account_preferred_candidates(
+            rows,
+            market_structure=structure,
+            account_equity_cap=50000.0,
+            max_order_value=5000.0,
+            min_expected_edge_bps=18.0,
+            edge_cost_buffer_bps=6.0,
+            top_n=10,
+        )
+        self.assertFalse({"SCHB", "SCHX", "SPTM"} & {str(row["symbol"]) for row in large_account})
+
+    def test_small_account_candidate_selection_marks_blocked_whole_share_etfs(self):
+        from src.common.market_structure import MarketStructureConfig
+
+        structure = MarketStructureConfig.from_dict(
+            {
+                "market": "US",
+                "account_rules": {"prefer_etf_only_below_equity": 25000.0},
+                "portfolio_preferences": {"small_account_preferred_asset_classes": ["etf"]},
+            }
+        )
+        selected = _promote_small_account_preferred_candidates(
+            [
+                {
+                    "symbol": "QQQ",
+                    "score": 1.0,
+                    "action": "ACCUMULATE",
+                    "execution_ready": 1,
+                    "asset_class": "etf",
+                    "last_close": 700.0,
+                    "expected_edge_bps": 120.0,
+                    "expected_cost_bps": 20.0,
+                },
+                {
+                    "symbol": "SPLG",
+                    "score": 0.9,
+                    "action": "ACCUMULATE",
+                    "execution_ready": 1,
+                    "asset_class": "etf",
+                    "last_close": 76.0,
+                    "expected_edge_bps": 15.0,
+                    "expected_cost_bps": 20.0,
+                },
+                {
+                    "symbol": "SCHB",
+                    "score": 0.8,
+                    "action": "ACCUMULATE",
+                    "execution_ready": 1,
+                    "asset_class": "etf",
+                    "last_close": 24.0,
+                    "expected_edge_bps": 80.0,
+                    "expected_cost_bps": 20.0,
+                },
+            ],
+            market_structure=structure,
+            account_equity_cap=1000.0,
+            max_order_value=100.0,
+            min_expected_edge_bps=18.0,
+            edge_cost_buffer_bps=6.0,
+            top_n=3,
+        )
+        by_symbol = {str(row["symbol"]): row for row in selected}
+        self.assertEqual(by_symbol["QQQ"]["whole_share_tradability_reason"], "PRICE_ABOVE_MAX_ORDER_VALUE")
+        self.assertEqual(by_symbol["SPLG"]["whole_share_tradability_reason"], "EDGE_BELOW_REQUIRED")
+        self.assertEqual(by_symbol["SCHB"]["whole_share_tradability_reason"], "PASS")
+        self.assertEqual(int(by_symbol["SCHB"]["small_account_preferred_candidate"]), 1)
+
+    def test_small_account_candidate_selection_derives_edge_from_score_before_cost(self):
+        from src.common.market_structure import MarketStructureConfig
+
+        structure = MarketStructureConfig.from_dict(
+            {
+                "market": "US",
+                "account_rules": {"prefer_etf_only_below_equity": 25000.0},
+                "portfolio_preferences": {"small_account_preferred_asset_classes": ["etf"]},
+            }
+        )
+        selected = _promote_small_account_preferred_candidates(
+            [
+                {
+                    "symbol": "SCHB",
+                    "score": 0.56,
+                    "score_before_cost": 0.59,
+                    "accumulate_threshold": 0.38,
+                    "action": "ACCUMULATE",
+                    "execution_ready": 1,
+                    "asset_class": "etf",
+                    "last_close": 28.0,
+                    "expected_cost_bps": 22.0,
+                }
+            ],
+            market_structure=structure,
+            account_equity_cap=1000.0,
+            max_order_value=100.0,
+            min_expected_edge_bps=18.0,
+            edge_cost_buffer_bps=6.0,
+            edge_score_to_bps_scale=140.0,
+            top_n=1,
+        )
+
+        row = selected[0]
+        self.assertEqual(row["whole_share_tradability_reason"], "PASS")
+        self.assertAlmostEqual(float(row["whole_share_expected_edge_bps"]), 29.4, places=6)
+        self.assertEqual(int(row["small_account_preferred_candidate"]), 1)
+
+    def test_target_allocations_use_small_account_preferred_priority_boost(self):
+        ranked = [
+            {"symbol": f"STK{idx}", "score": 2.0 - idx * 0.1, "model_recommendation_score": 2.0 - idx * 0.1}
+            for idx in range(8)
+        ] + [
+            {"symbol": "QQQ", "score": 0.65, "model_recommendation_score": 0.65, "allocation_priority_boost": 3.0},
+            {"symbol": "SPY", "score": 0.56, "model_recommendation_score": 0.56, "allocation_priority_boost": 3.0},
+            {"symbol": "VTI", "score": 0.55, "model_recommendation_score": 0.55, "allocation_priority_boost": 3.0},
+        ]
+        plans = [{"symbol": row["symbol"], "action": "ACCUMULATE", "allocation_mult": 1.0} for row in ranked]
+        cfg = InvestmentPaperConfig(max_holdings=5, max_single_weight=0.22, min_position_weight=0.05)
+
+        weights = build_target_allocations(ranked, plans, cfg=cfg)
+
+        self.assertTrue({"QQQ", "SPY", "VTI"}.issubset(set(weights)))
+
+    def test_rebalance_orders_use_small_account_preferred_execution_boost(self):
+        cfg = InvestmentExecutionConfig(
+            min_cash_buffer_pct=0.10,
+            cash_buffer_floor=100.0,
+            min_trade_value=25.0,
+            max_order_value_pct=0.10,
+            max_orders_per_run=1,
+            account_allocation_pct=0.25,
+            allow_fractional_qty=True,
+        )
+        orders = build_investment_rebalance_orders(
+            {},
+            price_map={"INTC": 100.0, "QQQ": 100.0},
+            target_weights={"INTC": 0.125, "QQQ": 0.108},
+            broker_equity=1000.0,
+            broker_cash=1000.0,
+            cfg=cfg,
+            priority_context_map={
+                "INTC": {"score": 2.5, "execution_score": 0.3, "liquidity_score": 1.0},
+                "QQQ": {
+                    "score": 0.65,
+                    "execution_score": 0.4,
+                    "liquidity_score": 1.0,
+                    "execution_priority_boost": 3.0,
+                },
+            },
+        )
+
+        self.assertEqual([row["symbol"] for row in orders], ["QQQ"])
+
+    def test_rebalance_orders_lift_whole_share_preferred_etf_from_zero_qty(self):
+        cfg = InvestmentExecutionConfig(
+            min_cash_buffer_pct=0.10,
+            cash_buffer_floor=100.0,
+            min_trade_value=25.0,
+            max_order_value_pct=0.10,
+            max_orders_per_run=2,
+            account_allocation_pct=0.23,
+            allow_fractional_qty=False,
+            allow_whole_share_preferred_buy_override=True,
+        )
+        orders = build_investment_rebalance_orders(
+            {},
+            price_map={"SCHX": 29.28},
+            target_weights={"SCHX": 0.125},
+            broker_equity=1000.0,
+            broker_cash=1000.0,
+            cfg=cfg,
+            priority_context_map={
+                "SCHX": {
+                    "score": 0.56,
+                    "execution_score": 0.4,
+                    "liquidity_score": 1.0,
+                    "small_account_preferred_candidate": 1,
+                    "whole_share_tradable_preferred_candidate": 1,
+                    "whole_share_tradability_reason": "PASS",
+                    "whole_share_edge_margin_bps": 0.9,
+                    "whole_share_expected_edge_bps": 28.4,
+                    "whole_share_required_edge_bps": 27.5,
+                    "execution_priority_boost": 3.0,
+                },
+            },
+        )
+
+        self.assertEqual(len(orders), 1)
+        self.assertEqual(orders[0]["symbol"], "SCHX")
+        self.assertEqual(float(orders[0]["delta_qty"]), 1.0)
+        self.assertEqual(orders[0]["reason"], "rebalance_up_whole_share_preferred_override")
+        self.assertTrue(orders[0]["whole_share_preferred_buy_override"])
+
+    def test_rebalance_orders_prioritize_growth_buy_over_exit_when_single_slot(self):
+        cfg = InvestmentExecutionConfig(
+            min_cash_buffer_pct=0.10,
+            cash_buffer_floor=100.0,
+            min_trade_value=25.0,
+            max_order_value_pct=0.10,
+            max_orders_per_run=1,
+            account_allocation_pct=0.25,
+            allow_fractional_qty=False,
+            allow_whole_share_preferred_buy_override=True,
+            prioritize_buy_orders_for_growth_submit=True,
+        )
+        orders = build_investment_rebalance_orders(
+            {"SCHX": {"qty": 1.0, "market_price": 29.30}},
+            price_map={"SCHX": 29.30, "SPLG": 87.75},
+            target_weights={"SPLG": 0.125},
+            broker_equity=1000.0,
+            broker_cash=1000.0,
+            cfg=cfg,
+            priority_context_map={
+                "SPLG": {
+                    "score": 0.58,
+                    "execution_score": 0.4,
+                    "liquidity_score": 1.0,
+                    "small_account_preferred_candidate": 1,
+                    "whole_share_tradable_preferred_candidate": 1,
+                    "whole_share_tradability_reason": "PASS",
+                    "whole_share_edge_margin_bps": 4.8,
+                    "whole_share_expected_edge_bps": 30.2,
+                    "whole_share_required_edge_bps": 25.4,
+                    "execution_priority_boost": 3.0,
+                },
+            },
+        )
+
+        self.assertEqual(len(orders), 1)
+        self.assertEqual(orders[0]["symbol"], "SPLG")
+        self.assertEqual(orders[0]["action"], "BUY")
+        self.assertEqual(float(orders[0]["delta_qty"]), 1.0)
+        self.assertEqual(orders[0]["reason"], "rebalance_up_whole_share_preferred_override")
+        self.assertTrue(orders[0]["whole_share_preferred_buy_override"])
+
+    def test_rebalance_orders_keep_exit_priority_without_growth_buy_flag(self):
+        cfg = InvestmentExecutionConfig(
+            min_cash_buffer_pct=0.10,
+            cash_buffer_floor=100.0,
+            min_trade_value=25.0,
+            max_order_value_pct=0.10,
+            max_orders_per_run=1,
+            account_allocation_pct=0.25,
+            allow_fractional_qty=False,
+            allow_whole_share_preferred_buy_override=True,
+        )
+        orders = build_investment_rebalance_orders(
+            {"SCHX": {"qty": 1.0, "market_price": 29.30}},
+            price_map={"SCHX": 29.30, "SPLG": 87.75},
+            target_weights={"SPLG": 0.125},
+            broker_equity=1000.0,
+            broker_cash=1000.0,
+            cfg=cfg,
+            priority_context_map={
+                "SPLG": {
+                    "score": 0.58,
+                    "execution_score": 0.4,
+                    "liquidity_score": 1.0,
+                    "small_account_preferred_candidate": 1,
+                    "whole_share_tradable_preferred_candidate": 1,
+                    "whole_share_tradability_reason": "PASS",
+                    "whole_share_edge_margin_bps": 4.8,
+                    "execution_priority_boost": 3.0,
+                },
+            },
+        )
+
+        self.assertEqual(len(orders), 1)
+        self.assertEqual(orders[0]["symbol"], "SCHX")
+        self.assertEqual(orders[0]["action"], "SELL")
 
     def test_target_allocations_prioritize_accumulate(self):
         cfg = InvestmentPaperConfig(max_holdings=2, max_single_weight=0.7, min_position_weight=0.1)
@@ -1857,18 +2291,25 @@ class InvestmentModuleTests(unittest.TestCase):
             execDetailsEvent = DummyEvent()
             commissionReportEvent = DummyEvent()
 
+            def __init__(self):
+                self.portfolio_calls = 0
+                self.positions_calls = 0
+
             def accountSummary(self, *args, **kwargs):
                 return [SummaryRow()]
 
             def portfolio(self, *args, **kwargs):
+                self.portfolio_calls += 1
                 return []
 
             def positions(self, *args, **kwargs):
+                self.positions_calls += 1
                 return []
 
         with NamedTemporaryFile(suffix=".db") as tmp:
+            fake_ib = FakeIB()
             engine = InvestmentExecutionEngine(
-                ib=FakeIB(),
+                ib=fake_ib,
                 account_id="DUQ152001",
                 storage=Storage(tmp.name),
                 market="HK",
@@ -1877,6 +2318,8 @@ class InvestmentModuleTests(unittest.TestCase):
                 execution_cfg=InvestmentExecutionConfig(),
             )
             self.assertEqual(engine._broker_positions(), {})
+            self.assertEqual(fake_ib.portfolio_calls, 1)
+            self.assertEqual(fake_ib.positions_calls, 0)
 
     def test_investment_execution_engine_reuses_cached_account_snapshot(self):
         class DummyEvent:
@@ -2040,6 +2483,401 @@ class InvestmentModuleTests(unittest.TestCase):
             self.assertEqual(blocked[0]["status"], "BLOCKED_OPPORTUNITY")
             self.assertEqual(blocked[0]["opportunity_status"], "WAIT_EVENT")
             self.assertIn("opportunity_reason", blocked[0])
+
+    def test_investment_execution_engine_allows_strict_etf_near_entry_paper_test(self):
+        class DummyEvent:
+            def __iadd__(self, other):
+                return self
+
+        class FakeIB:
+            orderStatusEvent = DummyEvent()
+            errorEvent = DummyEvent()
+            execDetailsEvent = DummyEvent()
+            commissionReportEvent = DummyEvent()
+
+        with NamedTemporaryFile(suffix=".db") as tmp, TemporaryDirectory() as td:
+            engine = InvestmentExecutionEngine(
+                ib=FakeIB(),
+                account_id="DUQ152001",
+                storage=Storage(tmp.name),
+                market="US",
+                portfolio_id="US:test",
+                paper_cfg=InvestmentPaperConfig(),
+                execution_cfg=InvestmentExecutionConfig(
+                    min_trade_value=25.0,
+                    order_type="MKT",
+                    limit_price_buffer_bps=12.0,
+                    allow_fractional_qty=True,
+                    near_entry_paper_test_enabled=True,
+                    near_entry_paper_test_max_gap_pct=0.30,
+                    near_entry_paper_test_max_order_value=50.0,
+                    near_entry_paper_test_limit_buffer_bps=0.0,
+                ),
+            )
+            report_dir = Path(td)
+            (report_dir / "investment_opportunity_scan.csv").write_text(
+                "\n".join(
+                    [
+                        "symbol,entry_status,entry_reason,asset_class,entry_anchor,entry_anchor_gap_pct,entry_anchor_profile,market_structure_status",
+                        "QQQ,NEAR_ENTRY,watch next pullback,etf,713.1682,0.2157,ETF_TREND_PULLBACK,CLEAR",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            allowed, blocked = engine._apply_opportunity_gates(
+                report_dir,
+                [
+                    {
+                        "symbol": "QQQ",
+                        "action": "BUY",
+                        "current_qty": 0.0,
+                        "target_qty": 0.0437,
+                        "delta_qty": 0.0437,
+                        "ref_price": 714.71,
+                        "target_weight": 0.031,
+                        "order_value": 31.23,
+                        "avg_daily_dollar_volume": 1000000000.0,
+                        "edge_gate_status": "PASS",
+                        "reason": "rebalance_up",
+                    }
+                ],
+            )
+
+            self.assertEqual(blocked, [])
+            self.assertEqual(len(allowed), 1)
+            self.assertEqual(allowed[0]["opportunity_status"], "NEAR_ENTRY")
+            self.assertTrue(allowed[0]["near_entry_paper_test"])
+            self.assertEqual(allowed[0]["near_entry_paper_test_status"], "ENABLED")
+            self.assertAlmostEqual(float(allowed[0]["execution_limit_ref_price"]), 713.1682, places=4)
+
+            split_allowed, liquidity_blocked = engine._split_execution_orders(allowed)
+
+            self.assertEqual(liquidity_blocked, [])
+            self.assertEqual(len(split_allowed), 1)
+            self.assertEqual(split_allowed[0]["execution_order_type"], "LMT")
+            self.assertEqual(float(split_allowed[0]["limit_price_buffer_bps_effective"]), 0.0)
+            self.assertAlmostEqual(float(split_allowed[0]["execution_limit_ref_price"]), 713.1682, places=4)
+
+    def test_investment_execution_engine_allows_whole_share_sample_when_opportunity_row_missing(self):
+        class DummyEvent:
+            def __iadd__(self, other):
+                return self
+
+        class FakeIB:
+            orderStatusEvent = DummyEvent()
+            errorEvent = DummyEvent()
+            execDetailsEvent = DummyEvent()
+            commissionReportEvent = DummyEvent()
+
+        with NamedTemporaryFile(suffix=".db") as tmp, TemporaryDirectory() as td:
+            engine = InvestmentExecutionEngine(
+                ib=FakeIB(),
+                account_id="DUQ152001",
+                storage=Storage(tmp.name),
+                market="US",
+                portfolio_id="US:test",
+                paper_cfg=InvestmentPaperConfig(),
+                execution_cfg=InvestmentExecutionConfig(
+                    min_trade_value=25.0,
+                    order_type="MKT",
+                    limit_price_buffer_bps=12.0,
+                    allow_fractional_qty=False,
+                    whole_share_missing_opportunity_paper_sample_enabled=True,
+                    whole_share_missing_opportunity_paper_sample_max_order_value=100.0,
+                    whole_share_missing_opportunity_paper_sample_limit_buffer_bps=0.0,
+                ),
+            )
+            report_dir = Path(td)
+            (report_dir / "investment_opportunity_scan.csv").write_text(
+                "\n".join(
+                    [
+                        "symbol,entry_status,entry_reason,asset_class,entry_anchor,entry_anchor_gap_pct,entry_anchor_profile,market_structure_status",
+                        "JNJ,WAIT_EVENT,wait for event,stock,239.0,2.1,STOCK_PULLBACK,CLEAR",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (report_dir / "investment_candidates.csv").write_text(
+                "\n".join(
+                    [
+                        "symbol,direction,asset_class,model_recommendation_score,execution_score,execution_ready",
+                        "SPLG,LONG,etf,0.59,0.53,1",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            allowed, blocked = engine._apply_opportunity_gates(
+                report_dir,
+                [
+                    {
+                        "symbol": "SPLG",
+                        "action": "BUY",
+                        "current_qty": 0.0,
+                        "target_qty": 1.0,
+                        "delta_qty": 1.0,
+                        "ref_price": 87.75,
+                        "target_weight": 0.125,
+                        "order_value": 87.75,
+                        "market_rule_status": "RULES_OK",
+                        "edge_gate_status": "PASS",
+                        "quality_status": "QUALITY_OK",
+                        "whole_share_preferred_buy_override": True,
+                        "small_account_preferred_candidate": 1,
+                        "whole_share_tradable_preferred_candidate": 1,
+                        "whole_share_tradability_reason": "PASS",
+                        "whole_share_edge_margin_bps": 4.8,
+                        "reason": "rebalance_up_whole_share_preferred_override",
+                    }
+                ],
+            )
+
+            self.assertEqual(blocked, [])
+            self.assertEqual(len(allowed), 1)
+            self.assertEqual(allowed[0]["opportunity_status"], "WHOLE_SHARE_SAMPLE")
+            self.assertTrue(allowed[0]["whole_share_missing_opportunity_paper_sample"])
+            self.assertEqual(allowed[0]["execution_order_type"], "LMT")
+
+            split_allowed, liquidity_blocked = engine._split_execution_orders(allowed)
+
+            self.assertEqual(liquidity_blocked, [])
+            self.assertEqual(len(split_allowed), 1)
+            self.assertEqual(split_allowed[0]["execution_order_type"], "LMT")
+            self.assertEqual(float(split_allowed[0]["limit_price_buffer_bps_effective"]), 0.0)
+            self.assertAlmostEqual(float(split_allowed[0]["execution_limit_ref_price"]), 87.75, places=4)
+
+    def test_investment_execution_engine_blocks_near_entry_when_test_order_too_large(self):
+        class DummyEvent:
+            def __iadd__(self, other):
+                return self
+
+        class FakeIB:
+            orderStatusEvent = DummyEvent()
+            errorEvent = DummyEvent()
+            execDetailsEvent = DummyEvent()
+            commissionReportEvent = DummyEvent()
+
+        with NamedTemporaryFile(suffix=".db") as tmp, TemporaryDirectory() as td:
+            engine = InvestmentExecutionEngine(
+                ib=FakeIB(),
+                account_id="DUQ152001",
+                storage=Storage(tmp.name),
+                market="US",
+                portfolio_id="US:test",
+                paper_cfg=InvestmentPaperConfig(),
+                execution_cfg=InvestmentExecutionConfig(
+                    near_entry_paper_test_enabled=True,
+                    near_entry_paper_test_max_gap_pct=0.30,
+                    near_entry_paper_test_max_order_value=30.0,
+                ),
+            )
+            report_dir = Path(td)
+            (report_dir / "investment_opportunity_scan.csv").write_text(
+                "\n".join(
+                    [
+                        "symbol,entry_status,entry_reason,asset_class,entry_anchor,entry_anchor_gap_pct,entry_anchor_profile,market_structure_status",
+                        "QQQ,NEAR_ENTRY,watch next pullback,etf,713.1682,0.2157,ETF_TREND_PULLBACK,CLEAR",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            allowed, blocked = engine._apply_opportunity_gates(
+                report_dir,
+                [
+                    {
+                        "symbol": "QQQ",
+                        "action": "BUY",
+                        "current_qty": 0.0,
+                        "target_qty": 0.0437,
+                        "delta_qty": 0.0437,
+                        "ref_price": 714.71,
+                        "target_weight": 0.031,
+                        "order_value": 31.23,
+                        "edge_gate_status": "PASS",
+                        "reason": "rebalance_up",
+                    }
+                ],
+            )
+
+            self.assertEqual(allowed, [])
+            self.assertEqual(len(blocked), 1)
+            self.assertEqual(blocked[0]["status"], "BLOCKED_OPPORTUNITY")
+            self.assertEqual(blocked[0]["near_entry_paper_test_status"], "BLOCKED")
+            self.assertIn("exceeds near-entry test max", blocked[0]["near_entry_paper_test_reason"])
+
+    def test_investment_execution_engine_blocks_fractional_api_orders_until_verified(self):
+        class DummyEvent:
+            def __iadd__(self, other):
+                return self
+
+        class FakeIB:
+            orderStatusEvent = DummyEvent()
+            errorEvent = DummyEvent()
+            execDetailsEvent = DummyEvent()
+            commissionReportEvent = DummyEvent()
+
+        with NamedTemporaryFile(suffix=".db") as tmp:
+            engine = InvestmentExecutionEngine(
+                ib=FakeIB(),
+                account_id="DUQ152001",
+                storage=Storage(tmp.name),
+                market="US",
+                portfolio_id="US:test",
+                paper_cfg=InvestmentPaperConfig(),
+                execution_cfg=InvestmentExecutionConfig(fractional_order_api_enabled=False),
+            )
+            allowed, blocked = engine._apply_fractional_order_gates(
+                [
+                    {
+                        "symbol": "QQQ",
+                        "action": "BUY",
+                        "delta_qty": 0.0437,
+                        "order_value": 31.23,
+                        "lot_size": 1,
+                        "reason": "near_entry_paper_test",
+                    }
+                ]
+            )
+
+            self.assertEqual(allowed, [])
+            self.assertEqual(len(blocked), 1)
+            self.assertEqual(blocked[0]["status"], "BLOCKED_FRACTIONAL_API")
+            self.assertEqual(blocked[0]["fractional_order_status"], "BLOCKED")
+
+            engine.execution_cfg = InvestmentExecutionConfig(fractional_order_api_enabled=True)
+            allowed, blocked = engine._apply_fractional_order_gates(
+                [{"symbol": "QQQ", "action": "BUY", "delta_qty": 0.0437, "order_value": 31.23, "lot_size": 1}]
+            )
+            self.assertEqual(len(allowed), 1)
+            self.assertEqual(blocked, [])
+
+    def test_investment_execution_engine_blocks_duplicate_pending_broker_order(self):
+        class DummyEvent:
+            def __iadd__(self, other):
+                return self
+
+        class FakeIB:
+            orderStatusEvent = DummyEvent()
+            errorEvent = DummyEvent()
+            execDetailsEvent = DummyEvent()
+            commissionReportEvent = DummyEvent()
+
+            def openTrades(self):
+                return [
+                    Mock(
+                        contract=Mock(symbol="SCHX"),
+                        order=Mock(action="BUY", orderId=41),
+                        orderStatus=Mock(status="PreSubmitted", remaining=1.0),
+                    )
+                ]
+
+        with NamedTemporaryFile(suffix=".db") as tmp:
+            engine = InvestmentExecutionEngine(
+                ib=FakeIB(),
+                account_id="DUQ152001",
+                storage=Storage(tmp.name),
+                market="US",
+                portfolio_id="US:test",
+                paper_cfg=InvestmentPaperConfig(),
+                execution_cfg=InvestmentExecutionConfig(),
+            )
+            allowed, blocked = engine._apply_pending_broker_order_gates(
+                [
+                    {"symbol": "SCHX", "action": "BUY", "delta_qty": 1.0, "order_value": 29.28, "reason": "unit"},
+                    {"symbol": "SPLG", "action": "BUY", "delta_qty": 1.0, "order_value": 87.37, "reason": "unit"},
+                ]
+            )
+
+            self.assertEqual([row["symbol"] for row in allowed], ["SPLG"])
+            self.assertEqual(len(blocked), 1)
+            self.assertEqual(blocked[0]["status"], "BLOCKED_PENDING_BROKER_ORDER")
+            self.assertEqual(int(blocked[0]["pending_broker_order_id"]), 41)
+            self.assertIn("pending_broker_order", blocked[0]["reason"])
+            self.assertEqual(blocked[0]["user_reason_label"], "已有未完成券商订单")
+
+    def test_investment_execution_engine_syncs_active_broker_order_status_to_audit(self):
+        class DummyEvent:
+            def __iadd__(self, other):
+                return self
+
+        class FakeIB:
+            orderStatusEvent = DummyEvent()
+            errorEvent = DummyEvent()
+            execDetailsEvent = DummyEvent()
+            commissionReportEvent = DummyEvent()
+
+            def openTrades(self):
+                return [
+                    Mock(
+                        contract=Mock(symbol="SCHX"),
+                        order=Mock(action="BUY", orderId=41),
+                        orderStatus=Mock(status="PreSubmitted", remaining=1.0),
+                    )
+                ]
+
+        with NamedTemporaryFile(suffix=".db") as tmp:
+            storage = Storage(tmp.name)
+            storage.insert_order(
+                {
+                    "ts": "2026-05-15T02:40:00+00:00",
+                    "account_id": "DUQ152001",
+                    "symbol": "SCHX",
+                    "exchange": "SMART",
+                    "currency": "USD",
+                    "action": "BUY",
+                    "qty": 1.0,
+                    "order_type": "LMT",
+                    "order_id": 41,
+                    "parent_id": 0,
+                    "status": "ERROR_399",
+                    "portfolio_id": "US:test",
+                    "system_kind": "investment_execution",
+                    "execution_run_id": "US-exec-test",
+                    "details": "{}",
+                }
+            )
+            storage.insert_investment_execution_order(
+                {
+                    "run_id": "US-exec-test",
+                    "ts": "2026-05-15T02:40:00+00:00",
+                    "market": "US",
+                    "portfolio_id": "US:test",
+                    "symbol": "SCHX",
+                    "action": "BUY",
+                    "current_qty": 0.0,
+                    "target_qty": 1.0,
+                    "delta_qty": 1.0,
+                    "ref_price": 29.28,
+                    "target_weight": 0.029,
+                    "order_value": 29.28,
+                    "order_type": "LMT",
+                    "broker_order_id": 41,
+                    "status": "ERROR_399",
+                    "reason": "legacy_warning",
+                    "details": "{}",
+                }
+            )
+            engine = InvestmentExecutionEngine(
+                ib=FakeIB(),
+                account_id="DUQ152001",
+                storage=storage,
+                market="US",
+                portfolio_id="US:test",
+                paper_cfg=InvestmentPaperConfig(),
+                execution_cfg=InvestmentExecutionConfig(),
+            )
+
+            summary = engine._sync_active_broker_order_statuses()
+
+            self.assertEqual(summary["active_broker_order_count"], 1)
+            self.assertEqual(summary["broker_order_status_sync_count"], 1)
+            self.assertEqual(summary["active_broker_order_symbols"], "SCHX")
+            self.assertEqual(summary["active_broker_order_status_breakdown"], "PreSubmitted:1")
+            order_status = storage._conn().execute("SELECT status FROM orders WHERE order_id=41").fetchone()[0]
+            execution_status = storage._conn().execute(
+                "SELECT status FROM investment_execution_orders WHERE broker_order_id=41"
+            ).fetchone()[0]
+            self.assertEqual(order_status, "PreSubmitted")
+            self.assertEqual(execution_status, "PreSubmitted")
 
     def test_investment_execution_engine_blocks_buy_when_quality_is_too_low(self):
         class DummyEvent:
@@ -2263,6 +3101,72 @@ class InvestmentModuleTests(unittest.TestCase):
             self.assertEqual(blocked[0]["user_reason_label"], "模型保护期复核")
             self.assertIn("模型仍在保护期", blocked[0]["user_reason"])
             self.assertIn("shadow_ml_review", blocked[0]["reason"])
+
+    def test_investment_execution_engine_allows_whole_share_etf_shadow_sample(self):
+        class DummyEvent:
+            def __iadd__(self, other):
+                return self
+
+        class FakeIB:
+            orderStatusEvent = DummyEvent()
+            errorEvent = DummyEvent()
+            execDetailsEvent = DummyEvent()
+            commissionReportEvent = DummyEvent()
+
+        with NamedTemporaryFile(suffix=".db") as tmp, TemporaryDirectory() as report_dir:
+            report_path = Path(report_dir)
+            (report_path / "investment_candidates.csv").write_text(
+                "\n".join(
+                    [
+                        "symbol,action,score,model_recommendation_score,execution_score,execution_ready,shadow_ml_enabled,shadow_ml_score,shadow_ml_positive_prob,shadow_ml_training_samples",
+                        "SCHX,ACCUMULATE,0.56,0.56,0.44,1,1,-0.08,0.56,120",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            engine = InvestmentExecutionEngine(
+                ib=FakeIB(),
+                account_id="DUQ152001",
+                storage=Storage(tmp.name),
+                market="US",
+                portfolio_id="US:test",
+                paper_cfg=InvestmentPaperConfig(),
+                execution_cfg=InvestmentExecutionConfig(
+                    shadow_ml_review_enabled=True,
+                    shadow_ml_min_score_auto_submit=0.00,
+                    shadow_ml_min_positive_prob_auto_submit=0.50,
+                    shadow_ml_min_training_samples=80,
+                    shadow_ml_allow_whole_share_paper_sample=True,
+                    shadow_ml_paper_sample_min_positive_prob=0.55,
+                ),
+            )
+            allowed, blocked = engine._apply_shadow_ml_review_gates(
+                report_path,
+                [
+                    {
+                        "symbol": "SCHX",
+                        "action": "BUY",
+                        "current_qty": 0.0,
+                        "target_qty": 1.0,
+                        "delta_qty": 1.0,
+                        "ref_price": 29.28,
+                        "target_weight": 0.125,
+                        "order_value": 29.28,
+                        "small_account_preferred_candidate": 1,
+                        "whole_share_preferred_buy_override": True,
+                        "whole_share_tradable_preferred_candidate": 1,
+                        "whole_share_tradability_reason": "PASS",
+                        "whole_share_edge_margin_bps": 0.9,
+                        "reason": "rebalance_up_whole_share_preferred_override",
+                    }
+                ],
+            )
+
+            self.assertEqual(blocked, [])
+            self.assertEqual(len(allowed), 1)
+            self.assertEqual(allowed[0]["shadow_review_status"], "SAMPLE_COLLECTION")
+            self.assertEqual(allowed[0]["manual_review_status"], "AUTO_OK")
+            self.assertIn("shadow_ml_sample_collection", allowed[0]["reason"])
 
     def test_investment_execution_engine_defers_hotspot_symbol_in_open_session(self):
         class DummyEvent:
@@ -2719,6 +3623,21 @@ class InvestmentModuleTests(unittest.TestCase):
                 float(summary["target_capital"]) - float(summary["planned_order_value"]),
                 places=6,
             )
+            self.assertIn("planned_gross_order_value", summary)
+            self.assertIn("planned_buy_order_value", summary)
+            self.assertIn("planned_sell_order_value", summary)
+
+    def test_investment_execution_order_flow_values_split_buy_sell_and_net_cash(self):
+        values = InvestmentExecutionEngine._planned_order_flow_values(
+            [
+                {"symbol": "SPLG", "action": "BUY", "order_value": 87.0},
+                {"symbol": "SCHX", "action": "SELL", "order_value": 29.0},
+            ]
+        )
+        self.assertEqual(values["planned_buy_order_value"], 87.0)
+        self.assertEqual(values["planned_sell_order_value"], 29.0)
+        self.assertEqual(values["planned_gross_order_value"], 116.0)
+        self.assertEqual(values["planned_net_cash_order_value"], 58.0)
 
     def test_investment_execution_engine_splits_orders_with_adv_cap_and_session_style(self):
         class DummyEvent:
@@ -2911,6 +3830,96 @@ class InvestmentModuleTests(unittest.TestCase):
             self.assertEqual(str(plan_rows[0]["status"]), "BLOCKED_EDGE")
             self.assertEqual(str(plan_rows[0]["user_reason_label"]), "边际收益不够覆盖成本")
             self.assertIn("expected_edge", str(plan_rows[0]["edge_gate_reason"]))
+
+    def test_investment_execution_submit_request_is_guarded_when_readiness_blocks(self):
+        class DummyEvent:
+            def __iadd__(self, other):
+                return self
+
+        class SummaryRow:
+            def __init__(self, account: str, tag: str, value: str):
+                self.account = account
+                self.tag = tag
+                self.value = value
+
+        class FakeIB:
+            orderStatusEvent = DummyEvent()
+            errorEvent = DummyEvent()
+            execDetailsEvent = DummyEvent()
+            commissionReportEvent = DummyEvent()
+
+            def accountSummary(self, *args, **kwargs):
+                return [
+                    SummaryRow("DUQ152001", "NetLiquidation", "100000"),
+                    SummaryRow("DUQ152001", "TotalCashValue", "100000"),
+                    SummaryRow("DUQ152001", "BuyingPower", "200000"),
+                ]
+
+            def portfolio(self, *args, **kwargs):
+                return []
+
+            def positions(self, *args, **kwargs):
+                return []
+
+            def sleep(self, *_args, **_kwargs):
+                return None
+
+        with NamedTemporaryFile(suffix=".db") as tmp, TemporaryDirectory() as td:
+            report_dir = Path(td)
+            (report_dir / "investment_candidates.csv").write_text(
+                "\n".join(
+                    [
+                        "symbol,last_close,score,score_before_cost,model_recommendation_score,execution_score,execution_ready,direction,market,avg_daily_dollar_volume,avg_daily_volume,expected_cost_bps,spread_proxy_bps,slippage_proxy_bps,commission_proxy_bps,liquidity_score",
+                        "AAPL,100,0.36,0.38,0.36,0.20,1,LONG,US,100000,1000,18,4,12,2,0.72",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (report_dir / "investment_plan.csv").write_text(
+                "\n".join(
+                    [
+                        "symbol,action,allocation_mult,direction,execution_ready,score,score_before_cost,model_recommendation_score,execution_score,avg_daily_dollar_volume,avg_daily_volume,expected_cost_bps,spread_proxy_bps,slippage_proxy_bps,commission_proxy_bps,liquidity_score,expected_edge_threshold,expected_edge_score",
+                        "AAPL,ACCUMULATE,1.0,LONG,1,0.36,0.38,0.36,0.20,100000,1000,18,4,12,2,0.72,0.35,0.03",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            engine = InvestmentExecutionEngine(
+                ib=FakeIB(),
+                account_id="DUQ152001",
+                storage=Storage(tmp.name),
+                market="US",
+                portfolio_id="US:test",
+                paper_cfg=InvestmentPaperConfig(max_holdings=1, max_single_weight=0.30),
+                execution_cfg=InvestmentExecutionConfig(
+                    min_cash_buffer_pct=0.0,
+                    cash_buffer_floor=0.0,
+                    min_trade_value=100.0,
+                    max_order_value_pct=0.08,
+                    max_orders_per_run=4,
+                    account_allocation_pct=0.30,
+                    edge_gate_enabled=True,
+                    min_expected_edge_bps=18.0,
+                    edge_cost_buffer_bps=6.0,
+                    edge_score_to_bps_scale=140.0,
+                    manual_review_enabled=True,
+                    manual_review_order_value_pct=0.10,
+                ),
+            )
+            engine.order_service = Mock()
+
+            result = engine.run(report_dir=str(report_dir), submit=True)
+
+            summary = json.loads((report_dir / "investment_execution_summary.json").read_text(encoding="utf-8"))
+            diagnostics = json.loads((report_dir / "investment_no_order_diagnostics.json").read_text(encoding="utf-8"))
+            engine.order_service.place_rebalance_order.assert_not_called()
+            self.assertFalse(result.submitted)
+            self.assertTrue(summary["submit_requested"])
+            self.assertFalse(summary["submit_effective"])
+            self.assertEqual(summary["submit_guard_status"], "BLOCKED")
+            self.assertEqual(diagnostics["submit_guard_status"], "BLOCKED")
+            self.assertEqual(summary["primary_no_order_reason"], "BLOCKED_EDGE")
 
     def test_investment_execution_engine_uses_market_profile_edge_override_from_report(self):
         class DummyEvent:

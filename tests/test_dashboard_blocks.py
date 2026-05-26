@@ -25,7 +25,73 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
             "ibkr_gateway_budget_over_budget_market_count": 1,
             "ibkr_gateway_budget_stale_telemetry_market_count": 0,
             "ibkr_gateway_budget_missing_telemetry_market_count": 0,
+            "auto_order_status": "blocked",
+            "auto_order_blocked_count": 1,
+            "auto_order_ready_count": 1,
+            "auto_order_primary_block_reason": "preflight_stale",
+            "auto_order_submit_plan_status": "BLOCKED",
+            "auto_order_submit_plan_reason": "no_single_safe_submit_candidate",
+            "auto_order_submit_selected_portfolio_id": "",
             "alert_rows": [{"status": "warn", "name": "stale"}],
+        },
+        "auto_order_readiness": {
+            "summary": {
+                "status": "blocked",
+                "summary_text": "auto_order_readiness portfolios=2 ready=1 warning=0 blocked=1 disabled=0",
+                "portfolio_count": 2,
+                "ready_count": 1,
+                "warning_count": 0,
+                "blocked_count": 1,
+                "disabled_count": 0,
+                "primary_block_reason": "preflight_stale",
+                "remediation_plan": [
+                    {
+                        "reason": "preflight_stale",
+                        "severity": "block",
+                        "affected_portfolio_count": 1,
+                    }
+                ],
+                "submit_plan": {
+                    "status": "BLOCKED",
+                    "ready": False,
+                    "reason": "no_single_safe_submit_candidate",
+                    "candidate_count": 0,
+                    "frontier_candidate_count": 1,
+                    "selected_portfolio_id": "",
+                    "frontier_candidates": [
+                        {
+                            "market": "US",
+                            "portfolio_id": "US:watchlist",
+                            "frontier_reason": "preflight_stale",
+                            "submit_quality_status": "PASS",
+                            "submit_quality_tier": "HIGH",
+                            "submit_quality_min_net_edge_bps": 22.0,
+                            "submit_quality_min_edge_margin_bps": 9.0,
+                        }
+                    ],
+                    "rejected_candidates": [
+                        {
+                            "market": "US",
+                            "portfolio_id": "US:watchlist",
+                            "reject_reasons": ["planned_gross_value_exceeds_policy"],
+                        }
+                    ],
+                },
+            },
+            "rows": [
+                {
+                    "market": "US",
+                    "portfolio_id": "US:watchlist",
+                    "status": "BLOCKED",
+                    "primary_reason": "preflight_stale",
+                },
+                {
+                    "market": "HK",
+                    "portfolio_id": "HK:watchlist",
+                    "status": "READY",
+                    "primary_reason": "ready",
+                },
+            ],
         },
         "artifact_health_overview": {"fail_count": 0, "warn_count": 1},
         "governance_health_summary": {"blocked_count": 0, "warn_count": 1},
@@ -206,6 +272,7 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
 
     assert list(by_id) == [
         "ops_health",
+        "auto_order_readiness",
         "evidence_focus_actions",
         "evidence_quality",
         "dashboard_control_actions",
@@ -219,6 +286,7 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
     ]
     assert [block["id"] for block in blocks if block["category"] == "home"] == [
         "ops_health",
+        "auto_order_readiness",
         "evidence_focus_actions",
         "evidence_quality",
         "dashboard_control_actions",
@@ -241,6 +309,17 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
     assert by_id["ops_health"]["metrics"]["ibkr_gateway_budget_gateway_request_count"] == 1200
     assert by_id["ops_health"]["metrics"]["ibkr_gateway_budget_cache_hit_ratio"] == 0.2
     assert by_id["ops_health"]["metrics"]["ibkr_gateway_budget_over_budget_market_count"] == 1
+    assert by_id["ops_health"]["metrics"]["auto_order_submit_plan_status"] == "BLOCKED"
+    assert by_id["ops_health"]["metrics"]["auto_order_primary_block_reason"] == "preflight_stale"
+    assert by_id["auto_order_readiness"]["metrics"]["portfolio_count"] == 2
+    assert by_id["auto_order_readiness"]["metrics"]["blocked_count"] == 1
+    assert by_id["auto_order_readiness"]["metrics"]["submit_plan_status"] == "BLOCKED"
+    assert by_id["auto_order_readiness"]["metrics"]["submit_plan_reason"] == "no_single_safe_submit_candidate"
+    assert by_id["auto_order_readiness"]["metrics"]["frontier_candidate_count"] == 1
+    assert by_id["auto_order_readiness"]["metrics"]["frontier_quality_pass_count"] == 1
+    assert by_id["auto_order_readiness"]["metrics"]["frontier_high_quality_count"] == 1
+    assert by_id["auto_order_readiness"]["metrics"]["frontier_top_submit_quality_tier"] == "HIGH"
+    assert by_id["auto_order_readiness"]["metrics"]["rejected_candidate_count"] == 1
     assert by_id["dashboard_control_actions"]["metrics"]["history_count"] == 3
     assert by_id["dashboard_control_actions"]["metrics"]["linked_action_history_count"] == 1
     assert (
@@ -433,3 +512,28 @@ def test_evidence_focus_actions_block_keeps_sample_collection_non_warning():
     assert block["metrics"]["primary_market"] == "HK"
     assert block["rows"]["summary"]["primary_action"] == "collect_more_outcome_samples"
     assert block["rows"]["actions"][0]["market"] == "HK"
+
+
+def test_auto_order_readiness_block_warns_when_submit_plan_not_ready():
+    payload = {
+        "auto_order_readiness": {
+            "summary": {
+                "status": "ready",
+                "ready_count": 1,
+                "blocked_count": 0,
+                "submit_plan": {
+                    "status": "BLOCKED",
+                    "ready": False,
+                    "reason": "no_single_safe_submit_candidate",
+                    "frontier_candidates": [{"portfolio_id": "US:watchlist"}],
+                },
+            }
+        }
+    }
+
+    block = _by_id(build_dashboard_v2_blocks(payload))["auto_order_readiness"]
+
+    assert block["status"] == "warn"
+    assert block["metrics"]["submit_plan_status"] == "BLOCKED"
+    assert block["metrics"]["submit_plan_reason"] == "no_single_safe_submit_candidate"
+    assert block["metrics"]["frontier_candidate_count"] == 1

@@ -8,6 +8,7 @@ from typing import Any, Dict, Iterable, List, Tuple
 
 from ..common.logger import get_logger
 from ..common.markets import add_market_args, load_market_universe_config, market_dir, resolve_market_code
+from ..common.sqlite_utils import connect_sqlite
 from ..offhours.candidates import load_watchlist_symbols
 
 log = get_logger("tools.build_symbol_master")
@@ -121,7 +122,7 @@ def main() -> None:
             raise SystemExit("Specify a market like -US or use --all")
         markets = [market]
 
-    conn = sqlite3.connect(str(db_path))
+    conn = connect_sqlite(db_path)
     try:
         _init_db(conn)
         for market in markets:

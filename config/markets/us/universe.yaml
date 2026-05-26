@@ -7,9 +7,11 @@ seed_watchlist_yaml: "config/watchlist.yaml"
 report_watchlist_yaml: "config/watchlist.yaml"
 symbol_master_watchlists:
   - "config/watchlists/us_market_core.yaml"
+  - "config/watchlists/auto_expanded/us_quality_growth.yaml"
 notes:
   - "Default US equity universe for live seed and report generation."
   - "Symbol master is expanded by a broader US market-core watchlist for layered scan stage-1 coverage."
+  - "Auto-expanded quality-growth watchlist is generated from local candidate evidence and only contributes symbols after whole-share/cost/liquidity filters pass."
 layered_scan:
   enabled: true
   include_symbol_master: true

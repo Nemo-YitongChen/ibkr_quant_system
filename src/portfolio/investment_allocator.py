@@ -15,6 +15,7 @@ def _to_float(value: Any, default: float = 0.0) -> float:
 
 @dataclass
 class InvestmentExecutionConfig:
+    account_equity_cap: float = 0.0
     min_cash_buffer_pct: float = 0.05
     cash_buffer_floor: float = 1000.0
     min_trade_value: float = 500.0
@@ -34,13 +35,26 @@ class InvestmentExecutionConfig:
     min_lot_buy_override_value_pct: float = 0.0
     allow_min_lot_sell_override: bool = False
     min_lot_sell_override_value_pct: float = 0.0
+    allow_whole_share_preferred_buy_override: bool = False
+    whole_share_preferred_min_edge_margin_bps: float = 0.0
+    prioritize_buy_orders_for_growth_submit: bool = False
     allow_fractional_qty: bool = False
     fractional_qty_decimals: int = 4
+    fractional_order_api_enabled: bool = False
     tif: str = "DAY"
     outside_rth: bool = False
     route_exchange: str = ""
     include_overnight: bool = False
     allowed_opportunity_statuses: tuple[str, ...] = ("ENTRY_NOW", "ADD_ON_PULLBACK")
+    near_entry_paper_test_enabled: bool = False
+    near_entry_paper_test_max_gap_pct: float = 0.30
+    near_entry_paper_test_max_order_value: float = 50.0
+    near_entry_paper_test_asset_classes: tuple[str, ...] = ("etf",)
+    near_entry_paper_test_limit_buffer_bps: float = 0.0
+    whole_share_missing_opportunity_paper_sample_enabled: bool = False
+    whole_share_missing_opportunity_paper_sample_max_order_value: float = 50.0
+    whole_share_missing_opportunity_paper_sample_asset_classes: tuple[str, ...] = ("etf",)
+    whole_share_missing_opportunity_paper_sample_limit_buffer_bps: float = 0.0
     account_snapshot_ttl_sec: int = 900
     min_model_recommendation_score: float = 0.15
     min_execution_score: float = 0.05
@@ -51,6 +65,9 @@ class InvestmentExecutionConfig:
     shadow_ml_min_score_auto_submit: float = 0.0
     shadow_ml_min_positive_prob_auto_submit: float = 0.50
     shadow_ml_min_training_samples: int = 80
+    shadow_ml_allow_whole_share_paper_sample: bool = False
+    shadow_ml_paper_sample_min_positive_prob: float = 0.55
+    shadow_ml_paper_sample_min_edge_margin_bps: float = 0.0
     edge_gate_enabled: bool = True
     min_expected_edge_bps: float = 18.0
     edge_cost_buffer_bps: float = 6.0
@@ -201,6 +218,7 @@ def _entry_priority_score(
         ),
     )
     expected_cost_bps = max(0.0, _to_float(context.get("expected_cost_bps"), 0.0))
+    execution_priority_boost = max(0.0, _to_float(context.get("execution_priority_boost"), 0.0))
     return float(
         score_net
         + 0.30 * execution_score
@@ -208,6 +226,7 @@ def _entry_priority_score(
         + 0.05 * abs(float(target_weight))
         + min(expected_edge_bps, 240.0) / 1200.0
         - min(expected_cost_bps, 150.0) / 1000.0
+        + execution_priority_boost
     )
 
 
@@ -277,6 +296,45 @@ def build_investment_rebalance_orders(
         )
 
     orders: List[Dict[str, Any]] = []
+    prefer_growth_buys = bool(getattr(cfg, "prioritize_buy_orders_for_growth_submit", False))
+
+    def has_growth_buy_candidate() -> bool:
+        if not prefer_growth_buys or not bool(getattr(cfg, "allow_whole_share_preferred_buy_override", False)):
+            return False
+        for raw_symbol, raw_target_weight in target_weights.items():
+            symbol_key = str(raw_symbol).upper()
+            target_weight = _to_float(raw_target_weight, 0.0)
+            if target_weight <= 0.0:
+                continue
+            current = working_positions.get(symbol_key, {})
+            if _to_float(current.get("qty"), 0.0) > 0.0:
+                continue
+            context = _priority_context(symbol_key, priority_context_map)
+            if int(_to_float(context.get("small_account_preferred_candidate"), 0.0)) != 1:
+                continue
+            if int(_to_float(context.get("whole_share_tradable_preferred_candidate"), 0.0)) != 1:
+                continue
+            if str(context.get("whole_share_tradability_reason") or "").strip().upper() != "PASS":
+                continue
+            edge_margin = _to_float(context.get("whole_share_edge_margin_bps"), -1_000_000.0)
+            if edge_margin + 1e-9 < float(getattr(cfg, "whole_share_preferred_min_edge_margin_bps", 0.0) or 0.0):
+                continue
+            ref_price = _to_float(
+                price_map.get(symbol_key),
+                _to_float(current.get("market_price"), _to_float(current.get("last_price"), _to_float(current.get("avg_cost"), 0.0))),
+            )
+            lot_size = lot_size_map.get(symbol_key, max(1, int(cfg.lot_size)))
+            min_lot_value = float(max(1, int(lot_size)) * ref_price)
+            if (
+                ref_price > 0.0
+                and min_lot_value >= float(cfg.min_trade_value)
+                and min_lot_value <= cash + 1e-9
+                and (max_order_value <= 0.0 or min_lot_value <= max_order_value + 1e-9)
+            ):
+                return True
+        return False
+
+    defer_sells_for_growth_buy = has_growth_buy_candidate()
 
     sell_symbols = list(sorted(set(working_positions) | set(target_qty_map)))
     sell_symbols.sort(
@@ -295,7 +353,7 @@ def build_investment_rebalance_orders(
             priority_context_map=priority_context_map,
         )
     )
-    for symbol in sell_symbols:
+    for symbol in ([] if defer_sells_for_growth_buy else sell_symbols):
         if len(orders) >= int(cfg.max_orders_per_run):
             break
         current = working_positions.setdefault(symbol, {})
@@ -415,18 +473,42 @@ def build_investment_rebalance_orders(
         min_lot_value = float(lot_size * ref_price)
         current_qty = _to_float(current.get("qty"), 0.0)
         target_qty = _to_float(target_qty_map.get(symbol), 0.0)
+        target_weight = _to_float(target_weights.get(symbol), 0.0)
+        context = _priority_context(symbol, priority_context_map)
+        whole_share_edge_margin_bps = _to_float(context.get("whole_share_edge_margin_bps"), -1_000_000.0)
+        whole_share_preferred_buy_override = bool(
+            bool(getattr(cfg, "allow_whole_share_preferred_buy_override", False))
+            and current_qty <= 0.0
+            and target_weight > 0.0
+            and int(_to_float(context.get("small_account_preferred_candidate"), 0.0)) == 1
+            and int(_to_float(context.get("whole_share_tradable_preferred_candidate"), 0.0)) == 1
+            and str(context.get("whole_share_tradability_reason") or "").strip().upper() == "PASS"
+            and whole_share_edge_margin_bps + 1e-9 >= float(getattr(cfg, "whole_share_preferred_min_edge_margin_bps", 0.0) or 0.0)
+            and min_lot_value >= float(cfg.min_trade_value)
+            and min_lot_value <= cash + 1e-9
+            and (max_order_value <= 0.0 or min_lot_value <= max_order_value + 1e-9)
+        )
         buy_delta = target_qty - current_qty
-        if buy_delta <= 0.0:
+        if buy_delta <= 0.0 and not whole_share_preferred_buy_override:
             continue
-        desired_buy_value = float(buy_delta * ref_price)
+        desired_buy_value = float(max(0.0, buy_delta) * ref_price)
+        if whole_share_preferred_buy_override:
+            desired_buy_value = max(desired_buy_value, min_lot_value)
         capped_buy_value = min(desired_buy_value, max_order_value or desired_buy_value, cash)
         buy_qty = 0.0
         used_override = False
+        override_reason = ""
         if capped_buy_value >= float(cfg.min_trade_value):
             buy_qty = _round_trade_qty(capped_buy_value / ref_price, lot_size, cfg)
+            if buy_qty > 0.0 and whole_share_preferred_buy_override and buy_delta <= 0.0:
+                used_override = True
+                override_reason = "rebalance_up_whole_share_preferred_override"
+        if buy_qty <= 0.0 and whole_share_preferred_buy_override:
+            buy_qty = float(lot_size)
+            used_override = True
+            override_reason = "rebalance_up_whole_share_preferred_override"
         if buy_qty <= 0.0 and bool(cfg.allow_min_lot_buy_override):
             override_cap = equity * max(0.0, float(cfg.min_lot_buy_override_value_pct))
-            target_weight = _to_float(target_weights.get(symbol), 0.0)
             if (
                 current_qty <= 0.0
                 and target_weight > float(cfg.weight_tolerance)
@@ -438,13 +520,13 @@ def build_investment_rebalance_orders(
             ):
                 buy_qty = float(lot_size)
                 used_override = True
+                override_reason = "rebalance_up_min_lot_override"
         if buy_qty <= 0.0:
             continue
         order_value = float(buy_qty * ref_price)
         if order_value > cash + 1e-9:
             continue
         next_qty = float(current_qty + buy_qty)
-        context = _priority_context(symbol, priority_context_map)
         expected_edge_threshold = float(_to_float(context.get("expected_edge_threshold"), 0.0))
         expected_edge_score = float(_to_float(context.get("expected_edge_score"), 0.0))
         expected_edge_bps = float(
@@ -456,6 +538,15 @@ def build_investment_rebalance_orders(
                 ),
             )
         )
+        priority_score = float(
+            _entry_priority_score(
+                symbol,
+                target_weight=target_weight,
+                priority_context_map=priority_context_map,
+            )
+        )
+        if whole_share_preferred_buy_override and max_order_value > 0.0:
+            priority_score += 0.35 * max(0.0, (max_order_value - min_lot_value) / max(max_order_value, 1e-9))
         orders.append(
             {
                 "symbol": symbol,
@@ -467,13 +558,7 @@ def build_investment_rebalance_orders(
                 "target_weight": float(_to_float(target_weights.get(symbol), 0.0)),
                 "order_value": order_value,
                 "lot_size": int(lot_size),
-                "priority_score": float(
-                    _entry_priority_score(
-                        symbol,
-                        target_weight=_to_float(target_weights.get(symbol), 0.0),
-                        priority_context_map=priority_context_map,
-                    )
-                ),
+                "priority_score": float(priority_score),
                 "score": float(_to_float(context.get("score"), 0.0)),
                 "score_before_cost": float(_to_float(context.get("score_before_cost"), _to_float(context.get("score"), 0.0))),
                 "model_recommendation_score": float(_to_float(context.get("model_recommendation_score"), _to_float(context.get("score"), 0.0))),
@@ -488,11 +573,14 @@ def build_investment_rebalance_orders(
                 "avg_daily_volume": float(_to_float(context.get("avg_daily_volume"), 0.0)),
                 "avg_daily_dollar_volume": float(_to_float(context.get("avg_daily_dollar_volume"), 0.0)),
                 "liquidity_score": float(_to_float(context.get("liquidity_score"), 0.0)),
-                "reason": (
-                    "rebalance_up_min_lot_override"
-                    if used_override
-                    else _rebalance_reason(current_qty, target_qty, "BUY")
-                ),
+                "whole_share_preferred_buy_override": bool(whole_share_preferred_buy_override and used_override),
+                "whole_share_tradability_reason": str(context.get("whole_share_tradability_reason") or ""),
+                "whole_share_tradable_preferred_candidate": int(_to_float(context.get("whole_share_tradable_preferred_candidate"), 0.0)),
+                "small_account_preferred_candidate": int(_to_float(context.get("small_account_preferred_candidate"), 0.0)),
+                "whole_share_edge_margin_bps": float(_to_float(context.get("whole_share_edge_margin_bps"), 0.0)),
+                "whole_share_expected_edge_bps": float(_to_float(context.get("whole_share_expected_edge_bps"), 0.0)),
+                "whole_share_required_edge_bps": float(_to_float(context.get("whole_share_required_edge_bps"), 0.0)),
+                "reason": override_reason if used_override else _rebalance_reason(current_qty, target_qty, "BUY"),
             }
         )
         current["qty"] = float(next_qty)

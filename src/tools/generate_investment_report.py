@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
-import sqlite3
 import time
 from typing import Any, Dict, List
 
@@ -38,6 +37,8 @@ from ..common.adaptive_strategy import (
     load_adaptive_strategy,
 )
 from ..common.cli import build_cli_parser, emit_cli_summary
+from ..common.config_layers import load_layered_config
+from ..common.account_profile import apply_account_profile, load_account_profiles
 from ..common.ibkr_telemetry import record_ibkr_request
 from ..common.logger import get_logger
 from ..common.market_structure import MarketStructureConfig, load_market_structure
@@ -51,6 +52,7 @@ from ..common.markets import (
     symbol_matches_market,
 )
 from ..common.runtime_paths import resolve_repo_path
+from ..common.sqlite_utils import connect_sqlite
 from ..common.storage import Storage
 from ..data import MarketDataAdapter
 from ..enrichment.providers import EnrichmentProviders
@@ -60,6 +62,7 @@ from ..ibkr.universe import UniverseConfig, UniverseService, scanner_location_co
 from ..offhours.candidates import load_watchlist_symbols, read_recent_symbols_from_audit
 from ..offhours.compute_long import compute_long_from_bars
 from ..offhours.compute_mid import compute_mid_from_bars
+from ..portfolio.investment_allocator import InvestmentExecutionConfig
 from ..offhours.ib_setup import connect_ib, market_data_service_from_config, register_contracts, set_delayed_frozen
 from ..strategies.mid_regime import RegimeConfig
 from ..strategies.regime_adaptor import RegimeAdaptConfig, RegimeAdaptor
@@ -176,6 +179,155 @@ def _rank_sort_key(row: Dict[str, Any]) -> tuple[int, float]:
         {"ACCUMULATE": 3, "HOLD": 2, "WATCH": 1, "REDUCE": 0}.get(str(row.get("action", "WATCH")).upper(), 1),
         float(row.get("score", 0.0) or 0.0),
     )
+
+
+def _as_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return float(default)
+
+
+def _small_account_preferred_asset_classes(
+    market_structure: MarketStructureConfig | None,
+    *,
+    account_equity_cap: float,
+) -> set[str]:
+    if market_structure is None:
+        return set()
+    threshold = float(market_structure.account_rules.prefer_etf_only_below_equity or 0.0)
+    if threshold <= 0.0 or float(account_equity_cap or 0.0) <= 0.0 or float(account_equity_cap) >= threshold:
+        return set()
+    return {
+        str(item).strip().lower()
+        for item in list(market_structure.portfolio_preferences.small_account_preferred_asset_classes or [])
+        if str(item).strip()
+    }
+
+
+def _promote_small_account_preferred_candidates(
+    rows: List[Dict[str, Any]],
+    *,
+    market_structure: MarketStructureConfig | None,
+    account_equity_cap: float,
+    max_order_value: float = 0.0,
+    min_expected_edge_bps: float = 0.0,
+    edge_cost_buffer_bps: float = 0.0,
+    edge_score_to_bps_scale: float = 140.0,
+    top_n: int,
+) -> List[Dict[str, Any]]:
+    max_rows = max(0, int(top_n or 0))
+    if max_rows <= 0:
+        return []
+    preferred_asset_classes = _small_account_preferred_asset_classes(
+        market_structure,
+        account_equity_cap=account_equity_cap,
+    )
+    selected = [dict(row) for row in list(rows or [])[:max_rows]]
+    if not preferred_asset_classes or not selected:
+        return selected
+
+    min_preferred = max(1, min(3, max_rows // 3 or 1))
+    max_order_value = max(0.0, _as_float(max_order_value, 0.0))
+    min_expected_edge_bps = max(0.0, _as_float(min_expected_edge_bps, 0.0))
+    edge_cost_buffer_bps = max(0.0, _as_float(edge_cost_buffer_bps, 0.0))
+    edge_score_to_bps_scale = max(1e-6, _as_float(edge_score_to_bps_scale, 140.0))
+
+    def is_preferred(row: Dict[str, Any]) -> bool:
+        return str(row.get("asset_class", "") or "").strip().lower() in preferred_asset_classes
+
+    def is_target_ready(row: Dict[str, Any]) -> bool:
+        action = str(row.get("action", "") or "").strip().upper()
+        return action in {"ACCUMULATE", "HOLD"} and int(_as_float(row.get("execution_ready"), 0.0)) == 1
+
+    def expected_edge_bps(row: Dict[str, Any]) -> float:
+        raw = row.get("expected_edge_bps")
+        if raw is not None and str(raw).strip() != "":
+            return max(0.0, _as_float(raw, 0.0))
+        edge_score = _as_float(row.get("expected_edge_score"), 0.0)
+        if edge_score <= 0.0:
+            action = str(row.get("action", "") or "").strip().upper()
+            threshold_key = "hold_threshold" if action == "HOLD" else "accumulate_threshold"
+            threshold_default = 0.10 if action == "HOLD" else 0.35
+            edge_score = max(
+                0.0,
+                _as_float(row.get("score_before_cost"), _as_float(row.get("score"), 0.0))
+                - _as_float(row.get(threshold_key), threshold_default),
+            )
+        return max(0.0, edge_score * edge_score_to_bps_scale)
+
+    def annotate_whole_share_preference(row: Dict[str, Any]) -> bool:
+        row["small_account_preferred_candidate"] = 0
+        row["whole_share_tradable_preferred_candidate"] = 0
+        row["whole_share_max_order_value"] = float(max_order_value)
+        last_close = max(0.0, _as_float(row.get("last_close"), 0.0))
+        expected_cost_bps = max(0.0, _as_float(row.get("expected_cost_bps"), 0.0))
+        edge_bps = expected_edge_bps(row)
+        required_edge_bps = max(min_expected_edge_bps, expected_cost_bps + edge_cost_buffer_bps)
+        row["whole_share_expected_edge_bps"] = float(edge_bps)
+        row["whole_share_expected_cost_bps"] = float(expected_cost_bps)
+        row["whole_share_required_edge_bps"] = float(required_edge_bps)
+        row["whole_share_edge_margin_bps"] = float(edge_bps - required_edge_bps)
+        if not is_preferred(row):
+            row["whole_share_tradability_reason"] = "NOT_PREFERRED_ASSET_CLASS"
+            return False
+        if not is_target_ready(row):
+            row["whole_share_tradability_reason"] = "NOT_TARGET_READY"
+            return False
+        if max_order_value > 0.0:
+            if last_close <= 0.0:
+                row["whole_share_tradability_reason"] = "MISSING_LAST_CLOSE"
+                return False
+            if last_close > max_order_value + 1e-9:
+                row["whole_share_tradability_reason"] = "PRICE_ABOVE_MAX_ORDER_VALUE"
+                return False
+        if edge_bps + 1e-9 < required_edge_bps:
+            row["whole_share_tradability_reason"] = "EDGE_BELOW_REQUIRED"
+            return False
+        row["whole_share_tradability_reason"] = "PASS"
+        row["whole_share_tradable_preferred_candidate"] = 1
+        return True
+
+    for row in selected:
+        annotate_whole_share_preference(row)
+
+    def mark_preferred(rows_to_mark: List[Dict[str, Any]]) -> None:
+        for row in rows_to_mark:
+            if annotate_whole_share_preference(row):
+                row["small_account_preferred_candidate"] = 1
+                row["allocation_priority_boost"] = max(_as_float(row.get("allocation_priority_boost"), 0.0), 3.0)
+                row["execution_priority_boost"] = max(_as_float(row.get("execution_priority_boost"), 0.0), 3.0)
+
+    preferred_count = sum(1 for row in selected if int(row.get("whole_share_tradable_preferred_candidate", 0) or 0) == 1)
+    if preferred_count >= min_preferred:
+        mark_preferred(selected)
+        return selected
+
+    selected_symbols = {str(row.get("symbol", "") or "").upper() for row in selected}
+    promotion_pool: List[Dict[str, Any]] = []
+    for source_row in list(rows or [])[max_rows:]:
+        candidate = dict(source_row)
+        if str(candidate.get("symbol", "") or "").upper() in selected_symbols:
+            continue
+        if annotate_whole_share_preference(candidate):
+            promotion_pool.append(candidate)
+    for candidate in promotion_pool:
+        if preferred_count >= min_preferred:
+            break
+        replace_idx = None
+        for idx in range(len(selected) - 1, -1, -1):
+            if int(selected[idx].get("whole_share_tradable_preferred_candidate", 0) or 0) != 1:
+                replace_idx = idx
+                break
+        if replace_idx is None:
+            break
+        selected[replace_idx] = candidate
+        selected_symbols.add(str(candidate.get("symbol", "") or "").upper())
+        preferred_count += 1
+
+    mark_preferred(selected)
+    selected.sort(key=_rank_sort_key, reverse=True)
+    return selected
 
 
 def _report_portfolio_id(market: str, watchlist_yaml: str, report_dir: Path) -> str:
@@ -1118,7 +1270,7 @@ class _YfOnlyMarketData:
         return None
 
     def get_daily_bars(self, symbol: str, days: int) -> List[Any]:
-        return fetch_daily_bars_yf(symbol, days=days)
+        return fetch_daily_bars_yf(symbol, days=days, allow_stale_cache=True)
 
 
 class _YfOnlyDataAdapter:
@@ -1129,7 +1281,7 @@ class _YfOnlyDataAdapter:
         return None
 
     def get_daily_bars(self, symbol: str, days: int) -> tuple[List[Any], str]:
-        bars = fetch_daily_bars_yf(symbol, days=days)
+        bars = fetch_daily_bars_yf(symbol, days=days, allow_stale_cache=True)
         if bars:
             return bars, "yfinance"
         return [], ""
@@ -1206,7 +1358,7 @@ def _normalize_market_symbol(raw_symbol: str, market: str) -> str:
 
 def _scanner_cache_get(db_path: str, codes_key: str, ttl_sec: int) -> List[str]:
     try:
-        c = sqlite3.connect(db_path)
+        c = connect_sqlite(db_path)
         try:
             c.execute(
                 """create table if not exists scanner_cache(
@@ -1233,7 +1385,7 @@ def _scanner_cache_get(db_path: str, codes_key: str, ttl_sec: int) -> List[str]:
 
 def _scanner_cache_put(db_path: str, codes_key: str, symbols: List[str]) -> None:
     try:
-        c = sqlite3.connect(db_path)
+        c = connect_sqlite(db_path)
         try:
             c.execute(
                 """create table if not exists scanner_cache(
@@ -1409,11 +1561,14 @@ def _layered_scan_config(
         max(int(top_n), int(raw.get("enrichment_limit", enrichment_default) or enrichment_default)),
     )
     include_scanner_default = bool(ibkr_cfg.get("scanner_enabled", False)) and not bool(research_only_yfinance)
+    include_scanner = bool(raw.get("include_scanner", include_scanner_default))
+    if bool(research_only_yfinance) and not bool(raw.get("include_scanner_research_only", False)):
+        include_scanner = False
     return LayeredScanConfig(
         enabled=bool(raw.get("enabled", True)),
         include_symbol_master=bool(raw.get("include_symbol_master", True)),
         include_recent=bool(raw.get("include_recent", use_audit_recent)),
-        include_scanner=bool(raw.get("include_scanner", include_scanner_default)),
+        include_scanner=include_scanner,
         broad_limit=broad_limit,
         deep_limit=deep_limit,
         enrichment_limit=enrichment_limit,
@@ -1625,6 +1780,14 @@ def main(argv: List[str] | None = None) -> None:
     investment_cfg = _load_yaml(investment_cfg_path)
     strategy_cfg_path = _resolve_project_path(str(ibkr_cfg.get("strategy_config", "config/strategy_defaults.yaml")))
     regime_adaptor_cfg_path = _resolve_project_path(str(ibkr_cfg.get("regime_adaptor_config", "config/regime_adaptor.yaml")))
+    execution_cfg_path = _resolve_project_path(
+        str(
+            ibkr_cfg.get(
+                "investment_execution_config",
+                f"config/investment_execution_{resolved_market.lower()}.yaml" if resolved_market != "DEFAULT" else "config/investment_execution.yaml",
+            )
+        )
+    )
     market_structure_cfg_path = _resolve_project_path(
         str(
             args.market_structure_config
@@ -1640,11 +1803,28 @@ def main(argv: List[str] | None = None) -> None:
             or ibkr_cfg.get("adaptive_strategy_config", "config/adaptive_strategy_framework.yaml")
         )
     )
-    strategy_cfg = _load_yaml(strategy_cfg_path)
+    strategy_cfg = load_layered_config(BASE_DIR, str(strategy_cfg_path)).payload
     report_cfg_path = _resolve_project_path(str(ibkr_cfg.get("report_config", "config/report_scoring.yaml")))
     report_cfg = _load_yaml(report_cfg_path)
     risk_cfg_path = _resolve_project_path(str(ibkr_cfg.get("risk_config", "config/risk.yaml")))
     risk_cfg = _load_yaml(risk_cfg_path)
+    execution_cfg_raw = _load_yaml(execution_cfg_path) if Path(execution_cfg_path).exists() else {}
+    base_execution_cfg = InvestmentExecutionConfig.from_dict(dict(execution_cfg_raw.get("execution", {}) or {}))
+    account_equity_cap = _as_float(base_execution_cfg.account_equity_cap, 0.0)
+    account_profiles_cfg = load_account_profiles(
+        BASE_DIR,
+        str(ibkr_cfg.get("account_profile_config", "config/account_profiles.yaml") or ""),
+    )
+    effective_execution_cfg, account_profile_summary = apply_account_profile(
+        base_execution_cfg,
+        account_profiles_cfg,
+        broker_equity=account_equity_cap,
+    )
+    small_account_whole_share_max_order_value = (
+        max(0.0, float(account_equity_cap)) * max(0.0, float(effective_execution_cfg.max_order_value_pct))
+        if account_equity_cap > 0.0
+        else 0.0
+    )
     regime_adaptor_cfg_raw = _load_yaml(regime_adaptor_cfg_path)
     market_structure = load_market_structure(BASE_DIR, resolved_market, market_structure_cfg_path)
     adaptive_strategy = load_adaptive_strategy(BASE_DIR, adaptive_strategy_cfg_path)
@@ -1737,16 +1917,18 @@ def main(argv: List[str] | None = None) -> None:
             md = _YfOnlyMarketData()
             data_adapter = _YfOnlyDataAdapter()
             log.info("Using research-only yfinance daily bars for market=%s", resolved_market)
-            scanner_symbols = _maybe_collect_research_scanner_symbols(
-                resolved_market=resolved_market,
-                host=str(host),
-                port=int(port),
-                client_id=int(client_id),
-                request_timeout_sec=float(args.request_timeout_sec),
-                db_path=db_path,
-                ibkr_cfg=ibkr_cfg,
-                layered_cfg=layered_cfg,
-            )
+            scanner_symbols = []
+            if bool(layered_cfg.include_scanner):
+                scanner_symbols = _maybe_collect_research_scanner_symbols(
+                    resolved_market=resolved_market,
+                    host=str(host),
+                    port=int(port),
+                    client_id=int(client_id),
+                    request_timeout_sec=float(args.request_timeout_sec),
+                    db_path=db_path,
+                    ibkr_cfg=ibkr_cfg,
+                    layered_cfg=layered_cfg,
+                )
             if scanner_symbols:
                 universe = build_candidates(
                     seed_symbols=[str(sym).upper() for sym in seed_symbols],
@@ -1973,7 +2155,16 @@ def main(argv: List[str] | None = None) -> None:
             if isinstance(row.get("signal_decision"), dict):
                 row["signal_decision_json"] = json.dumps(row["signal_decision"], ensure_ascii=False)
 
-        ranked = deep_ranked[: int(args.top_n)]
+        ranked = _promote_small_account_preferred_candidates(
+            deep_ranked,
+            market_structure=market_structure,
+            account_equity_cap=account_equity_cap,
+            max_order_value=small_account_whole_share_max_order_value,
+            min_expected_edge_bps=float(effective_execution_cfg.min_expected_edge_bps),
+            edge_cost_buffer_bps=float(effective_execution_cfg.edge_cost_buffer_bps),
+            edge_score_to_bps_scale=float(effective_execution_cfg.edge_score_to_bps_scale),
+            top_n=int(args.top_n),
+        )
         weekly_feedback_summary = {
             "enabled": bool(weekly_feedback_cfg),
             "configured_penalty_symbols": int(weekly_feedback_deep_summary.get("penalty_symbol_count", 0) or 0),
@@ -2235,6 +2426,46 @@ def main(argv: List[str] | None = None) -> None:
                 "ranked_count": int(len(ranked)),
                 "plan_count": int(len(plans)),
                 "backtest_count": int(len(backtests)),
+                "account_equity_cap": float(account_equity_cap),
+                "account_profile": dict(account_profile_summary or {}),
+                "small_account_whole_share_max_order_value": float(small_account_whole_share_max_order_value),
+                "effective_execution_max_order_value_pct": float(effective_execution_cfg.max_order_value_pct),
+                "effective_execution_min_expected_edge_bps": float(effective_execution_cfg.min_expected_edge_bps),
+                "effective_execution_edge_cost_buffer_bps": float(effective_execution_cfg.edge_cost_buffer_bps),
+                "effective_execution_allow_fractional_qty": bool(effective_execution_cfg.allow_fractional_qty),
+                "small_account_preferred_asset_classes": sorted(
+                    _small_account_preferred_asset_classes(market_structure, account_equity_cap=account_equity_cap)
+                ),
+                "small_account_whole_share_preferred_count": int(
+                    sum(int(row.get("whole_share_tradable_preferred_candidate", 0) or 0) == 1 for row in ranked)
+                ),
+                "small_account_preferred_candidate_count": int(
+                    sum(int(row.get("small_account_preferred_candidate", 0) or 0) == 1 for row in ranked)
+                ),
+                "small_account_preferred_block_reasons": {
+                    reason: int(
+                        sum(
+                            1
+                            for row in ranked
+                            if str(row.get("whole_share_tradability_reason", "") or "") == reason
+                        )
+                    )
+                    for reason in sorted(
+                        {
+                            str(row.get("whole_share_tradability_reason", "") or "")
+                            for row in ranked
+                            if str(row.get("whole_share_tradability_reason", "") or "")
+                        }
+                    )
+                },
+                "ranked_preferred_asset_class_count": int(
+                    sum(
+                        1
+                        for row in ranked
+                        if str(row.get("asset_class", "") or "").strip().lower()
+                        in _small_account_preferred_asset_classes(market_structure, account_equity_cap=account_equity_cap)
+                    )
+                ),
                 "scanner_candidate_count": int(len(scanner_symbols)),
                 "short_candidate_count": int(len(short_ranked)),
                 "history_workers": int(history_workers),

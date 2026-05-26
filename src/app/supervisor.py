@@ -25,6 +25,16 @@ from ..common.adaptive_strategy import (
     adaptive_strategy_market_profile,
     load_adaptive_strategy,
 )
+from ..common.auto_order_readiness import build_auto_order_submit_plan, evaluate_auto_order_readiness
+from ..common.ibkr_client_id import (
+    IBKR_CLIENT_ID_OFFSET_ENV,
+    IBKR_CLIENT_ID_RETRY_SPAN_ENV,
+    IBKR_CONNECT_MAX_ROUNDS_ENV,
+    DEFAULT_CLIENT_ID_RETRY_SPAN,
+    DEFAULT_CONNECT_MAX_ROUNDS,
+    ibkr_task_client_id_offset,
+)
+from ..common.market_readiness import build_market_readiness_payload
 from ..common.markets import market_config_path, market_timezone_name, resolve_market_code
 from ..common.runtime_paths import resolve_repo_path, resolve_scoped_runtime_path, scope_from_ibkr_config
 from ..common.storage import Storage
@@ -2471,6 +2481,17 @@ class Supervisor:
         if self._is_ibkr_gateway_task(name):
             env = os.environ.copy()
             env["IBKR_TELEMETRY_TOOL"] = str(name)
+            env[IBKR_CLIENT_ID_OFFSET_ENV] = str(ibkr_task_client_id_offset(name))
+            try:
+                retry_span = int(self.cfg.get("ibkr_client_id_retry_span", DEFAULT_CLIENT_ID_RETRY_SPAN) or 1)
+            except (TypeError, ValueError):
+                retry_span = DEFAULT_CLIENT_ID_RETRY_SPAN
+            env[IBKR_CLIENT_ID_RETRY_SPAN_ENV] = str(max(1, min(int(retry_span), 10)))
+            try:
+                connect_max_rounds = int(self.cfg.get("ibkr_connect_max_rounds", DEFAULT_CONNECT_MAX_ROUNDS) or 1)
+            except (TypeError, ValueError):
+                connect_max_rounds = DEFAULT_CONNECT_MAX_ROUNDS
+            env[IBKR_CONNECT_MAX_ROUNDS_ENV] = str(max(1, min(int(connect_max_rounds), 20)))
             task_market = self._ibkr_gateway_task_market(name)
             if task_market:
                 env["IBKR_TELEMETRY_MARKET"] = task_market
@@ -2767,6 +2788,121 @@ class Supervisor:
         self._weekly_review_summary_cache_size = int(stat.st_size)
         self._weekly_review_summary_cache_payload = dict(payload or {})
         return self._weekly_review_summary_cache_payload
+
+    def _market_readiness_summary_payload(self) -> Dict[str, Any]:
+        scoped_path = self._summary_output_dir() / "market_readiness.json"
+        payload = _load_json_file(scoped_path)
+        if payload:
+            return payload
+        raw_dir = str(self.cfg.get("summary_out_dir", "reports_supervisor") or "reports_supervisor")
+        fallback_path = _resolve_path(raw_dir) / "market_readiness.json"
+        if fallback_path != scoped_path:
+            payload = _load_json_file(fallback_path)
+            if payload:
+                return payload
+        scope = self._primary_runtime_scope()
+        runtime_root = scope.root(BASE_DIR) if scope is not None else (BASE_DIR / "runtime_data").resolve()
+        try:
+            return build_market_readiness_payload(
+                base_dir=BASE_DIR,
+                supervisor_config=self.cfg,
+                config_path=_resolve_path(self.config_path),
+                runtime_root=runtime_root,
+            )
+        except Exception as exc:
+            log.warning("Unable to build market readiness payload for auto-order gate: %s", exc)
+            return {}
+
+    def _auto_order_readiness_policy(self) -> Dict[str, Any]:
+        raw = self.cfg.get("auto_order_readiness")
+        return dict(raw or {}) if isinstance(raw, dict) else {}
+
+    def _auto_order_readiness_enabled(self) -> bool:
+        return bool(self._auto_order_readiness_policy().get("enabled", False))
+
+    def _auto_order_portfolio_for_item(self, item: Dict[str, Any], report_market: str) -> Dict[str, Any]:
+        ibkr_path = self._ibkr_config_path_for(item, report_market)
+        ibkr_cfg = _load_yaml(ibkr_path)
+        watchlist_yaml = str(item.get("watchlist_yaml", "") or "").strip()
+        return {
+            "market": report_market,
+            "watchlist": Path(watchlist_yaml).stem if watchlist_yaml else "",
+            "portfolio_id": self._portfolio_id_for_item(item, report_market),
+            "account_mode": str(ibkr_cfg.get("mode", "paper") or "paper").strip().lower(),
+            "ibkr_config": str(ibkr_path),
+            "run_investment_execution": bool(item.get("run_investment_execution", False)),
+            "submit_investment_execution": bool(item.get("submit_investment_execution", False)),
+            "run_investment_guard": bool(item.get("run_investment_guard", False)),
+            "submit_investment_guard": bool(item.get("submit_investment_guard", False)),
+        }
+
+    def _auto_order_readiness_common_inputs(self) -> Dict[str, Any]:
+        return {
+            "preflight_summary": _load_json_file(self._preflight_output_dir() / "supervisor_preflight_summary.json"),
+            "weekly_summary": self._weekly_review_summary_payload(),
+            "market_readiness_summary": self._market_readiness_summary_payload(),
+            "policy": self._auto_order_readiness_policy(),
+        }
+
+    def _auto_order_readiness_for_item(self, item: Dict[str, Any], report_market: str) -> Dict[str, Any]:
+        portfolio = self._auto_order_portfolio_for_item(item, report_market)
+        common = self._auto_order_readiness_common_inputs()
+        return evaluate_auto_order_readiness(
+            portfolio,
+            preflight_summary=common["preflight_summary"],
+            weekly_summary=common["weekly_summary"],
+            market_readiness_summary=common["market_readiness_summary"],
+            policy=common["policy"],
+            now=datetime.now(timezone.utc),
+        )
+
+    def _auto_order_readiness_rows(self) -> List[Dict[str, Any]]:
+        common = self._auto_order_readiness_common_inputs()
+        now_dt = datetime.now(timezone.utc)
+        rows: List[Dict[str, Any]] = []
+        for market in self.markets:
+            for item in list(market.reports or []):
+                if str(item.get("kind", "investment") or "investment").strip().lower() != "investment":
+                    continue
+                report_market = resolve_market_code(str(item.get("market", market.market_code)))
+                rows.append(
+                    evaluate_auto_order_readiness(
+                        self._auto_order_portfolio_for_item(item, report_market),
+                        preflight_summary=common["preflight_summary"],
+                        weekly_summary=common["weekly_summary"],
+                        market_readiness_summary=common["market_readiness_summary"],
+                        policy=common["policy"],
+                        now=now_dt,
+                    )
+                )
+        return rows
+
+    def _auto_order_submit_plan(self) -> Dict[str, Any]:
+        return build_auto_order_submit_plan(
+            self._auto_order_readiness_rows(),
+            policy=self._auto_order_readiness_policy(),
+        )
+
+    def _auto_order_submit_plan_allows_item(self, item: Dict[str, Any], report_market: str) -> tuple[bool, Dict[str, Any]]:
+        plan = self._auto_order_submit_plan()
+        portfolio_id = self._portfolio_id_for_item(item, report_market)
+        if not bool(plan.get("ready", False)):
+            return False, plan
+        selected_ids = [
+            str(value).strip()
+            for value in list(plan.get("selected_portfolio_ids") or [])
+            if str(value).strip()
+        ]
+        if not selected_ids and str(plan.get("selected_portfolio_id") or "").strip():
+            selected_ids = [str(plan.get("selected_portfolio_id") or "").strip()]
+        if str(portfolio_id) not in selected_ids:
+            blocked = dict(plan)
+            blocked["reason"] = "not_selected_by_submit_plan"
+            blocked["selected_portfolio_id"] = str(plan.get("selected_portfolio_id") or "")
+            blocked["selected_portfolio_ids"] = selected_ids
+            blocked["current_portfolio_id"] = str(portfolio_id)
+            return False, blocked
+        return True, plan
 
     def _weekly_feedback_rows(self) -> List[Dict[str, Any]]:
         payload = self._weekly_review_summary_payload()
@@ -4682,6 +4818,40 @@ class Supervisor:
                             if self._run_investment_opportunity(market, item):
                                 item["_last_opportunity_run_ts"] = now.timestamp()
                                 market_summary["opportunity_run"] = int(market_summary["opportunity_run"]) + 1
+                    if bool(item.get("submit_investment_execution", False)) and self._auto_order_readiness_enabled():
+                        readiness = self._auto_order_readiness_for_item(item, report_market)
+                        if not bool(readiness.get("ready", False)):
+                            reason = str(readiness.get("primary_reason") or "not_ready")
+                            self._add_reason(
+                                market_summary["execution_skip_reasons"],
+                                f"auto_order_readiness:{reason}",
+                            )
+                            log.warning(
+                                "Skip investment execution submit: market=%s watchlist=%s reason=%s blocks=%s warnings=%s",
+                                market.market_code,
+                                Path(str(item["watchlist_yaml"])).stem,
+                                reason,
+                                ",".join(str(value) for value in list(readiness.get("hard_blocks", []) or [])),
+                                ",".join(str(value) for value in list(readiness.get("warnings", []) or [])),
+                            )
+                            continue
+                        submit_plan_allowed, submit_plan = self._auto_order_submit_plan_allows_item(item, report_market)
+                        if not submit_plan_allowed:
+                            reason = str(submit_plan.get("reason") or "submit_plan_not_ready")
+                            self._add_reason(
+                                market_summary["execution_skip_reasons"],
+                                f"auto_order_submit_plan:{reason}",
+                            )
+                            log.warning(
+                                "Skip investment execution submit: market=%s watchlist=%s submit_plan=%s reason=%s selected=%s current=%s",
+                                market.market_code,
+                                Path(str(item["watchlist_yaml"])).stem,
+                                str(submit_plan.get("status") or ""),
+                                reason,
+                                str(submit_plan.get("selected_portfolio_id") or ""),
+                                self._portfolio_id_for_item(item, report_market),
+                            )
+                            continue
                     if self._run_investment_execution(market, item):
                         item["_last_execution_for_report_day"] = report_day
                         market_summary["execution_run"] = int(market_summary["execution_run"]) + 1
