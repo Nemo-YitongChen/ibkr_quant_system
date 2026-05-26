@@ -7,6 +7,8 @@ from typing import Any, Dict, Iterable, List
 
 import yaml
 
+from .freshness import age_hours_from_timestamp, parse_utc_datetime
+
 
 DEFAULT_IBKR_GATEWAY_BUDGET_CONFIG: Dict[str, Any] = {
     "enabled": True,
@@ -33,16 +35,7 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
 
 
 def _parse_ts(value: Any) -> datetime | None:
-    raw = str(value or "").strip()
-    if not raw:
-        return None
-    try:
-        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except Exception:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+    return parse_utc_datetime(value)
 
 
 def _parse_date(value: Any) -> date | None:
@@ -306,7 +299,7 @@ def build_ibkr_gateway_budget_rows(
         usage_pct = round((gateway_count / budget) * 100.0, 2) if budget > 0 else 0.0
         cache_hit_ratio = round(cache_count / event_count, 4) if event_count > 0 else 0.0
         latest_ts = _parse_ts(bucket.get("latest_event_ts"))
-        age_hours = round(max(0.0, (generated_dt - latest_ts).total_seconds() / 3600.0), 2) if latest_ts else 0.0
+        age_hours = age_hours_from_timestamp(latest_ts.isoformat(), generated_dt) if latest_ts else 0.0
 
         status = "ok"
         reason = "under_budget"

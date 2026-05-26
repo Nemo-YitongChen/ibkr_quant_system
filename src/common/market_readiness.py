@@ -8,6 +8,7 @@ from typing import Any, Dict, Iterable, List, Mapping
 
 from .account_profile import load_account_profiles
 from .config_layers import load_layered_config
+from .freshness import file_age_hours
 from .market_structure import load_market_structure, market_structure_summary
 from .markets import market_config_path, resolve_market_code
 from .runtime_paths import resolve_repo_path
@@ -148,13 +149,7 @@ def _latest_artifact_path(
 
 
 def _artifact_age_hours(path: Path | None, *, now: datetime) -> float:
-    if path is None or not path.exists():
-        return 0.0
-    try:
-        modified_at = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
-        return max(0.0, (now - modified_at).total_seconds() / 3600.0)
-    except Exception:
-        return 0.0
+    return float(file_age_hours(path, now) or 0.0)
 
 
 def _artifact_source_health(

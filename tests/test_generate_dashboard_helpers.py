@@ -797,6 +797,8 @@ def test_build_ops_overview_surfaces_auto_order_submit_plan_alert() -> None:
                 "blocked_count": 1,
                 "ready_count": 1,
                 "primary_block_reason": "preflight_stale",
+                "offline_recovery_required_count": 1,
+                "offline_recovery_summary_text": "offline_recovery_required=1 markets=US top_reason=preflight_stale_after_offline_gap",
                 "submit_plan": {
                     "status": "BLOCKED",
                     "ready": False,
@@ -814,7 +816,9 @@ def test_build_ops_overview_surfaces_auto_order_submit_plan_alert() -> None:
     assert overview["auto_order_submit_plan_reason"] == "no_single_safe_submit_candidate"
     assert overview["auto_order_frontier_candidate_count"] == 1
     assert overview["auto_order_rejected_candidate_count"] == 1
+    assert overview["auto_order_offline_recovery_required_count"] == 1
     assert "auto_submit_plan=BLOCKED" in overview["summary_text"]
+    assert "offline_recovery=1" in overview["summary_text"]
     assert categories["AUTO_ORDER"]["status"] == "WARN"
     assert categories["AUTO_ORDER"]["alert_class"] == "auto_order"
     assert "no_single_safe_submit_candidate" in categories["AUTO_ORDER"]["detail"]

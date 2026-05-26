@@ -5866,6 +5866,12 @@ def _build_ops_overview(
     auto_order_blocked_count = int(auto_order_summary.get("blocked_count", 0) or 0)
     auto_order_ready_count = int(auto_order_summary.get("ready_count", 0) or 0)
     auto_order_primary_block_reason = str(auto_order_summary.get("primary_block_reason") or "").strip()
+    auto_order_offline_recovery_required_count = int(
+        auto_order_summary.get("offline_recovery_required_count", 0) or 0
+    )
+    auto_order_offline_recovery_summary_text = str(
+        auto_order_summary.get("offline_recovery_summary_text", "") or ""
+    ).strip()
     auto_order_submit_plan_status = str(auto_order_submit_plan.get("status") or "").strip().upper()
     auto_order_submit_plan_ready = bool(auto_order_submit_plan.get("ready", False))
     auto_order_submit_plan_reason = str(auto_order_submit_plan.get("reason") or "").strip()
@@ -5983,6 +5989,16 @@ def _build_ops_overview(
                 ),
             )
         )
+    if auto_order_offline_recovery_required_count > 0:
+        alert_rows.append(
+            _ops_alert_row(
+                "AUTO_ORDER",
+                "offline_recovery",
+                "WARN",
+                auto_order_offline_recovery_summary_text
+                or f"offline_recovery_required={auto_order_offline_recovery_required_count}",
+            )
+        )
     if auto_order and not auto_order_submit_plan_ready:
         detail = auto_order_submit_plan_reason or auto_order_primary_block_reason or auto_order_summary_text or "not_ready"
         alert_rows.append(
@@ -6039,6 +6055,7 @@ def _build_ops_overview(
         f"evidence_urgent={evidence_focus_urgent_count} | "
         f"gateway_budget={gateway_budget_status} | "
         f"auto_submit_plan={auto_order_submit_plan_status or 'missing'} | "
+        f"offline_recovery={auto_order_offline_recovery_required_count} | "
         f"mode_mismatch={execution_mismatch_count} | "
         f"gateway_runtime={gateway_runtime_summary.get('status', 'unknown')} | "
         f"governance={governance_status} | "
@@ -6082,6 +6099,8 @@ def _build_ops_overview(
         "auto_order_blocked_count": auto_order_blocked_count,
         "auto_order_ready_count": auto_order_ready_count,
         "auto_order_primary_block_reason": auto_order_primary_block_reason,
+        "auto_order_offline_recovery_required_count": auto_order_offline_recovery_required_count,
+        "auto_order_offline_recovery_summary_text": auto_order_offline_recovery_summary_text,
         "auto_order_submit_plan_status": auto_order_submit_plan_status,
         "auto_order_submit_plan_ready": auto_order_submit_plan_ready,
         "auto_order_submit_plan_reason": auto_order_submit_plan_reason,

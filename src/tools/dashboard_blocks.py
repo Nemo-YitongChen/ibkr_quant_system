@@ -269,6 +269,9 @@ def build_ops_health_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "auto_order_submit_selected_portfolio_id": str(
                 ops.get("auto_order_submit_selected_portfolio_id") or ""
             ),
+            "auto_order_offline_recovery_required_count": _int(
+                ops.get("auto_order_offline_recovery_required_count")
+            ),
         },
         "rows": alert_rows,
     }
@@ -317,6 +320,9 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "blocked_count": _int(summary.get("blocked_count")),
             "disabled_count": _int(summary.get("disabled_count")),
             "primary_block_reason": str(summary.get("primary_block_reason") or ""),
+            "offline_recovery_required_count": _int(summary.get("offline_recovery_required_count")),
+            "offline_recovery_markets": list(summary.get("offline_recovery_markets") or []),
+            "offline_recovery_summary_text": str(summary.get("offline_recovery_summary_text") or ""),
             "submit_plan_status": submit_status,
             "submit_plan_ready": bool(submit_plan.get("ready", False)),
             "submit_plan_reason": str(submit_plan.get("reason") or ""),

@@ -442,3 +442,11 @@
 - US/HK/ASX/XETRA 的 `universe.yaml` 已接入 `config/watchlists/auto_expanded/*_quality_growth.yaml`，这些文件会进入 symbol master 扩展层；CN 不纳入自动下单扩展。
 - 非 CN report 的候选输出数已适度扩大：US/HK/ASX/XETRA 常规 report `top_n=15`，US overnight `top_n=10`。这会增加可分析候选面，但不增加自动提交上限。
 - 本次本地生成结果：US 选中 `SPLG, SPTM, SCHB`；ASX/HK/XETRA 暂无候选通过 whole-share/cost/liquidity 组合门。完整诊断在 `reports_supervisor/watchlist_expansion/watchlist_expansion_candidates.csv`，可看到每个被拒候选的原因。
+
+## 26. 2026-05-27 Offline recovery and freshness consistency
+
+- 新增 `src/common/freshness.py`，把 UTC timestamp parsing、timestamp age、file age、fresh/stale labeling 从多个模块抽成公共 helper，减少重复实现并降低时区/陈旧度判断不一致的风险。
+- `auto_order_readiness` 新增 `offline_recovery_required` 及 summary 字段；断网或 IBKR Gateway 不可用超过一天后，如果 preflight、execution artifact、market readiness 或 Gateway telemetry 过期，dashboard 会明确显示需要 offline recovery，而不是只散落在多个 artifact section。
+- 该层不放宽任何交易门：stale preflight、stale execution artifact、Gateway budget degraded、submit quality not pass 仍然会阻断自动 paper submit。
+- Dashboard ops overview 和 v2 auto-order block 现在展示 `auto_order_offline_recovery_required_count` / `offline_recovery_summary_text`，恢复顺序变为：先刷新 preflight，再跑 report + paper execution dry-run，再刷新 market readiness / auto-order readiness，最后只对仍然 READY 的小额计划评估 paper submit。
+- 针对性验证通过：`tests/test_freshness.py`、`tests/test_auto_order_readiness.py`、`tests/test_dashboard_blocks.py`、`tests/test_generate_dashboard_helpers.py`、`tests/test_market_readiness.py`、`tests/test_ibkr_gateway_budget.py` 共 91 个测试。

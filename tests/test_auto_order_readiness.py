@@ -660,6 +660,25 @@ def test_auto_order_readiness_blocks_stale_preflight() -> None:
     assert result["primary_reason"] == "preflight_stale"
 
 
+def test_auto_order_readiness_surfaces_offline_recovery_after_stale_artifacts() -> None:
+    result = evaluate_auto_order_readiness(
+        _portfolio(),
+        preflight_summary=_preflight(generated_at="2026-05-08T11:00:00+00:00"),
+        weekly_summary=_weekly(),
+        market_readiness_summary=_market_readiness_row(
+            artifact_health_status="STALE",
+            execution_artifact_age_hours=49.0,
+        ),
+        policy={"enabled": True, "max_preflight_age_hours": 24, "max_offline_recovery_gap_hours": 24},
+        now=NOW,
+    )
+
+    assert result["offline_recovery_required"] is True
+    assert "preflight_stale_after_offline_gap" in result["offline_recovery_reasons"]
+    assert "market_readiness_artifact_stale" in result["offline_recovery_reasons"]
+    assert "Refresh investment report" in result["offline_recovery_next_action"]
+
+
 def test_auto_order_readiness_scopes_preflight_failures_to_portfolio() -> None:
     result = evaluate_auto_order_readiness(
         _portfolio(market="US", portfolio_id="US:watchlist", watchlist="watchlist"),
@@ -920,6 +939,8 @@ def test_auto_order_readiness_summary_counts_rows() -> None:
                 ],
                 "market": "US",
                 "portfolio_id": "US:watchlist",
+                "offline_recovery_required": True,
+                "offline_recovery_reasons": ["preflight_stale_after_offline_gap"],
             },
         ]
     )
@@ -930,5 +951,8 @@ def test_auto_order_readiness_summary_counts_rows() -> None:
     assert summary["primary_block_reason"] == "preflight_stale"
     assert summary["hard_block_counts"]["market_readiness_not_ready"] == 1
     assert summary["warning_counts"]["strategy_suggestions_open"] == 1
+    assert summary["offline_recovery_required_count"] == 1
+    assert summary["offline_recovery_markets"] == ["US"]
+    assert summary["offline_recovery_reason_counts"]["preflight_stale_after_offline_gap"] == 1
     assert summary["remediation_plan"][0]["reason"] == "preflight_stale"
     assert summary["remediation_plan"][1]["reason"] == "market_readiness_not_ready"

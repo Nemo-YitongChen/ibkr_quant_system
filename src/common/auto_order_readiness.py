@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Mapping
 
+from .freshness import age_hours_from_timestamp, parse_utc_datetime
+
 READY_STATUS = "READY"
 BLOCKED_STATUS = "BLOCKED"
 WARNING_STATUS = "WARNING"
@@ -48,26 +50,6 @@ def _float(value: Any, default: float = 0.0) -> float:
         return float(default)
 
 
-def _parse_datetime(value: Any) -> datetime | None:
-    raw = str(value or "").strip()
-    if not raw:
-        return None
-    try:
-        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
-
-
-def _age_hours(value: Any, now: datetime) -> float | None:
-    dt = _parse_datetime(value)
-    if dt is None:
-        return None
-    return round(max(0.0, (now.astimezone(timezone.utc) - dt).total_seconds() / 3600.0), 2)
-
-
 def _status(value: Any) -> str:
     return str(value or "").strip().lower()
 
@@ -92,6 +74,10 @@ def normalize_auto_order_readiness_policy(raw: Mapping[str, Any] | None) -> Dict
         "excluded_markets": excluded_markets,
         "max_preflight_age_hours": _float(source.get("max_preflight_age_hours", 24.0), 24.0),
         "max_weekly_review_age_hours": _float(source.get("max_weekly_review_age_hours", 168.0), 168.0),
+        "max_offline_recovery_gap_hours": _float(
+            source.get("max_offline_recovery_gap_hours", source.get("max_preflight_age_hours", 24.0)),
+            24.0,
+        ),
         "block_on_preflight_fail": bool(source.get("block_on_preflight_fail", True)),
         "block_on_missing_preflight": bool(source.get("block_on_missing_preflight", True)),
         "block_on_stale_preflight": bool(source.get("block_on_stale_preflight", True)),
@@ -335,13 +321,84 @@ def _active_strategy_suggestion_rows(rows: Iterable[Mapping[str, Any]]) -> List[
         if not key.strip("|"):
             key = str(row.get("suggestion_id") or len(latest))
         current = latest.get(key)
-        current_dt = _parse_datetime(current.get("created_at")) if current else None
-        row_dt = _parse_datetime(row.get("created_at"))
+        current_dt = parse_utc_datetime(current.get("created_at")) if current else None
+        row_dt = parse_utc_datetime(row.get("created_at"))
         if current is None or (row_dt or datetime.min.replace(tzinfo=timezone.utc)) >= (
             current_dt or datetime.min.replace(tzinfo=timezone.utc)
         ):
             latest[key] = row
     return list(latest.values())
+
+
+def _offline_recovery_state(
+    *,
+    preflight_age_hours: float | None,
+    weekly_age_hours: float | None,
+    market_readiness_present: bool,
+    market_artifact_health_status: str,
+    market_artifact_age_hours: float | None,
+    gateway_status: str,
+    gateway_row: Mapping[str, Any],
+    policy: Mapping[str, Any],
+) -> Dict[str, Any]:
+    max_gap = max(0.0, _float(policy.get("max_offline_recovery_gap_hours"), 24.0))
+    max_weekly_age = max(0.0, _float(policy.get("max_weekly_review_age_hours"), 168.0))
+    reasons: List[str] = []
+    actions: List[str] = []
+
+    def add(reason: str, action: str) -> None:
+        if reason not in reasons:
+            reasons.append(reason)
+        if action and action not in actions:
+            actions.append(action)
+
+    if max_gap > 0.0:
+        if preflight_age_hours is None and bool(policy.get("block_on_missing_preflight", True)):
+            add("preflight_missing", "Run supervisor preflight before any automated paper submit.")
+        elif preflight_age_hours is not None and preflight_age_hours > max_gap:
+            add("preflight_stale_after_offline_gap", "Refresh supervisor preflight after reconnect.")
+
+        if market_readiness_present:
+            artifact_status = str(market_artifact_health_status or "").strip().upper()
+            if artifact_status in {"STALE", "MISSING", "DEGRADED_GATEWAY"}:
+                add(
+                    f"market_readiness_artifact_{artifact_status.lower()}",
+                    "Refresh investment report, paper execution dry-run, and market readiness after reconnect.",
+                )
+            elif market_artifact_age_hours is not None and market_artifact_age_hours > max_gap:
+                add(
+                    "execution_artifact_stale_after_offline_gap",
+                    "Refresh execution artifact before ranking submit candidates.",
+                )
+        elif bool(policy.get("block_on_missing_market_readiness", False)) or bool(
+            policy.get("warn_on_missing_market_readiness", False)
+        ):
+            add("market_readiness_missing", "Run market readiness before automated submit.")
+
+    if weekly_age_hours is None and bool(policy.get("block_on_missing_weekly_review", True)):
+        add("weekly_review_missing", "Run weekly review before automated submit.")
+    elif weekly_age_hours is not None and max_weekly_age > 0.0 and weekly_age_hours > max_weekly_age:
+        add("weekly_review_stale", "Refresh weekly review before automated submit.")
+
+    gateway_reason = str(gateway_row.get("reason") or "").strip().lower()
+    if gateway_reason == "stale_ibkr_request_telemetry":
+        add("gateway_budget_stale_telemetry", "Refresh weekly review Gateway telemetry after reconnect.")
+    elif str(gateway_status or "").strip().lower() in {"fail", "failed", "error", "degraded"}:
+        add("gateway_budget_degraded", "Let Gateway request budget recover before automated submit.")
+
+    gap_values = [
+        value
+        for value in (preflight_age_hours, weekly_age_hours, market_artifact_age_hours)
+        if value is not None
+    ]
+    return {
+        "offline_recovery_required": bool(reasons),
+        "offline_recovery_reason": ",".join(reasons),
+        "offline_recovery_reasons": reasons,
+        "offline_recovery_next_action": " ".join(actions),
+        "offline_recovery_gap_hours": round(max(gap_values), 2) if gap_values else 0.0,
+        "offline_recovery_max_gap_hours": float(max_gap),
+    }
 
 
 def _strategy_followup_rows_for_portfolio(
@@ -586,7 +643,7 @@ def evaluate_auto_order_readiness(
         )
 
     preflight = dict(preflight_summary or {})
-    preflight_age_hours = _age_hours(preflight.get("generated_at"), now_dt)
+    preflight_age_hours = age_hours_from_timestamp(preflight.get("generated_at"), now_dt)
     preflight_fail_checks = _preflight_relevant_checks(preflight, row, ["FAIL", "FAILED", "ERROR"])
     preflight_warn_checks = _preflight_relevant_checks(preflight, row, ["WARN", "WARNING"])
     has_preflight_checks = bool(list(preflight.get("checks") or []))
@@ -640,7 +697,7 @@ def evaluate_auto_order_readiness(
         )
 
     weekly = dict(weekly_summary or {})
-    weekly_age_hours = _age_hours(weekly.get("generated_at"), now_dt)
+    weekly_age_hours = age_hours_from_timestamp(weekly.get("generated_at"), now_dt)
     if weekly_age_hours is None and bool(normalized_policy.get("block_on_missing_weekly_review", True)):
         hard_blocks.append("weekly_review_missing")
         hard_block_details.append(
@@ -772,6 +829,11 @@ def evaluate_auto_order_readiness(
     market_readiness_reason = str(market_readiness.get("primary_reason") or "").strip()
     market_artifact_health_status = str(market_readiness.get("artifact_health_status") or "").strip().upper()
     market_feasibility_status = str(market_readiness.get("small_account_feasibility_status") or "").strip().upper()
+    market_artifact_age_hours = (
+        _float(market_readiness.get("execution_artifact_age_hours"), 0.0)
+        if market_readiness
+        else None
+    )
     market_order_count = _int(market_readiness.get("order_count"), 0)
     market_planned_gross_order_value = _float(market_readiness.get("planned_gross_order_value"), 0.0)
     market_planned_order_symbols = str(market_readiness.get("planned_order_symbols") or "").strip()
@@ -869,6 +931,16 @@ def evaluate_auto_order_readiness(
             )
         )
 
+    offline_recovery = _offline_recovery_state(
+        preflight_age_hours=preflight_age_hours,
+        weekly_age_hours=weekly_age_hours,
+        market_readiness_present=bool(market_readiness),
+        market_artifact_health_status=market_artifact_health_status,
+        market_artifact_age_hours=market_artifact_age_hours,
+        gateway_status=gateway_status,
+        gateway_row=gateway_row,
+        policy=normalized_policy,
+    )
     ready = not hard_blocks
     status = READY_STATUS if ready and not warnings else WARNING_STATUS if ready else BLOCKED_STATUS
     primary_reason = "ready" if ready else _primary_hard_block_reason(hard_blocks)
@@ -895,6 +967,7 @@ def evaluate_auto_order_readiness(
         "market_readiness_status": market_readiness_status,
         "market_readiness_reason": market_readiness_reason,
         "market_readiness_artifact_health_status": market_artifact_health_status,
+        "market_readiness_artifact_age_hours": market_artifact_age_hours,
         "market_readiness_feasibility_status": market_feasibility_status,
         "market_readiness_preparation_tier": market_preparation_tier,
         "market_readiness_order_count": market_order_count,
@@ -914,6 +987,7 @@ def evaluate_auto_order_readiness(
         "submit_quality_min_edge_margin_bps": _float(market_readiness.get("submit_quality_min_edge_margin_bps"), 0.0),
         "submit_quality_max_expected_cost_bps": _float(market_readiness.get("submit_quality_max_expected_cost_bps"), 0.0),
         "submit_quality_order_types": str(market_readiness.get("submit_quality_order_types") or ""),
+        **offline_recovery,
     }
 
 
@@ -1125,6 +1199,7 @@ def build_auto_order_readiness_summary(
     blocked_rows = [row for row in clean_rows if str(row.get("status") or "") == BLOCKED_STATUS]
     warning_rows = [row for row in clean_rows if str(row.get("status") or "") == WARNING_STATUS]
     disabled_rows = [row for row in clean_rows if str(row.get("status") or "") == DISABLED_STATUS]
+    offline_recovery_rows = [row for row in clean_rows if bool(row.get("offline_recovery_required", False))]
     status = "blocked" if blocked_rows else "warning" if warning_rows else "ready"
     hard_block_counts: Dict[str, int] = {}
     warning_counts: Dict[str, int] = {}
@@ -1199,6 +1274,37 @@ def build_auto_order_readiness_summary(
         if remediation_plan and str(remediation_plan[0].get("severity") or "") == "block"
         else str(blocked_rows[0].get("primary_reason") or "") if blocked_rows else ""
     )
+    offline_markets = sorted(
+        {
+            str(row.get("market") or "").strip().upper()
+            for row in offline_recovery_rows
+            if str(row.get("market") or "").strip()
+        }
+    )
+    offline_portfolios = sorted(
+        {
+            str(row.get("portfolio_id") or "").strip()
+            for row in offline_recovery_rows
+            if str(row.get("portfolio_id") or "").strip()
+        }
+    )
+    offline_reasons: Dict[str, int] = {}
+    for row in offline_recovery_rows:
+        for reason in list(row.get("offline_recovery_reasons") or []):
+            reason_text = str(reason or "").strip()
+            if reason_text:
+                offline_reasons[reason_text] = int(offline_reasons.get(reason_text, 0)) + 1
+    offline_top_reason = (
+        sorted(offline_reasons.items(), key=lambda item: (-item[1], item[0]))[0][0]
+        if offline_reasons
+        else "-"
+    )
+    sorted_hard_block_counts = dict(
+        sorted(hard_block_counts.items(), key=lambda item: (_reason_priority(item[0]), item[0]))
+    )
+    sorted_warning_counts = dict(
+        sorted(warning_counts.items(), key=lambda item: (_reason_priority(item[0], warning=True), item[0]))
+    )
     return {
         "status": status,
         "summary_text": (
@@ -1211,8 +1317,17 @@ def build_auto_order_readiness_summary(
         "blocked_count": len(blocked_rows),
         "disabled_count": len(disabled_rows),
         "primary_block_reason": primary_block_reason,
-        "hard_block_counts": dict(sorted(hard_block_counts.items(), key=lambda item: (_reason_priority(item[0]), item[0]))),
-        "warning_counts": dict(sorted(warning_counts.items(), key=lambda item: (_reason_priority(item[0], warning=True), item[0]))),
+        "offline_recovery_required_count": int(len(offline_recovery_rows)),
+        "offline_recovery_markets": offline_markets,
+        "offline_recovery_portfolios": offline_portfolios,
+        "offline_recovery_reason_counts": dict(sorted(offline_reasons.items())),
+        "offline_recovery_summary_text": (
+            f"offline_recovery_required={len(offline_recovery_rows)} "
+            f"markets={','.join(offline_markets) or '-'} "
+            f"top_reason={offline_top_reason}"
+        ),
+        "hard_block_counts": sorted_hard_block_counts,
+        "warning_counts": sorted_warning_counts,
         "remediation_plan": remediation_plan,
         "submit_plan": build_auto_order_submit_plan(clean_rows, policy=policy),
     }

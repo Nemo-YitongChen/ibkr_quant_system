@@ -29,6 +29,7 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
             "auto_order_blocked_count": 1,
             "auto_order_ready_count": 1,
             "auto_order_primary_block_reason": "preflight_stale",
+            "auto_order_offline_recovery_required_count": 1,
             "auto_order_submit_plan_status": "BLOCKED",
             "auto_order_submit_plan_reason": "no_single_safe_submit_candidate",
             "auto_order_submit_selected_portfolio_id": "",
@@ -44,6 +45,9 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
                 "blocked_count": 1,
                 "disabled_count": 0,
                 "primary_block_reason": "preflight_stale",
+                "offline_recovery_required_count": 1,
+                "offline_recovery_markets": ["US"],
+                "offline_recovery_summary_text": "offline_recovery_required=1 markets=US top_reason=preflight_stale_after_offline_gap",
                 "remediation_plan": [
                     {
                         "reason": "preflight_stale",
@@ -311,8 +315,11 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
     assert by_id["ops_health"]["metrics"]["ibkr_gateway_budget_over_budget_market_count"] == 1
     assert by_id["ops_health"]["metrics"]["auto_order_submit_plan_status"] == "BLOCKED"
     assert by_id["ops_health"]["metrics"]["auto_order_primary_block_reason"] == "preflight_stale"
+    assert by_id["ops_health"]["metrics"]["auto_order_offline_recovery_required_count"] == 1
     assert by_id["auto_order_readiness"]["metrics"]["portfolio_count"] == 2
     assert by_id["auto_order_readiness"]["metrics"]["blocked_count"] == 1
+    assert by_id["auto_order_readiness"]["metrics"]["offline_recovery_required_count"] == 1
+    assert by_id["auto_order_readiness"]["metrics"]["offline_recovery_markets"] == ["US"]
     assert by_id["auto_order_readiness"]["metrics"]["submit_plan_status"] == "BLOCKED"
     assert by_id["auto_order_readiness"]["metrics"]["submit_plan_reason"] == "no_single_safe_submit_candidate"
     assert by_id["auto_order_readiness"]["metrics"]["frontier_candidate_count"] == 1
