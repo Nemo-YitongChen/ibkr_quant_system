@@ -450,3 +450,10 @@
 - 该层不放宽任何交易门：stale preflight、stale execution artifact、Gateway budget degraded、submit quality not pass 仍然会阻断自动 paper submit。
 - Dashboard ops overview 和 v2 auto-order block 现在展示 `auto_order_offline_recovery_required_count` / `offline_recovery_summary_text`，恢复顺序变为：先刷新 preflight，再跑 report + paper execution dry-run，再刷新 market readiness / auto-order readiness，最后只对仍然 READY 的小额计划评估 paper submit。
 - 针对性验证通过：`tests/test_freshness.py`、`tests/test_auto_order_readiness.py`、`tests/test_dashboard_blocks.py`、`tests/test_generate_dashboard_helpers.py`、`tests/test_market_readiness.py`、`tests/test_ibkr_gateway_budget.py` 共 91 个测试。
+
+## 27. 2026-05-27 Dashboard market data fallback label fix
+
+- 修复 GitHub Actions `integration-suite` 中 XETRA 非 research-only fallback 被误标为 `研究Fallback` 的问题。
+- `generate_dashboard` 现在只有在 market/report 本身明确 research-only 时，才把 yfinance fallback 标成 `研究Fallback`；XETRA/US/HK/ASX 等 execution-capable 市场即使为了降载使用 yfinance，也会在 IBKR 历史行情不可用时显示 `待排查`。
+- 该修复只改变 dashboard 分类，不放宽下单质量、风险、edge、market-rule 或 Gateway budget gate。
+- 针对性验证通过：XETRA 非 research-only fallback 用例返回 `待排查`，CN research-only fallback 仍返回 `研究Fallback`。

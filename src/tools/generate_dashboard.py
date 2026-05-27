@@ -3353,7 +3353,10 @@ def _build_report_card(
     report_status = next((row for row in report_statuses if str(row.get("watchlist", "")) == watchlist), {})
     market_summary_lines = _load_market_summary_lines(report_dir)
     report_data_warning = _load_report_data_warning(report_dir)
-    research_only_yfinance = _market_research_only_yfinance(market_code)
+    research_only_yfinance = bool(
+        _market_research_only_yfinance(market_code)
+        and (bool(market_structure.research_only) or bool(item.get("research_only", False)))
+    )
 
     try:
         display_report_dir = str(report_dir.relative_to(BASE_DIR))
