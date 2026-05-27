@@ -1,15 +1,21 @@
 version: 1
 name: auto_expanded_asx_quality_growth
-generated_at: '2026-05-26T12:45:34.285645+00:00'
+generated_at: '2026-05-27T00:12:45.537576+00:00'
 market: ASX
+account_profile:
+  name: small
+  label: 小资金
+  equity_band: < 25,000
+  account_equity: 1000.0
 selection_policy:
-  max_symbols_per_market: 25
-  min_score: 0.45
-  min_data_quality_score: 0.65
-  min_liquidity_score: 0.45
-  max_expected_cost_bps: 45.0
-  min_expected_edge_bps: 0.0
-  min_whole_share_edge_margin_bps: 0.0
+  max_symbols_per_market: 10
+  min_score: 0.55
+  min_data_quality_score: 0.75
+  min_liquidity_score: 0.65
+  max_expected_cost_bps: 35.0
+  min_expected_edge_bps: 20.0
+  min_whole_share_edge_margin_bps: 2.0
+  max_last_close: 100.0
   require_execution_ready: true
   require_whole_share_tradability: true
   allowed_actions:
@@ -17,7 +23,6 @@ selection_policy:
   - HOLD
   preferred_asset_classes:
   - etf
-  - equity
 source_candidate_files:
 - runtime_data/paper_investment_only_duq152001/reports_investment_asx/asx_top_quality/investment_candidates.csv
 selected_count: 0

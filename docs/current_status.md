@@ -457,3 +457,11 @@
 - `generate_dashboard` 现在只有在 market/report 本身明确 research-only 时，才把 yfinance fallback 标成 `研究Fallback`；XETRA/US/HK/ASX 等 execution-capable 市场即使为了降载使用 yfinance，也会在 IBKR 历史行情不可用时显示 `待排查`。
 - 该修复只改变 dashboard 分类，不放宽下单质量、风险、edge、market-rule 或 Gateway budget gate。
 - 针对性验证通过：XETRA 非 research-only fallback 用例返回 `待排查`，CN research-only fallback 仍返回 `研究Fallback`。
+
+## 28. 2026-05-27 Account-aware watchlist expansion
+
+- `account_profiles.yaml` 新增 `watchlist_expansion` 分层策略：小账户只扩展低价、可整股、ETF-first、低成本候选；中/大账户再逐步允许高流动性股票 basket。
+- `expand_investment_watchlists` 新增 `--account_equity` / `--account_profile` / `--account_profile_config`，会按账户金额解析 small/medium/large profile，并把有效 policy 写入生成的 auto-expanded watchlist。
+- `watchlist_expansion` 新增 `max_last_close`、asset-class preference 排序和 `last_close_above_account_cap` reject reason；这让 1000 AUD 小账户不会把高价股票纳入自动扩展池，即使它们分数较高。
+- 用 `--account_equity 1000` 刷新后，当前本地 evidence 仅纳入 US 的 `SPTM,SCHB`；ASX/HK/XETRA 仍为空，因为整股、成本、流动性或 market-rule 证据没有通过。这是质量优先，不是漏选。
+- 自动下单门槛不变：扩展 watchlist 只是候选池，真正 paper submit 仍需通过 preflight、market readiness、Gateway budget、submit quality、edge/cost 和风险门。

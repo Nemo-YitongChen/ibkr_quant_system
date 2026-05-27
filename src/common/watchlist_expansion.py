@@ -33,6 +33,7 @@ class WatchlistExpansionPolicy:
     max_expected_cost_bps: float = 45.0
     min_expected_edge_bps: float = 0.0
     min_whole_share_edge_margin_bps: float = 0.0
+    max_last_close: float = 0.0
     require_execution_ready: bool = True
     require_whole_share_tradability: bool = True
     allowed_actions: Sequence[str] = field(default_factory=lambda: ("ACCUMULATE", "HOLD"))
@@ -55,6 +56,7 @@ class WatchlistExpansionPolicy:
             max_expected_cost_bps=_float(source.get("max_expected_cost_bps"), 45.0),
             min_expected_edge_bps=_float(source.get("min_expected_edge_bps"), 0.0),
             min_whole_share_edge_margin_bps=_float(source.get("min_whole_share_edge_margin_bps"), 0.0),
+            max_last_close=_float(source.get("max_last_close"), 0.0),
             require_execution_ready=bool(source.get("require_execution_ready", True)),
             require_whole_share_tradability=bool(source.get("require_whole_share_tradability", True)),
             allowed_actions=tuple(str(item).strip().upper() for item in list(allowed_actions or ("ACCUMULATE", "HOLD")) if str(item).strip()),
@@ -64,6 +66,29 @@ class WatchlistExpansionPolicy:
                 if str(item).strip()
             ),
         )
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "max_symbols_per_market": int(self.max_symbols_per_market),
+            "min_score": float(self.min_score),
+            "min_data_quality_score": float(self.min_data_quality_score),
+            "min_liquidity_score": float(self.min_liquidity_score),
+            "max_expected_cost_bps": float(self.max_expected_cost_bps),
+            "min_expected_edge_bps": float(self.min_expected_edge_bps),
+            "min_whole_share_edge_margin_bps": float(self.min_whole_share_edge_margin_bps),
+            "max_last_close": float(self.max_last_close),
+            "require_execution_ready": bool(self.require_execution_ready),
+            "require_whole_share_tradability": bool(self.require_whole_share_tradability),
+            "allowed_actions": list(self.allowed_actions),
+            "preferred_asset_classes": list(self.preferred_asset_classes),
+        }
+
+    def with_overrides(self, raw: Mapping[str, Any] | None) -> "WatchlistExpansionPolicy":
+        if not raw:
+            return self
+        payload = self.to_dict()
+        payload.update({key: value for key, value in dict(raw or {}).items() if value is not None})
+        return WatchlistExpansionPolicy.from_mapping(payload)
 
 
 def _expected_edge_bps(row: Mapping[str, Any]) -> float:
@@ -107,12 +132,23 @@ def _selection_reasons(row: Mapping[str, Any], policy: WatchlistExpansionPolicy)
         reasons.append("expected_edge_below_min")
     if edge_margin_bps < float(policy.min_whole_share_edge_margin_bps):
         reasons.append("whole_share_edge_margin_below_min")
+    last_close = _float(row.get("last_close"), 0.0)
+    if float(policy.max_last_close) > 0.0 and last_close > float(policy.max_last_close):
+        reasons.append("last_close_above_account_cap")
     if (
         policy.require_whole_share_tradability
         and str(row.get("whole_share_tradability_reason") or "").strip().upper() != "PASS"
     ):
         reasons.append("whole_share_not_tradable")
     return reasons
+
+
+def _asset_class_rank(asset_class: Any, policy: WatchlistExpansionPolicy) -> int:
+    normalized = str(asset_class or "").strip().lower()
+    preferred = [str(item).strip().lower() for item in list(policy.preferred_asset_classes or [])]
+    if normalized in preferred:
+        return preferred.index(normalized)
+    return len(preferred) + 1
 
 
 def build_watchlist_expansion_rows(
@@ -154,6 +190,7 @@ def build_watchlist_expansion_rows(
                 "expected_edge_bps": round(expected_edge_bps, 6),
                 "expected_cost_bps": round(expected_cost_bps, 6),
                 "whole_share_edge_margin_bps": round(edge_margin_bps, 6),
+                "max_last_close": round(float(effective_policy.max_last_close), 6),
                 "whole_share_tradability_reason": str(row.get("whole_share_tradability_reason") or "").strip().upper(),
                 "data_quality_score": round(_float(row.get("data_quality_score"), 0.0), 6),
                 "liquidity_score": round(_float(row.get("liquidity_score"), 0.0), 6),
@@ -164,6 +201,7 @@ def build_watchlist_expansion_rows(
     rows.sort(
         key=lambda item: (
             0 if bool(item.get("selected")) else 1,
+            _asset_class_rank(item.get("asset_class"), effective_policy),
             -float(item.get("score", 0.0) or 0.0),
             -float(item.get("whole_share_edge_margin_bps", 0.0) or 0.0),
             str(item.get("symbol") or ""),

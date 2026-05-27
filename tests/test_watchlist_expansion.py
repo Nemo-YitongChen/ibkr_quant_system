@@ -129,3 +129,84 @@ def test_watchlist_expansion_applies_market_limit_after_quality_sort() -> None:
     assert selected_watchlist_symbols(rows) == ["HIGH"]
     by_symbol = {row["symbol"]: row for row in rows}
     assert by_symbol["LOW"]["selection_reason"] == "market_symbol_limit_reached"
+
+
+def test_watchlist_expansion_can_enforce_small_account_etf_price_cap() -> None:
+    policy = WatchlistExpansionPolicy(
+        max_symbols_per_market=5,
+        min_score=0.5,
+        min_data_quality_score=0.7,
+        min_liquidity_score=0.7,
+        max_expected_cost_bps=35.0,
+        min_expected_edge_bps=8.0,
+        min_whole_share_edge_margin_bps=6.0,
+        max_last_close=100.0,
+        preferred_asset_classes=("etf",),
+    )
+    rows = build_watchlist_expansion_rows(
+        [
+            {
+                "symbol": "SPLG",
+                "action": "ACCUMULATE",
+                "execution_ready": 1,
+                "asset_class": "etf",
+                "score": 0.65,
+                "data_quality_score": 0.9,
+                "liquidity_score": 0.9,
+                "expected_cost_bps": 20.0,
+                "expected_edge_bps": 38.0,
+                "whole_share_edge_margin_bps": 12.0,
+                "whole_share_tradability_reason": "PASS",
+                "last_close": 88.0,
+            },
+            {
+                "symbol": "SPY",
+                "action": "ACCUMULATE",
+                "execution_ready": 1,
+                "asset_class": "etf",
+                "score": 0.8,
+                "data_quality_score": 0.95,
+                "liquidity_score": 0.95,
+                "expected_cost_bps": 15.0,
+                "expected_edge_bps": 60.0,
+                "whole_share_edge_margin_bps": 30.0,
+                "whole_share_tradability_reason": "PASS",
+                "last_close": 600.0,
+            },
+            {
+                "symbol": "AAPL",
+                "action": "ACCUMULATE",
+                "execution_ready": 1,
+                "asset_class": "equity",
+                "score": 0.72,
+                "data_quality_score": 0.9,
+                "liquidity_score": 0.9,
+                "expected_cost_bps": 18.0,
+                "expected_edge_bps": 40.0,
+                "whole_share_edge_margin_bps": 10.0,
+                "whole_share_tradability_reason": "PASS",
+                "last_close": 95.0,
+            },
+        ],
+        market="US",
+        policy=policy,
+    )
+
+    by_symbol = {row["symbol"]: row for row in rows}
+    assert selected_watchlist_symbols(rows) == ["SPLG"]
+    assert "last_close_above_account_cap" in by_symbol["SPY"]["selection_reason"]
+    assert "asset_class_not_preferred" in by_symbol["AAPL"]["selection_reason"]
+
+
+def test_watchlist_expansion_policy_merges_account_overrides() -> None:
+    policy = WatchlistExpansionPolicy().with_overrides(
+        {
+            "max_symbols_per_market": 3,
+            "max_last_close": 100.0,
+            "preferred_asset_classes": ["etf"],
+        }
+    )
+
+    assert policy.max_symbols_per_market == 3
+    assert policy.max_last_close == 100.0
+    assert policy.preferred_asset_classes == ("etf",)

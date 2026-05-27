@@ -9,6 +9,7 @@ from typing import Any, Dict, Iterable, List, Mapping
 
 import yaml
 
+from ..common.account_profile import AccountProfile, load_account_profiles
 from ..common.markets import load_market_universe_config, resolve_market_code
 from ..common.runtime_paths import resolve_repo_path
 from ..common.watchlist_expansion import (
@@ -41,13 +42,17 @@ def parse_args() -> argparse.Namespace:
         default="reports_supervisor/watchlist_expansion",
         help="Directory for CSV/JSON selection diagnostics.",
     )
-    parser.add_argument("--max_symbols_per_market", type=int, default=25)
-    parser.add_argument("--min_score", type=float, default=0.45)
-    parser.add_argument("--min_data_quality_score", type=float, default=0.65)
-    parser.add_argument("--min_liquidity_score", type=float, default=0.45)
-    parser.add_argument("--max_expected_cost_bps", type=float, default=45.0)
-    parser.add_argument("--min_expected_edge_bps", type=float, default=0.0)
-    parser.add_argument("--min_whole_share_edge_margin_bps", type=float, default=0.0)
+    parser.add_argument("--max_symbols_per_market", type=int, default=None)
+    parser.add_argument("--min_score", type=float, default=None)
+    parser.add_argument("--min_data_quality_score", type=float, default=None)
+    parser.add_argument("--min_liquidity_score", type=float, default=None)
+    parser.add_argument("--max_expected_cost_bps", type=float, default=None)
+    parser.add_argument("--min_expected_edge_bps", type=float, default=None)
+    parser.add_argument("--min_whole_share_edge_margin_bps", type=float, default=None)
+    parser.add_argument("--max_last_close", type=float, default=None)
+    parser.add_argument("--account_profile_config", default="config/account_profiles.yaml")
+    parser.add_argument("--account_equity", type=float, default=0.0)
+    parser.add_argument("--account_profile", default="")
     parser.add_argument("--allow_non_whole_share", action="store_true")
     parser.add_argument("--include_cn", action="store_true")
     return parser.parse_args()
@@ -191,17 +196,66 @@ def _reports_by_market(supervisor_config: Mapping[str, Any], *, include_cn: bool
     return grouped
 
 
-def _policy_from_args(args: argparse.Namespace) -> WatchlistExpansionPolicy:
-    return WatchlistExpansionPolicy(
-        max_symbols_per_market=int(args.max_symbols_per_market),
-        min_score=float(args.min_score),
-        min_data_quality_score=float(args.min_data_quality_score),
-        min_liquidity_score=float(args.min_liquidity_score),
-        max_expected_cost_bps=float(args.max_expected_cost_bps),
-        min_expected_edge_bps=float(args.min_expected_edge_bps),
-        min_whole_share_edge_margin_bps=float(args.min_whole_share_edge_margin_bps),
-        require_whole_share_tradability=not bool(args.allow_non_whole_share),
-    )
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return float(default)
+
+
+def _resolve_profile(args: argparse.Namespace) -> AccountProfile | None:
+    profiles = load_account_profiles(BASE_DIR, str(args.account_profile_config or "config/account_profiles.yaml"))
+    profile_name = str(args.account_profile or "").strip().lower()
+    if profile_name:
+        for profile in profiles.profiles:
+            if profile.name.lower() == profile_name:
+                return profile
+    if _safe_float(args.account_equity, 0.0) > 0.0:
+        return profiles.resolve(_safe_float(args.account_equity, 0.0))
+    return None
+
+
+def _policy_from_args(args: argparse.Namespace, profile: AccountProfile | None) -> WatchlistExpansionPolicy:
+    policy = WatchlistExpansionPolicy()
+    if profile is not None:
+        profile_overrides = dict(profile.watchlist_expansion or {})
+        max_last_close_pct = _safe_float(profile_overrides.pop("max_last_close_pct_of_equity", 0.0), 0.0)
+        if max_last_close_pct > 0.0 and _safe_float(args.account_equity, 0.0) > 0.0:
+            profile_overrides["max_last_close"] = round(_safe_float(args.account_equity, 0.0) * max_last_close_pct, 6)
+        policy = policy.with_overrides(profile_overrides)
+
+    cli_overrides: Dict[str, Any] = {}
+    for key in (
+        "max_symbols_per_market",
+        "min_score",
+        "min_data_quality_score",
+        "min_liquidity_score",
+        "max_expected_cost_bps",
+        "min_expected_edge_bps",
+        "min_whole_share_edge_margin_bps",
+        "max_last_close",
+    ):
+        value = getattr(args, key)
+        if value is not None:
+            cli_overrides[key] = value
+    cli_overrides["require_whole_share_tradability"] = not bool(args.allow_non_whole_share)
+    return policy.with_overrides(cli_overrides)
+
+
+def _profile_payload(profile: AccountProfile | None, *, account_equity: float) -> Dict[str, Any]:
+    if profile is None:
+        return {
+            "name": "",
+            "label": "",
+            "equity_band": "",
+            "account_equity": float(account_equity or 0.0),
+        }
+    return {
+        "name": str(profile.name or ""),
+        "label": str(profile.display_label or ""),
+        "equity_band": str(profile.equity_band_label() or ""),
+        "account_equity": float(account_equity or 0.0),
+    }
 
 
 def main() -> None:
@@ -215,7 +269,10 @@ def main() -> None:
 
     supervisor_config = _load_yaml(config_path)
     reports_by_market = _reports_by_market(supervisor_config, include_cn=bool(args.include_cn))
-    policy = _policy_from_args(args)
+    profile = _resolve_profile(args)
+    account_equity = _safe_float(args.account_equity, 0.0)
+    policy = _policy_from_args(args, profile)
+    account_profile_payload = _profile_payload(profile, account_equity=account_equity)
     generated_at = datetime.now(timezone.utc).isoformat()
     all_rows: List[Dict[str, Any]] = []
     summary_rows: List[Dict[str, Any]] = []
@@ -248,7 +305,8 @@ def main() -> None:
             "name": f"auto_expanded_{market.lower()}_quality_growth",
             "generated_at": generated_at,
             "market": market,
-            "selection_policy": policy.__dict__,
+            "account_profile": account_profile_payload,
+            "selection_policy": policy.to_dict(),
             "source_candidate_files": source_files,
             "selected_count": len(symbols),
             "symbols": symbols,
@@ -262,7 +320,14 @@ def main() -> None:
             yaml.safe_dump(watchlist_payload, handle, sort_keys=False, allow_unicode=True)
 
         for row in rows:
-            all_rows.append({**row, "watchlist_path": _display_path(watchlist_path)})
+            all_rows.append(
+                {
+                    **row,
+                    "watchlist_path": _display_path(watchlist_path),
+                    "account_profile": str(account_profile_payload.get("name") or ""),
+                    "account_equity": float(account_profile_payload.get("account_equity", 0.0) or 0.0),
+                }
+            )
         summary_rows.append(
             {
                 "market": market,
@@ -271,6 +336,8 @@ def main() -> None:
                 "selected_symbols": ",".join(symbols),
                 "watchlist_path": _display_path(watchlist_path),
                 "source_candidate_file_count": len(source_files),
+                "account_profile": str(account_profile_payload.get("name") or ""),
+                "account_equity": float(account_profile_payload.get("account_equity", 0.0) or 0.0),
             }
         )
 
@@ -282,7 +349,8 @@ def main() -> None:
                 "generated_at": generated_at,
                 "config_path": str(config_path),
                 "runtime_root": str(runtime_root),
-                "policy": policy.__dict__,
+                "account_profile": account_profile_payload,
+                "policy": policy.to_dict(),
                 "markets": summary_rows,
             },
             indent=2,

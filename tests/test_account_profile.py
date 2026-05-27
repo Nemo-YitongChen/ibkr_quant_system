@@ -45,4 +45,5 @@ def test_resolved_account_profile_summary_exposes_preferred_instruments() -> Non
     )
     assert summary["label"] == "大资金"
     assert "Large Cap Basket" in summary["preferred_instruments"]
+    assert summary["watchlist_expansion"]["max_symbols_per_market"] == 40
     assert summary["summary_text"].startswith("profile=大资金")

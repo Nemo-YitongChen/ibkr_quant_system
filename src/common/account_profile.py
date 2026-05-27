@@ -50,6 +50,7 @@ class AccountProfile:
     preferred_instruments: List[str] = field(default_factory=list)
     notes: List[str] = field(default_factory=list)
     execution: AccountProfileExecutionOverrides = field(default_factory=AccountProfileExecutionOverrides)
+    watchlist_expansion: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, raw: Dict[str, Any] | None) -> "AccountProfile":
@@ -63,6 +64,7 @@ class AccountProfile:
             preferred_instruments=[str(item).strip() for item in list(raw.get("preferred_instruments", []) or []) if str(item).strip()],
             notes=[str(item).strip() for item in list(raw.get("notes", []) or []) if str(item).strip()],
             execution=AccountProfileExecutionOverrides.from_dict(raw.get("execution")),
+            watchlist_expansion=dict(raw.get("watchlist_expansion") or {}),
         )
 
     def matches(self, equity: float) -> bool:
@@ -198,5 +200,6 @@ def account_profile_summary(profile: AccountProfile | None, *, broker_equity: fl
         "preferred_instruments": preferred,
         "notes": list(profile.notes or []),
         "execution_overrides": overrides,
+        "watchlist_expansion": dict(profile.watchlist_expansion or {}),
         "summary_text": " | ".join(summary_parts),
     }
