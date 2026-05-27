@@ -2890,7 +2890,9 @@ class Supervisor:
 
     def _write_auto_order_readiness_summary(self, now: datetime) -> bool:
         policy = self._auto_order_readiness_policy()
-        rows = self._auto_order_readiness_rows() if bool(policy.get("enabled", False)) else []
+        if not bool(policy.get("enabled", False)):
+            return False
+        rows = self._auto_order_readiness_rows()
         summary = build_auto_order_readiness_summary(rows, policy=policy)
         signature_payload = {
             "schema_version": "2026Q2.auto_order_readiness.v1",
@@ -2936,6 +2938,32 @@ class Supervisor:
             blocked["current_portfolio_id"] = str(portfolio_id)
             return False, blocked
         return True, plan
+
+    def _opportunity_gateway_budget_skip(self, report_market: str) -> tuple[bool, str, Dict[str, Any]]:
+        cfg = dict(self.cfg.get("ibkr_gateway_budgets") or {})
+        if not bool(cfg.get("enabled", True)):
+            return False, "", {}
+        if not bool(cfg.get("suppress_opportunity_when_degraded", True)):
+            return False, "", {}
+        raw_statuses = cfg.get("suppress_opportunity_statuses", ["degraded"])
+        if isinstance(raw_statuses, str):
+            raw_statuses = [part.strip() for part in raw_statuses.split(",")]
+        suppress_statuses = {
+            str(value or "").strip().lower()
+            for value in list(raw_statuses or [])
+            if str(value or "").strip()
+        } or {"degraded"}
+        weekly = self._weekly_review_summary_payload()
+        market_code = resolve_market_code(report_market)
+        for raw in list(weekly.get("ibkr_gateway_budget_rows") or []):
+            row = dict(raw or {})
+            if resolve_market_code(str(row.get("market") or "")) != market_code:
+                continue
+            status = str(row.get("status") or "ok").strip().lower()
+            if status in suppress_statuses:
+                return True, f"gateway_budget_{status}", row
+            return False, "", row
+        return False, "", {}
 
     def _weekly_feedback_rows(self) -> List[Dict[str, Any]]:
         payload = self._weekly_review_summary_payload()
@@ -4848,7 +4876,18 @@ class Supervisor:
                                 opp_reason,
                             )
                         else:
-                            if self._run_investment_opportunity(market, item):
+                            skip_budget, budget_reason, budget_row = self._opportunity_gateway_budget_skip(report_market)
+                            if skip_budget:
+                                self._add_reason(market_summary["opportunity_skip_reasons"], budget_reason)
+                                log.info(
+                                    "Skip opportunity before execution: market=%s watchlist=%s reason=%s top_tool=%s projected_recovery_at=%s",
+                                    market.market_code,
+                                    Path(str(item["watchlist_yaml"])).stem,
+                                    budget_reason,
+                                    str(budget_row.get("top_tool") or ""),
+                                    str(budget_row.get("projected_recovery_at") or ""),
+                                )
+                            elif self._run_investment_opportunity(market, item):
                                 item["_last_opportunity_run_ts"] = now.timestamp()
                                 market_summary["opportunity_run"] = int(market_summary["opportunity_run"]) + 1
                     if bool(item.get("submit_investment_execution", False)) and self._auto_order_readiness_enabled():
@@ -4983,6 +5022,18 @@ class Supervisor:
                             market.market_code,
                             Path(str(item["watchlist_yaml"])).stem,
                             fresh_reason,
+                        )
+                        continue
+                    skip_budget, budget_reason, budget_row = self._opportunity_gateway_budget_skip(report_market)
+                    if skip_budget:
+                        self._add_reason(market_summary["opportunity_skip_reasons"], budget_reason)
+                        log.info(
+                            "Skip opportunity: market=%s watchlist=%s reason=%s top_tool=%s projected_recovery_at=%s",
+                            market.market_code,
+                            Path(str(item["watchlist_yaml"])).stem,
+                            budget_reason,
+                            str(budget_row.get("top_tool") or ""),
+                            str(budget_row.get("projected_recovery_at") or ""),
                         )
                         continue
                     if self._run_investment_opportunity(market, item):

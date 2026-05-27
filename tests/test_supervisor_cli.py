@@ -152,6 +152,87 @@ class SupervisorCliTests(unittest.TestCase):
             self.assertEqual(payload["summary"]["portfolio_count"], 1)
             self.assertEqual(payload["rows"][0]["portfolio_id"], "US:watchlist")
 
+    def test_opportunity_gateway_budget_skip_blocks_degraded_market(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            weekly_dir = base / "reports_investment_weekly"
+            weekly_dir.mkdir(parents=True, exist_ok=True)
+            weekly_payload = {
+                "ibkr_gateway_budget_rows": [
+                    {
+                        "market": "US",
+                        "status": "degraded",
+                        "top_tool": "run_investment_opportunity:us:watchlist",
+                        "projected_recovery_at": "2026-05-29T23:59:59+00:00",
+                    }
+                ]
+            }
+            (weekly_dir / "weekly_review_summary.json").write_text(
+                json.dumps(weekly_payload),
+                encoding="utf-8",
+            )
+            cfg_path = base / "supervisor.yaml"
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        f'dashboard_weekly_review_dir: "{weekly_dir}"',
+                        "ibkr_gateway_budgets:",
+                        "  enabled: true",
+                        "  suppress_opportunity_when_degraded: true",
+                        "  suppress_opportunity_statuses: [degraded]",
+                        "markets:",
+                        '  - name: "us"',
+                        '    market: "US"',
+                        "    enabled: true",
+                        "    reports: []",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(cfg_path))
+
+            skip, reason, row = supervisor._opportunity_gateway_budget_skip("US")
+
+            self.assertTrue(skip)
+            self.assertEqual(reason, "gateway_budget_degraded")
+            self.assertEqual(row["top_tool"], "run_investment_opportunity:us:watchlist")
+
+    def test_opportunity_gateway_budget_skip_respects_policy_disable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            weekly_dir = base / "reports_investment_weekly"
+            weekly_dir.mkdir(parents=True, exist_ok=True)
+            (weekly_dir / "weekly_review_summary.json").write_text(
+                json.dumps({"ibkr_gateway_budget_rows": [{"market": "US", "status": "degraded"}]}),
+                encoding="utf-8",
+            )
+            cfg_path = base / "supervisor.yaml"
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        f'dashboard_weekly_review_dir: "{weekly_dir}"',
+                        "ibkr_gateway_budgets:",
+                        "  enabled: true",
+                        "  suppress_opportunity_when_degraded: false",
+                        "markets:",
+                        '  - name: "us"',
+                        '    market: "US"',
+                        "    enabled: true",
+                        "    reports: []",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(cfg_path))
+
+            skip, reason, row = supervisor._opportunity_gateway_budget_skip("US")
+
+            self.assertFalse(skip)
+            self.assertEqual(reason, "")
+            self.assertEqual(row, {})
+
     def test_managed_process_stop_clears_handle_after_graceful_shutdown(self):
         proc = unittest.mock.Mock()
         proc.poll.side_effect = [None]
@@ -2993,6 +3074,7 @@ class SupervisorCliTests(unittest.TestCase):
                     [
                         'timezone: "Australia/Sydney"',
                         f'summary_out_dir: "{summary_dir}"',
+                        "dashboard_enabled: false",
                         "poll_sec: 30",
                         "markets:",
                         '  - name: "us"',

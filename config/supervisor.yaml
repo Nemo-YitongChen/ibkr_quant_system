@@ -20,6 +20,8 @@ ibkr_gateway_budgets:
   stale_telemetry_warning_hours: 72
   over_budget_degraded_ratio: 1.5
   missing_telemetry_status: "warning"
+  suppress_opportunity_when_degraded: true
+  suppress_opportunity_statuses: ["degraded"]
   markets:
     US:
       weekly_gateway_request_budget: 2000
