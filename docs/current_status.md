@@ -178,6 +178,7 @@
 - **dashboard v2 blocks 已完成 home / advanced 信息架构收敛：首页只保留 Ops Health、Evidence Focus、Execution Quality、Governance / Control Actions，高级模式展开 market views、waterfall、unified evidence、blocked-vs-allowed 与 control history**
 - **策略技术债第一批已收口：MR/BO primary signal weights、mid regime sizing 和 fusion weights 已配置化，默认行为不变，并补 pure signal regression 覆盖 breakout 上下突破、short disabled 与高波动/深回撤收缩**
 - **Evidence Focus Lifecycle 路径已完成 2026-05-09 复核：Step 1-7 方向正确且已落地，下一阶段不应重复补基础链路，而应推进 weekly review 基于 evidence 生成单一 primary strategy parameter 建议，继续保持只建议、不自动生效**
+- **2026-05-27 已补开市交易分析健康层：dashboard JSON/v2/首页现在会把“开市、报告 fresh、auto-order gate 证据、submit blocker、数据关注”串成统一 `open_market_analysis_summary`，supervisor 每轮会把 scoped `auto_order_readiness.json` 写到当前 runtime summary，避免开市市场看起来 fresh 但缺少可提交门控证据**
 - **后续开发报告已补充到 `docs/development_report_2026-05-09.md`：下一步明确为 evidence-driven single strategy parameter suggestions，后续再推进 dashboard/weekly 大文件拆分、config defaults+overrides、walk-forward acceptance rules、execution quality evidence 和 live 变更四件套**
 - **weekly review 已新增 read-only `strategy_parameter_suggestions` 产物：当 candidate model review 出现 `SIGNAL_RANKING_INVERTED` 且样本足够时，每个 market/portfolio/week 只生成一个 primary strategy field 建议，带 linked evidence、acceptance rule、rollback note 和 `auto_apply=0`**
 - **dashboard control audit 已能关联 strategy parameter suggestions：控制 payload 可携带 `strategy_parameter_suggestion_id/primary_field/config_path/resolution_status/resolution_note`，审计历史和 dashboard v2 Governance block 会展示 linked strategy suggestion 与处理状态，但仍不自动写配置**

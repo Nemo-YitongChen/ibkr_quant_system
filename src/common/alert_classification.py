@@ -88,6 +88,8 @@ def classify_alert_row(row: Dict[str, Any] | None) -> str:
         return "governance"
     if category == "MARKET_STATE":
         return "market_state"
+    if category == "OPEN_MARKET":
+        return "open_market_analysis"
     derived = classify_error_text(detail, status=status)
     return derived if derived != "none" else (category.lower() or "unknown")
 

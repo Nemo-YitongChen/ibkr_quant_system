@@ -11,6 +11,7 @@ DASHBOARD_BLOCK_CATEGORY_ADVANCED = "advanced"
 
 HOME_DASHBOARD_BLOCK_IDS = [
     "ops_health",
+    "open_market_analysis",
     "auto_order_readiness",
     "evidence_focus_actions",
     "evidence_quality",
@@ -359,6 +360,41 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "remediation_plan": remediation_plan,
             "frontier_candidates": frontier_candidates,
             "portfolios": rows,
+        },
+    }
+
+
+def build_open_market_analysis_block(payload: Dict[str, Any]) -> Dict[str, Any]:
+    summary = _dict(payload.get("open_market_analysis_summary"))
+    rows = _rows(summary.get("rows"), limit=50)
+    market_rows = _rows(summary.get("market_rows"), limit=20)
+    status = str(summary.get("status") or "").strip().lower() or "warn"
+    if not summary:
+        status = "warn"
+    return {
+        "id": "open_market_analysis",
+        "title": "Open Market Trading Analysis",
+        "status": "fail" if status == "degraded" else "warn" if status == "warning" else "ok",
+        "summary": str(summary.get("summary_text") or "open_market_analysis missing"),
+        "metrics": {
+            "open_market_count": _int(summary.get("open_market_count")),
+            "open_portfolio_count": _int(summary.get("open_portfolio_count")),
+            "fresh_open_report_count": _int(summary.get("fresh_open_report_count")),
+            "stale_open_report_count": _int(summary.get("stale_open_report_count")),
+            "actionable_open_count": _int(summary.get("actionable_open_count")),
+            "submit_enabled_open_count": _int(summary.get("submit_enabled_open_count")),
+            "auto_order_artifact_present": int(bool(summary.get("auto_order_artifact_present", False))),
+            "auto_ready_open_count": _int(summary.get("auto_ready_open_count")),
+            "auto_blocked_open_count": _int(summary.get("auto_blocked_open_count")),
+            "auto_missing_open_count": _int(summary.get("auto_missing_open_count")),
+            "data_attention_open_count": _int(summary.get("data_attention_open_count")),
+            "missing_market_state_count": _int(summary.get("missing_market_state_count")),
+            "primary_reason": str(summary.get("primary_reason") or ""),
+        },
+        "rows": {
+            "market_rows": market_rows,
+            "open_portfolios": rows,
+            "primary_reason_counts": _dict(summary.get("primary_reason_counts")),
         },
     }
 
@@ -842,6 +878,7 @@ def build_blocked_vs_allowed_expost_block(payload: Dict[str, Any]) -> Dict[str, 
 def build_dashboard_v2_blocks(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     blocks = [
         build_ops_health_block(payload),
+        build_open_market_analysis_block(payload),
         build_auto_order_readiness_block(payload),
         build_evidence_focus_actions_block(payload),
         build_evidence_quality_block(payload),

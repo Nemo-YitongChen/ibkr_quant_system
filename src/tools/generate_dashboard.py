@@ -40,6 +40,7 @@ from ..common.evidence_focus_actions import (
 from ..common.governance_health import build_governance_health_summary
 from ..common.market_structure import load_market_structure, market_structure_summary
 from ..common.markets import market_config_path, resolve_market_code, symbol_matches_market
+from ..common.open_market_analysis import build_open_market_analysis_summary
 from ..common.runtime_paths import resolve_repo_path, resolve_scoped_runtime_path, scope_from_ibkr_config
 from ..common.sqlite_utils import connect_sqlite
 from ..common.storage import Storage
@@ -5820,6 +5821,7 @@ def _build_ops_overview(
     evidence_focus_summary: Dict[str, Any] | None = None,
     ibkr_gateway_budget_summary: Dict[str, Any] | None = None,
     auto_order_readiness: Dict[str, Any] | None = None,
+    open_market_analysis_summary: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     # 运维总览只聚合“现在最值得先处理”的信号：preflight、报告新鲜度、组合健康度和执行模式偏差。
     checks = [dict(row) for row in list(preflight_summary.get("checks", []) or []) if isinstance(row, dict)]
@@ -5913,6 +5915,21 @@ def _build_ops_overview(
     auto_order_rejected_candidate_count = int(
         auto_order_submit_plan.get("rejected_candidate_count", 0) or len(auto_order_rejected_candidates)
     )
+    open_market_analysis = dict(open_market_analysis_summary or {})
+    open_market_status = str(open_market_analysis.get("status") or "").strip().lower()
+    open_market_status_label = str(open_market_analysis.get("status_label") or "").strip()
+    open_market_summary_text = str(open_market_analysis.get("summary_text") or "").strip()
+    open_market_count = int(open_market_analysis.get("open_market_count", 0) or 0)
+    open_market_portfolio_count = int(open_market_analysis.get("open_portfolio_count", 0) or 0)
+    open_market_fresh_report_count = int(open_market_analysis.get("fresh_open_report_count", 0) or 0)
+    open_market_stale_report_count = int(open_market_analysis.get("stale_open_report_count", 0) or 0)
+    open_market_actionable_count = int(open_market_analysis.get("actionable_open_count", 0) or 0)
+    open_market_submit_enabled_count = int(open_market_analysis.get("submit_enabled_open_count", 0) or 0)
+    open_market_auto_ready_count = int(open_market_analysis.get("auto_ready_open_count", 0) or 0)
+    open_market_auto_blocked_count = int(open_market_analysis.get("auto_blocked_open_count", 0) or 0)
+    open_market_auto_missing_count = int(open_market_analysis.get("auto_missing_open_count", 0) or 0)
+    open_market_data_attention_count = int(open_market_analysis.get("data_attention_open_count", 0) or 0)
+    open_market_primary_reason = str(open_market_analysis.get("primary_reason") or "").strip()
     gateway_runtime_summary = _build_gateway_runtime_summary(preflight_summary, control_payload)
     alert_rows: List[Dict[str, Any]] = []
     for row in warning_rows[:8]:
@@ -6012,6 +6029,15 @@ def _build_ops_overview(
                 detail,
             )
         )
+    if open_market_status in {"warning", "degraded"}:
+        alert_rows.append(
+            _ops_alert_row(
+                "OPEN_MARKET",
+                "analysis",
+                "FAIL" if open_market_status == "degraded" else "WARN",
+                open_market_summary_text or open_market_primary_reason or "open_market_analysis_not_ready",
+            )
+        )
     alert_class_counts: Dict[str, int] = {}
     alert_severity_counts: Dict[str, int] = {"fail": 0, "warn": 0, "ok": 0}
     for row in alert_rows:
@@ -6058,6 +6084,7 @@ def _build_ops_overview(
         f"evidence_urgent={evidence_focus_urgent_count} | "
         f"gateway_budget={gateway_budget_status} | "
         f"auto_submit_plan={auto_order_submit_plan_status or 'missing'} | "
+        f"open_market_analysis={open_market_status or 'missing'} | "
         f"offline_recovery={auto_order_offline_recovery_required_count} | "
         f"mode_mismatch={execution_mismatch_count} | "
         f"gateway_runtime={gateway_runtime_summary.get('status', 'unknown')} | "
@@ -6117,6 +6144,20 @@ def _build_ops_overview(
         "auto_order_submit_selected_total_gross_value": auto_order_submit_selected_total_gross_value,
         "auto_order_frontier_candidate_count": auto_order_frontier_candidate_count,
         "auto_order_rejected_candidate_count": auto_order_rejected_candidate_count,
+        "open_market_analysis_status": open_market_status,
+        "open_market_analysis_status_label": open_market_status_label,
+        "open_market_analysis_summary_text": open_market_summary_text,
+        "open_market_count": open_market_count,
+        "open_market_portfolio_count": open_market_portfolio_count,
+        "open_market_fresh_report_count": open_market_fresh_report_count,
+        "open_market_stale_report_count": open_market_stale_report_count,
+        "open_market_actionable_count": open_market_actionable_count,
+        "open_market_submit_enabled_count": open_market_submit_enabled_count,
+        "open_market_auto_ready_count": open_market_auto_ready_count,
+        "open_market_auto_blocked_count": open_market_auto_blocked_count,
+        "open_market_auto_missing_count": open_market_auto_missing_count,
+        "open_market_data_attention_count": open_market_data_attention_count,
+        "open_market_primary_reason": open_market_primary_reason,
         "control_service_status": str(service_state.get("status", "disabled") or "disabled"),
         "gateway_runtime_summary": gateway_runtime_summary,
         "gateway_runtime_status": str(gateway_runtime_summary.get("status", "") or ""),
@@ -7852,6 +7893,10 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
     feedback_maturity_alert_overview = _build_feedback_maturity_alert_overview(feedback_automation_overview)
     labeling_skip_overview = _build_labeling_skip_overview(cards)
     labeling_ready_overview = _build_labeling_ready_overview(labeling_skip_overview)
+    open_market_analysis_summary = build_open_market_analysis_summary(
+        trade_cards,
+        auto_order_readiness=auto_order_readiness,
+    )
     ops_overview = _build_ops_overview(
         trade_cards,
         preflight_summary=preflight_summary,
@@ -7863,6 +7908,7 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
         evidence_focus_summary=evidence_focus_summary,
         ibkr_gateway_budget_summary=weekly_ibkr_gateway_budget_summary,
         auto_order_readiness=auto_order_readiness,
+        open_market_analysis_summary=open_market_analysis_summary,
     )
     gateway_runtime_summary = dict(ops_overview.get("gateway_runtime_summary", {}) or {})
     for card in list(trade_cards) + list(dry_run_cards):
@@ -7874,6 +7920,7 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
         "ibkr_history_probe_summary": ibkr_history_probe_summary,
         "ops_overview": ops_overview,
         "auto_order_readiness": auto_order_readiness,
+        "open_market_analysis_summary": open_market_analysis_summary,
         "ibkr_gateway_budget": weekly_ibkr_gateway_budget_payload,
         "ibkr_gateway_budget_rows": weekly_ibkr_gateway_budget_rows,
         "walk_forward_acceptance": walk_forward_acceptance_payload,
@@ -8077,6 +8124,20 @@ def _simple_ops_overview_rows(ops_overview: Dict[str, Any]) -> List[List[str]]:
     else:
         auto_order_label = "未生成 | auto_order_readiness"
 
+    open_market_status = str(ops_overview.get("open_market_analysis_status_label") or "").strip()
+    if not open_market_status:
+        open_market_status = str(ops_overview.get("open_market_analysis_status") or "missing").strip()
+    open_market_label = (
+        f"{open_market_status} | "
+        f"open={int(ops_overview.get('open_market_portfolio_count', 0) or 0)} "
+        f"fresh={int(ops_overview.get('open_market_fresh_report_count', 0) or 0)} "
+        f"auto_ready={int(ops_overview.get('open_market_auto_ready_count', 0) or 0)} "
+        f"blocked={int(ops_overview.get('open_market_auto_blocked_count', 0) or 0)}"
+    )
+    open_market_reason = str(ops_overview.get("open_market_primary_reason") or "").strip()
+    if open_market_reason:
+        open_market_label += f" | {open_market_reason}"
+
     return [
         [
             "Preflight",
@@ -8099,6 +8160,10 @@ def _simple_ops_overview_rows(ops_overview: Dict[str, Any]) -> List[List[str]]:
         [
             "自动下单",
             auto_order_label,
+        ],
+        [
+            "开市交易分析",
+            open_market_label,
         ],
         [
             "市场状态缺口",

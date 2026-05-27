@@ -25,7 +25,11 @@ from ..common.adaptive_strategy import (
     adaptive_strategy_market_profile,
     load_adaptive_strategy,
 )
-from ..common.auto_order_readiness import build_auto_order_submit_plan, evaluate_auto_order_readiness
+from ..common.auto_order_readiness import (
+    build_auto_order_readiness_summary,
+    build_auto_order_submit_plan,
+    evaluate_auto_order_readiness,
+)
 from ..common.ibkr_client_id import (
     IBKR_CLIENT_ID_OFFSET_ENV,
     IBKR_CLIENT_ID_RETRY_SPAN_ENV,
@@ -276,6 +280,7 @@ class Supervisor:
         self._active_market: Optional[str] = None
         self._macro_signature_cache: Dict[str, tuple[float, str]] = {}
         self._last_cycle_summary_signature: str = ""
+        self._last_auto_order_readiness_signature: str = ""
         self._last_market_summary_signatures: Dict[str, str] = {}
         self._dashboard_opened_once = False
         self._runtime_scope_cache: Dict[str, Any] = {}
@@ -2883,6 +2888,34 @@ class Supervisor:
             policy=self._auto_order_readiness_policy(),
         )
 
+    def _write_auto_order_readiness_summary(self, now: datetime) -> bool:
+        policy = self._auto_order_readiness_policy()
+        rows = self._auto_order_readiness_rows() if bool(policy.get("enabled", False)) else []
+        summary = build_auto_order_readiness_summary(rows, policy=policy)
+        signature_payload = {
+            "schema_version": "2026Q2.auto_order_readiness.v1",
+            "config_path": str(_resolve_path(self.config_path)),
+            "policy": policy,
+            "summary": summary,
+            "rows": rows,
+        }
+        signature = hashlib.sha1(
+            json.dumps(signature_payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        out_dir = self._summary_output_dir()
+        json_path = out_dir / "auto_order_readiness.json"
+        if signature == self._last_auto_order_readiness_signature and json_path.exists():
+            return False
+        out_dir.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "generated_at": now.astimezone(timezone.utc).isoformat(),
+            **signature_payload,
+        }
+        json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        self._last_auto_order_readiness_signature = signature
+        log.info("Wrote auto-order readiness summary -> %s", json_path)
+        return True
+
     def _auto_order_submit_plan_allows_item(self, item: Dict[str, Any], report_market: str) -> tuple[bool, Dict[str, Any]]:
         plan = self._auto_order_submit_plan()
         portfolio_id = self._portfolio_id_for_item(item, report_market)
@@ -5004,7 +5037,8 @@ class Supervisor:
                 force=bool(labeling_ran and self._weekly_review_enabled()),
             )
             summary_changed = self._write_cycle_summary(now, cycle_summary)
-            if summary_changed or labeling_ran or weekly_review_ran:
+            auto_order_readiness_changed = self._write_auto_order_readiness_summary(now)
+            if summary_changed or auto_order_readiness_changed or labeling_ran or weekly_review_ran:
                 self._refresh_dashboard()
             self._write_dashboard_control_state()
         finally:

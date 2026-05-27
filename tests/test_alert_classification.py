@@ -20,6 +20,7 @@ def test_classify_alert_row_maps_ops_categories() -> None:
     assert classify_alert_row({"category": "PREFLIGHT", "name": "ibkr_port:127.0.0.1:4002"}) == "gateway_port"
     assert classify_alert_row({"category": "REPORT", "detail": "stale"}) == "report_freshness"
     assert classify_alert_row({"category": "DATA", "detail": "history fallback"}) == "market_data"
+    assert classify_alert_row({"category": "OPEN_MARKET", "detail": "auto blocked"}) == "open_market_analysis"
     assert alert_severity({"status": "DEGRADED"}) == "fail"
     assert alert_severity({"status": "WARN"}) == "warn"
 

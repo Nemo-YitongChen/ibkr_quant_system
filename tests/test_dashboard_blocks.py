@@ -97,6 +97,25 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
                 },
             ],
         },
+        "open_market_analysis_summary": {
+            "status": "warning",
+            "summary_text": "open_markets=1 open_portfolios=1 auto_blocked=1",
+            "open_market_count": 1,
+            "open_portfolio_count": 1,
+            "fresh_open_report_count": 1,
+            "stale_open_report_count": 0,
+            "actionable_open_count": 1,
+            "submit_enabled_open_count": 1,
+            "auto_order_artifact_present": True,
+            "auto_ready_open_count": 0,
+            "auto_blocked_open_count": 1,
+            "auto_missing_open_count": 0,
+            "data_attention_open_count": 0,
+            "missing_market_state_count": 0,
+            "primary_reason": "preflight_stale",
+            "market_rows": [{"market": "US", "open_portfolio_count": 1}],
+            "rows": [{"market": "US", "portfolio_id": "US:watchlist"}],
+        },
         "artifact_health_overview": {"fail_count": 0, "warn_count": 1},
         "governance_health_summary": {"blocked_count": 0, "warn_count": 1},
         "dashboard_control": {
@@ -276,6 +295,7 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
 
     assert list(by_id) == [
         "ops_health",
+        "open_market_analysis",
         "auto_order_readiness",
         "evidence_focus_actions",
         "evidence_quality",
@@ -290,6 +310,7 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
     ]
     assert [block["id"] for block in blocks if block["category"] == "home"] == [
         "ops_health",
+        "open_market_analysis",
         "auto_order_readiness",
         "evidence_focus_actions",
         "evidence_quality",
@@ -316,6 +337,9 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
     assert by_id["ops_health"]["metrics"]["auto_order_submit_plan_status"] == "BLOCKED"
     assert by_id["ops_health"]["metrics"]["auto_order_primary_block_reason"] == "preflight_stale"
     assert by_id["ops_health"]["metrics"]["auto_order_offline_recovery_required_count"] == 1
+    assert by_id["open_market_analysis"]["metrics"]["open_market_count"] == 1
+    assert by_id["open_market_analysis"]["metrics"]["auto_blocked_open_count"] == 1
+    assert by_id["open_market_analysis"]["metrics"]["primary_reason"] == "preflight_stale"
     assert by_id["auto_order_readiness"]["metrics"]["portfolio_count"] == 2
     assert by_id["auto_order_readiness"]["metrics"]["blocked_count"] == 1
     assert by_id["auto_order_readiness"]["metrics"]["offline_recovery_required_count"] == 1

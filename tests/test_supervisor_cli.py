@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
-from datetime import datetime
+from datetime import datetime, timezone
 import os
 from pathlib import Path
 from unittest.mock import patch
@@ -108,6 +108,49 @@ class SupervisorCliTests(unittest.TestCase):
                 allowed, plan = supervisor._auto_order_submit_plan_allows_item(item, "US")
             self.assertFalse(allowed)
             self.assertEqual(plan["reason"], "not_selected_by_submit_plan")
+
+    def test_write_auto_order_readiness_summary_uses_summary_out_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = Path(tmp) / "supervisor.yaml"
+            out_dir = Path(tmp) / "reports_supervisor"
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        f'summary_out_dir: "{out_dir}"',
+                        "auto_order_readiness:",
+                        "  enabled: true",
+                        "markets:",
+                        '  - name: "us"',
+                        '    market: "US"',
+                        "    enabled: true",
+                        "    reports: []",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(cfg_path))
+            with patch.object(
+                supervisor,
+                "_auto_order_readiness_rows",
+                return_value=[
+                    {
+                        "market": "US",
+                        "portfolio_id": "US:watchlist",
+                        "status": "READY",
+                        "ready": True,
+                        "account_mode": "paper",
+                    }
+                ],
+            ):
+                changed = supervisor._write_auto_order_readiness_summary(
+                    datetime(2026, 5, 27, 4, 0, tzinfo=timezone.utc)
+                )
+
+            payload = json.loads((out_dir / "auto_order_readiness.json").read_text(encoding="utf-8"))
+            self.assertTrue(changed)
+            self.assertEqual(payload["summary"]["portfolio_count"], 1)
+            self.assertEqual(payload["rows"][0]["portfolio_id"], "US:watchlist")
 
     def test_managed_process_stop_clears_handle_after_graceful_shutdown(self):
         proc = unittest.mock.Mock()

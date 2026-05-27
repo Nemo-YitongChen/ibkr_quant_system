@@ -634,6 +634,11 @@ def test_simple_ops_overview_rows_include_status_rollout_counts() -> None:
             "evidence_focus_primary_action": "Review gate thresholds",
             "auto_order_submit_plan_status": "READY_SINGLE_CANDIDATE",
             "auto_order_submit_selected_portfolio_id": "US:watchlist",
+            "open_market_analysis_status_label": "开市分析可用",
+            "open_market_portfolio_count": 1,
+            "open_market_fresh_report_count": 1,
+            "open_market_auto_ready_count": 1,
+            "open_market_auto_blocked_count": 0,
             "control_service_status": "configured",
         }
     )
@@ -641,6 +646,7 @@ def test_simple_ops_overview_rows_include_status_rollout_counts() -> None:
     assert any(row[0] == "市场数据健康" and "研究Fallback" in row[1] for row in rows)
     assert any(row[0] == "量化客户端" and "量化客户端空闲" in row[1] for row in rows)
     assert any(row[0] == "自动下单" and "US:watchlist" in row[1] for row in rows)
+    assert any(row[0] == "开市交易分析" and "auto_ready=1" in row[1] for row in rows)
     assert any(row[0] == "Evidence复核" and "HK Review gate thresholds" in row[1] for row in rows)
 
 
@@ -822,6 +828,41 @@ def test_build_ops_overview_surfaces_auto_order_submit_plan_alert() -> None:
     assert categories["AUTO_ORDER"]["status"] == "WARN"
     assert categories["AUTO_ORDER"]["alert_class"] == "auto_order"
     assert "no_single_safe_submit_candidate" in categories["AUTO_ORDER"]["detail"]
+
+
+def test_build_ops_overview_surfaces_open_market_analysis_alert() -> None:
+    overview = _build_ops_overview(
+        [],
+        preflight_summary={"pass_count": 1, "warn_count": 0, "fail_count": 0, "checks": []},
+        control_payload={"service": {"status": "configured"}, "actions": {}},
+        execution_mode_summary={"mismatch_count": 0},
+        status_rollout_summary={
+            "market_state_missing_count": 0,
+            "data_attention_count": 0,
+            "data_research_fallback_count": 0,
+            "market_rows": [],
+        },
+        artifact_health_summary={"warning_count": 0, "degraded_count": 0},
+        governance_health_summary={"status": "ready"},
+        open_market_analysis_summary={
+            "status": "warning",
+            "status_label": "开市门控证据缺失",
+            "summary_text": "open_markets=1 auto_missing=1",
+            "open_market_count": 1,
+            "open_portfolio_count": 1,
+            "fresh_open_report_count": 1,
+            "auto_missing_open_count": 1,
+            "primary_reason": "auto_order_readiness_missing",
+        },
+    )
+
+    categories = {row["category"]: row for row in overview["alert_rows"]}
+    assert overview["open_market_analysis_status"] == "warning"
+    assert overview["open_market_auto_missing_count"] == 1
+    assert "open_market_analysis=warning" in overview["summary_text"]
+    assert categories["OPEN_MARKET"]["status"] == "WARN"
+    assert categories["OPEN_MARKET"]["alert_class"] == "open_market_analysis"
+    assert "auto_missing=1" in categories["OPEN_MARKET"]["detail"]
 
 
 def test_build_ops_overview_classifies_preflight_gateway_port_alerts() -> None:
