@@ -568,3 +568,41 @@ def test_auto_order_readiness_block_warns_when_submit_plan_not_ready():
     assert block["metrics"]["submit_plan_status"] == "BLOCKED"
     assert block["metrics"]["submit_plan_reason"] == "no_single_safe_submit_candidate"
     assert block["metrics"]["frontier_candidate_count"] == 1
+
+
+def test_auto_order_readiness_block_warns_on_stale_readiness_health():
+    payload = {
+        "auto_order_readiness": {
+            "summary": {
+                "status": "ready",
+                "summary_text": "ready single candidate",
+                "ready_count": 1,
+                "blocked_count": 0,
+                "submit_plan": {
+                    "status": "READY_SINGLE_CANDIDATE",
+                    "ready": True,
+                    "selected_portfolio_id": "US:watchlist",
+                },
+            }
+        },
+        "auto_order_readiness_health": {
+            "status": "warning",
+            "reason": "older_than_gateway_budget",
+            "summary_text": "自动下单证据过旧: older_than_gateway_budget",
+            "generated_at": "2026-05-27T04:24:31+00:00",
+            "age_hours": 23.59,
+            "max_age_hours": 168,
+            "gateway_budget_generated_at": "2026-05-28T23:04:35+00:00",
+            "older_than_gateway_budget": True,
+            "secondary_reasons": ["older_than_gateway_budget"],
+        },
+    }
+
+    block = _by_id(build_dashboard_v2_blocks(payload))["auto_order_readiness"]
+
+    assert block["status"] == "warn"
+    assert block["metrics"]["readiness_health_status"] == "warning"
+    assert block["metrics"]["readiness_health_reason"] == "older_than_gateway_budget"
+    assert block["metrics"]["readiness_age_hours"] == 23.59
+    assert block["metrics"]["readiness_older_than_gateway_budget"] == 1
+    assert "自动下单证据过旧" in block["summary"]

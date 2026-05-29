@@ -262,6 +262,9 @@ def build_ops_health_block(payload: Dict[str, Any]) -> Dict[str, Any]:
                 ops.get("ibkr_gateway_budget_missing_telemetry_market_count")
             ),
             "auto_order_status": str(ops.get("auto_order_status") or ""),
+            "auto_order_readiness_health_status": str(ops.get("auto_order_readiness_health_status") or "ready"),
+            "auto_order_readiness_health_reason": str(ops.get("auto_order_readiness_health_reason") or ""),
+            "auto_order_readiness_age_hours": ops.get("auto_order_readiness_age_hours"),
             "auto_order_blocked_count": _int(ops.get("auto_order_blocked_count")),
             "auto_order_ready_count": _int(ops.get("auto_order_ready_count")),
             "auto_order_primary_block_reason": str(ops.get("auto_order_primary_block_reason") or ""),
@@ -280,6 +283,7 @@ def build_ops_health_block(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
     auto_order = _dict(payload.get("auto_order_readiness"))
+    health = _dict(payload.get("auto_order_readiness_health"))
     summary = _dict(auto_order.get("summary"))
     submit_plan = _dict(summary.get("submit_plan"))
     rows = _rows(auto_order.get("rows"), limit=50)
@@ -294,6 +298,9 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
     )
     submit_status = str(submit_plan.get("status") or "").strip().upper()
     summary_status = str(summary.get("status") or "").strip().lower()
+    health_status = str(health.get("status") or "ready").strip().lower()
+    health_reason = str(health.get("reason") or "").strip()
+    health_summary = str(health.get("summary_text") or "").strip()
     if not auto_order:
         status = "warn"
         summary_text = "auto_order_readiness artifact missing"
@@ -306,6 +313,12 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
     else:
         status = "fail" if summary_status in {"fail", "failed", "error", "degraded"} else "warn"
         summary_text = str(summary.get("summary_text") or f"submit_plan={submit_status or 'missing'}")
+    if health_status == "degraded":
+        status = "fail"
+    elif health_status == "warning" and status == "ok":
+        status = "warn"
+    if health_status in {"warning", "degraded"} and health_summary:
+        summary_text = f"{summary_text} | {health_summary}"
     return {
         "id": "auto_order_readiness",
         "title": "Auto Order Submit Gate",
@@ -324,6 +337,15 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "offline_recovery_required_count": _int(summary.get("offline_recovery_required_count")),
             "offline_recovery_markets": list(summary.get("offline_recovery_markets") or []),
             "offline_recovery_summary_text": str(summary.get("offline_recovery_summary_text") or ""),
+            "readiness_health_status": health_status,
+            "readiness_health_reason": health_reason,
+            "readiness_health_summary_text": health_summary,
+            "readiness_generated_at": str(health.get("generated_at") or ""),
+            "readiness_age_hours": health.get("age_hours"),
+            "readiness_max_age_hours": float(health.get("max_age_hours", 0.0) or 0.0),
+            "gateway_budget_generated_at": str(health.get("gateway_budget_generated_at") or ""),
+            "readiness_older_than_gateway_budget": int(bool(health.get("older_than_gateway_budget", False))),
+            "readiness_secondary_reasons": list(health.get("secondary_reasons") or []),
             "submit_plan_status": submit_status,
             "submit_plan_ready": bool(submit_plan.get("ready", False)),
             "submit_plan_reason": str(submit_plan.get("reason") or ""),

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 
 import src.tools.generate_dashboard as generate_dashboard
 from src.tools.generate_dashboard import (
+    _build_auto_order_readiness_health,
     _build_dashboard_status_rollout_summary,
     _build_evidence_focus_actions,
     _build_evidence_focus_summary,
@@ -828,6 +830,53 @@ def test_build_ops_overview_surfaces_auto_order_submit_plan_alert() -> None:
     assert categories["AUTO_ORDER"]["status"] == "WARN"
     assert categories["AUTO_ORDER"]["alert_class"] == "auto_order"
     assert "no_single_safe_submit_candidate" in categories["AUTO_ORDER"]["detail"]
+
+
+def test_auto_order_readiness_health_warns_when_older_than_gateway_budget() -> None:
+    health = _build_auto_order_readiness_health(
+        {"generated_at": "2026-05-27T04:24:31+00:00", "summary": {"status": "blocked"}},
+        weekly_ibkr_gateway_budget_payload={"generated_at": "2026-05-28T23:04:35+00:00"},
+        max_age_hours=168,
+        now=datetime(2026, 5, 29, 4, 0, tzinfo=timezone.utc),
+    )
+
+    assert health["status"] == "warning"
+    assert health["reason"] == "older_than_gateway_budget"
+    assert health["older_than_gateway_budget"] is True
+    assert health["age_hours"] == 47.59
+    assert "gateway_budget_generated_at=2026-05-28T23:04:35+00:00" in health["summary_text"]
+
+
+def test_build_ops_overview_surfaces_auto_order_readiness_freshness_alert() -> None:
+    overview = _build_ops_overview(
+        [],
+        preflight_summary={"pass_count": 1, "warn_count": 0, "fail_count": 0, "checks": []},
+        control_payload={"service": {"status": "configured"}, "actions": {}},
+        execution_mode_summary={"mismatch_count": 0},
+        status_rollout_summary={
+            "market_state_missing_count": 0,
+            "data_attention_count": 0,
+            "data_research_fallback_count": 0,
+            "market_rows": [],
+        },
+        artifact_health_summary={"warning_count": 0, "degraded_count": 0},
+        governance_health_summary={"status": "ready"},
+        auto_order_readiness={"summary": {"status": "ready", "submit_plan": {"status": "READY_SINGLE_CANDIDATE", "ready": True}}},
+        auto_order_readiness_health={
+            "status": "warning",
+            "status_label": "自动下单证据过旧",
+            "reason": "older_than_gateway_budget",
+            "summary_text": "自动下单证据过旧: older_than_gateway_budget",
+            "age_hours": 23.59,
+            "max_age_hours": 168,
+        },
+    )
+
+    categories = {(row["category"], row["name"]): row for row in overview["alert_rows"]}
+    assert overview["auto_order_readiness_health_status"] == "warning"
+    assert overview["auto_order_readiness_health_reason"] == "older_than_gateway_budget"
+    assert "auto_order_health=warning" in overview["summary_text"]
+    assert categories[("AUTO_ORDER", "readiness_freshness")]["status"] == "WARN"
 
 
 def test_build_ops_overview_surfaces_open_market_analysis_alert() -> None:

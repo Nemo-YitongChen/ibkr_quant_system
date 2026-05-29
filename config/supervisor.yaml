@@ -37,6 +37,7 @@ auto_order_readiness:
   enabled: true
   allow_live_submit: false
   excluded_markets: ["CN"]
+  max_artifact_age_hours: 24
   max_preflight_age_hours: 24
   max_weekly_review_age_hours: 168
   block_on_preflight_fail: true

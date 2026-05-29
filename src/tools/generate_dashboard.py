@@ -37,6 +37,7 @@ from ..common.evidence_focus_actions import (
     build_evidence_focus_actions_from_market_summaries,
     summarize_evidence_focus_actions,
 )
+from ..common.freshness import age_hours_from_timestamp, parse_utc_datetime
 from ..common.governance_health import build_governance_health_summary
 from ..common.market_structure import load_market_structure, market_structure_summary
 from ..common.markets import market_config_path, resolve_market_code, symbol_matches_market
@@ -908,6 +909,67 @@ def _load_weekly_ibkr_gateway_budget_payload(review_dir: Path) -> Dict[str, Any]
             "rows": [dict(row) for row in rows if isinstance(row, dict)] if isinstance(rows, list) else [],
         }
     return {}
+
+
+def _build_auto_order_readiness_health(
+    auto_order_readiness: Dict[str, Any] | None,
+    *,
+    weekly_ibkr_gateway_budget_payload: Dict[str, Any] | None = None,
+    max_age_hours: float = 24.0,
+    now: datetime | None = None,
+) -> Dict[str, Any]:
+    payload = dict(auto_order_readiness or {})
+    gateway_budget = dict(weekly_ibkr_gateway_budget_payload or {})
+    generated_at = str(payload.get("generated_at") or "").strip()
+    gateway_generated_at = str(gateway_budget.get("generated_at") or "").strip()
+    age_hours = age_hours_from_timestamp(generated_at, now) if generated_at else None
+    gateway_age_hours = age_hours_from_timestamp(gateway_generated_at, now) if gateway_generated_at else None
+    auto_ts = parse_utc_datetime(generated_at)
+    gateway_ts = parse_utc_datetime(gateway_generated_at)
+    older_than_gateway_budget = bool(auto_ts is not None and gateway_ts is not None and auto_ts < gateway_ts)
+    status = "ready"
+    reason = "fresh"
+
+    if not payload:
+        status = "warning"
+        reason = "missing_auto_order_readiness"
+    elif not generated_at:
+        status = "warning"
+        reason = "missing_generated_at"
+    elif float(max_age_hours or 0.0) > 0.0 and age_hours is not None and age_hours > float(max_age_hours):
+        status = "warning"
+        reason = "stale_auto_order_readiness"
+    elif older_than_gateway_budget:
+        status = "warning"
+        reason = "older_than_gateway_budget"
+
+    label = "自动下单证据新鲜" if status == "ready" else "自动下单证据过旧"
+    secondary_reasons = []
+    if older_than_gateway_budget and reason != "older_than_gateway_budget":
+        secondary_reasons.append("older_than_gateway_budget")
+    detail_bits = []
+    if generated_at:
+        detail_bits.append(f"generated_at={generated_at}")
+    if age_hours is not None:
+        detail_bits.append(f"age_hours={age_hours:.1f}")
+    if gateway_generated_at:
+        detail_bits.append(f"gateway_budget_generated_at={gateway_generated_at}")
+    if secondary_reasons:
+        detail_bits.append(f"secondary={','.join(secondary_reasons)}")
+    detail = " ".join(detail_bits) if detail_bits else "auto_order_readiness artifact missing"
+    return {
+        "status": status,
+        "status_label": label,
+        "reason": reason,
+        "generated_at": generated_at,
+        "age_hours": age_hours,
+        "max_age_hours": float(max_age_hours or 0.0),
+        "gateway_budget_generated_at": gateway_generated_at,
+        "gateway_budget_age_hours": gateway_age_hours,
+        "older_than_gateway_budget": older_than_gateway_budget,
+        "secondary_reasons": secondary_reasons,
+        "summary_text": f"{label}: {reason} | {detail}",
+    }
 
 
 def _load_walk_forward_acceptance_payload(walk_forward_dir: Path) -> Dict[str, Any]:
@@ -5821,6 +5883,7 @@ def _build_ops_overview(
     evidence_focus_summary: Dict[str, Any] | None = None,
     ibkr_gateway_budget_summary: Dict[str, Any] | None = None,
     auto_order_readiness: Dict[str, Any] | None = None,
+    auto_order_readiness_health: Dict[str, Any] | None = None,
     open_market_analysis_summary: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     # 运维总览只聚合“现在最值得先处理”的信号：preflight、报告新鲜度、组合健康度和执行模式偏差。
@@ -5865,6 +5928,13 @@ def _build_ops_overview(
     gateway_budget_max_usage_pct = float(gateway_budget.get("max_budget_usage_pct", 0.0) or 0.0)
     auto_order = dict(auto_order_readiness or {})
     auto_order_summary = dict(auto_order.get("summary") or {})
+    auto_order_health = dict(auto_order_readiness_health or {})
+    auto_order_health_status = str(auto_order_health.get("status", "ready") or "ready").strip().lower()
+    auto_order_health_status_label = str(auto_order_health.get("status_label", "") or "").strip()
+    auto_order_health_reason = str(auto_order_health.get("reason", "") or "").strip()
+    auto_order_health_summary_text = str(auto_order_health.get("summary_text", "") or "").strip()
+    auto_order_age_hours = auto_order_health.get("age_hours")
+    auto_order_max_age_hours = float(auto_order_health.get("max_age_hours", 0.0) or 0.0)
     auto_order_submit_plan = dict(auto_order_summary.get("submit_plan") or {})
     auto_order_status = str(auto_order_summary.get("status") or "").strip().lower()
     auto_order_summary_text = str(auto_order_summary.get("summary_text") or "").strip()
@@ -6009,6 +6079,16 @@ def _build_ops_overview(
                 ),
             )
         )
+    if auto_order_health_status in {"warning", "degraded"}:
+        alert_rows.append(
+            _ops_alert_row(
+                "AUTO_ORDER",
+                "readiness_freshness",
+                "FAIL" if auto_order_health_status == "degraded" else "WARN",
+                auto_order_health_summary_text
+                or f"auto_order_readiness_health={auto_order_health_status} reason={auto_order_health_reason}",
+            )
+        )
     if auto_order_offline_recovery_required_count > 0:
         alert_rows.append(
             _ops_alert_row(
@@ -6083,6 +6163,7 @@ def _build_ops_overview(
         f"data_attention={data_attention_count} | "
         f"evidence_urgent={evidence_focus_urgent_count} | "
         f"gateway_budget={gateway_budget_status} | "
+        f"auto_order_health={auto_order_health_status} | "
         f"auto_submit_plan={auto_order_submit_plan_status or 'missing'} | "
         f"open_market_analysis={open_market_status or 'missing'} | "
         f"offline_recovery={auto_order_offline_recovery_required_count} | "
@@ -6126,6 +6207,12 @@ def _build_ops_overview(
         "ibkr_gateway_budget_max_usage_pct": gateway_budget_max_usage_pct,
         "auto_order_status": auto_order_status,
         "auto_order_summary_text": auto_order_summary_text,
+        "auto_order_readiness_health_status": auto_order_health_status,
+        "auto_order_readiness_health_status_label": auto_order_health_status_label,
+        "auto_order_readiness_health_reason": auto_order_health_reason,
+        "auto_order_readiness_health_summary_text": auto_order_health_summary_text,
+        "auto_order_readiness_age_hours": auto_order_age_hours,
+        "auto_order_readiness_max_age_hours": auto_order_max_age_hours,
         "auto_order_blocked_count": auto_order_blocked_count,
         "auto_order_ready_count": auto_order_ready_count,
         "auto_order_primary_block_reason": auto_order_primary_block_reason,
@@ -7778,6 +7865,19 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
     dashboard_control = _load_dashboard_control_payload(summary_dir, cfg, cards)
     _attach_dashboard_control(cards, dashboard_control)
     auto_order_readiness = _load_json(summary_dir / "auto_order_readiness.json")
+    auto_order_policy = dict(cfg.get("auto_order_readiness") or {})
+    auto_order_readiness_max_age_hours = float(
+        auto_order_policy.get(
+            "max_artifact_age_hours",
+            auto_order_policy.get("max_preflight_age_hours", 24),
+        )
+        or 24
+    )
+    auto_order_readiness_health = _build_auto_order_readiness_health(
+        auto_order_readiness,
+        weekly_ibkr_gateway_budget_payload=weekly_ibkr_gateway_budget_payload,
+        max_age_hours=auto_order_readiness_max_age_hours,
+    )
     market_data_health_overview = _build_market_data_health_overview(cards)
     market_data_health_map: Dict[str, Dict[str, Any]] = {
         str(row.get("market", "") or "").strip().upper(): dict(row)
@@ -7908,6 +8008,7 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
         evidence_focus_summary=evidence_focus_summary,
         ibkr_gateway_budget_summary=weekly_ibkr_gateway_budget_summary,
         auto_order_readiness=auto_order_readiness,
+        auto_order_readiness_health=auto_order_readiness_health,
         open_market_analysis_summary=open_market_analysis_summary,
     )
     gateway_runtime_summary = dict(ops_overview.get("gateway_runtime_summary", {}) or {})
@@ -7920,6 +8021,7 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
         "ibkr_history_probe_summary": ibkr_history_probe_summary,
         "ops_overview": ops_overview,
         "auto_order_readiness": auto_order_readiness,
+        "auto_order_readiness_health": auto_order_readiness_health,
         "open_market_analysis_summary": open_market_analysis_summary,
         "ibkr_gateway_budget": weekly_ibkr_gateway_budget_payload,
         "ibkr_gateway_budget_rows": weekly_ibkr_gateway_budget_rows,
@@ -8108,6 +8210,8 @@ def _simple_ops_overview_rows(ops_overview: Dict[str, Any]) -> List[List[str]]:
         or ops_overview.get("auto_order_primary_block_reason")
         or ""
     ).strip()
+    auto_health_status = str(ops_overview.get("auto_order_readiness_health_status") or "ready").strip().lower()
+    auto_health_reason = str(ops_overview.get("auto_order_readiness_health_reason") or "").strip()
     auto_selected_portfolio = str(ops_overview.get("auto_order_submit_selected_portfolio_id", "") or "").strip()
     auto_selected_portfolios = [
         str(value).strip()
@@ -8123,6 +8227,8 @@ def _simple_ops_overview_rows(ops_overview: Dict[str, Any]) -> List[List[str]]:
         auto_order_label = f"阻断 | {auto_submit_reason or auto_submit_status}"
     else:
         auto_order_label = "未生成 | auto_order_readiness"
+    if auto_health_status in {"warning", "degraded"}:
+        auto_order_label = f"证据过旧 | {auto_health_reason or auto_health_status}"
 
     open_market_status = str(ops_overview.get("open_market_analysis_status_label") or "").strip()
     if not open_market_status:

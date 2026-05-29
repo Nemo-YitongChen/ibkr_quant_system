@@ -180,6 +180,7 @@
 - **Evidence Focus Lifecycle 路径已完成 2026-05-09 复核：Step 1-7 方向正确且已落地，下一阶段不应重复补基础链路，而应推进 weekly review 基于 evidence 生成单一 primary strategy parameter 建议，继续保持只建议、不自动生效**
 - **2026-05-27 已补开市交易分析健康层：dashboard JSON/v2/首页现在会把“开市、报告 fresh、auto-order gate 证据、submit blocker、数据关注”串成统一 `open_market_analysis_summary`，supervisor 每轮会把 scoped `auto_order_readiness.json` 写到当前 runtime summary，避免开市市场看起来 fresh 但缺少可提交门控证据**
 - **2026-05-27 已补 Gateway budget-aware opportunity throttle：当 weekly Gateway budget 对应市场为 `degraded` 时，supervisor 会暂停该市场高请求量 `run_investment_opportunity` 扫描并记录 `gateway_budget_degraded`，优先让 request budget 恢复，而不是继续消耗阻塞自动下单的关键资源**
+- **2026-05-29 已补 auto-order readiness freshness health：dashboard 会检查 `auto_order_readiness.json` 是否缺失、过旧或早于 weekly Gateway budget，并把过期自动下单证据降级为 `AUTO_ORDER/readiness_freshness` 告警；这不放宽任何风险、edge、budget 或 submit gate**
 - **后续开发报告已补充到 `docs/development_report_2026-05-09.md`：下一步明确为 evidence-driven single strategy parameter suggestions，后续再推进 dashboard/weekly 大文件拆分、config defaults+overrides、walk-forward acceptance rules、execution quality evidence 和 live 变更四件套**
 - **weekly review 已新增 read-only `strategy_parameter_suggestions` 产物：当 candidate model review 出现 `SIGNAL_RANKING_INVERTED` 且样本足够时，每个 market/portfolio/week 只生成一个 primary strategy field 建议，带 linked evidence、acceptance rule、rollback note 和 `auto_apply=0`**
 - **dashboard control audit 已能关联 strategy parameter suggestions：控制 payload 可携带 `strategy_parameter_suggestion_id/primary_field/config_path/resolution_status/resolution_note`，审计历史和 dashboard v2 Governance block 会展示 linked strategy suggestion 与处理状态，但仍不自动写配置**
@@ -467,3 +468,11 @@
 - `watchlist_expansion` 新增 `max_last_close`、asset-class preference 排序和 `last_close_above_account_cap` reject reason；这让 1000 AUD 小账户不会把高价股票纳入自动扩展池，即使它们分数较高。
 - 用 `--account_equity 1000` 刷新后，当前本地 evidence 仅纳入 US 的 `SPTM,SCHB`；ASX/HK/XETRA 仍为空，因为整股、成本、流动性或 market-rule 证据没有通过。这是质量优先，不是漏选。
 - 自动下单门槛不变：扩展 watchlist 只是候选池，真正 paper submit 仍需通过 preflight、market readiness、Gateway budget、submit quality、edge/cost 和风险门。
+
+## 29. 2026-05-29 Auto-order readiness freshness health
+
+- Dashboard 现在生成顶层 `auto_order_readiness_health`，检查 `auto_order_readiness.json` 是否缺失、缺少 `generated_at`、超过 `auto_order_readiness.max_artifact_age_hours`，或早于最新 weekly Gateway budget。
+- `ops_overview` 新增 `auto_order_health=<status>`，并在过期时输出 `AUTO_ORDER/readiness_freshness` 告警；首页“自动下单”会优先显示“证据过旧”，避免 operator 把旧 readiness 当成当前可提交状态。
+- Dashboard v2 `auto_order_readiness` block 新增 readiness health metrics；即使 submit plan 表面 READY，只要 readiness artifact 过旧，block 也会降到 warning。
+- 当前本地 dashboard 重新生成后显示 `auto_order_health=warning`，原因是 `auto_order_readiness.json` 约 48 小时未刷新，且 weekly Gateway budget 更新晚于它。下一步应刷新 preflight / paper execution dry-run / auto-order readiness，再重新判断是否存在当前 READY 的小额整股 ETF 计划单。
+- 这不是收益门或风险门调整：Gateway budget degraded、submit quality not pass、market readiness not ready、edge/cost 不达标仍会阻断自动 paper submit。
