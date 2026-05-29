@@ -972,6 +972,120 @@ def _build_auto_order_readiness_health(
     }
 
 
+def _watchlist_expansion_reason_summary(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    counts: Dict[str, int] = {}
+    for row in rows:
+        if str(row.get("selection_status") or "").strip().upper() == "SELECTED":
+            continue
+        for reason in str(row.get("selection_reason") or "").split(","):
+            normalized = reason.strip()
+            if not normalized or normalized.upper() == "PASS":
+                continue
+            counts[normalized] = int(counts.get(normalized, 0)) + 1
+    return [
+        {"reason": reason, "count": count}
+        for reason, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    ]
+
+
+def _load_watchlist_expansion_payload(
+    summary_dir: Path,
+    cfg: Dict[str, Any],
+    *,
+    now: datetime | None = None,
+) -> Dict[str, Any]:
+    raw_dir = str(
+        cfg.get("dashboard_watchlist_expansion_dir")
+        or cfg.get("watchlist_expansion_analysis_dir")
+        or "reports_supervisor/watchlist_expansion"
+    )
+    candidate_dirs: List[Path] = [summary_dir / "watchlist_expansion", _resolve_path(raw_dir)]
+    seen: set[str] = set()
+    expansion_dir = Path()
+    payload: Dict[str, Any] = {}
+    for raw_path in candidate_dirs:
+        path = raw_path.resolve()
+        if str(path) in seen:
+            continue
+        seen.add(str(path))
+        current = _load_json(path / "watchlist_expansion_summary.json")
+        if current:
+            expansion_dir = path
+            payload = current
+            break
+    max_age_hours = float(cfg.get("dashboard_watchlist_expansion_max_age_hours", 168) or 168)
+    if not payload:
+        return {
+            "status": "warning",
+            "status_label": "扩展股票池未生成",
+            "reason": "missing_watchlist_expansion",
+            "summary_text": "watchlist_expansion artifact missing",
+            "markets": [],
+            "candidate_rows": [],
+            "reason_summary": [],
+            "market_count": 0,
+            "candidate_row_count": 0,
+            "selected_count": 0,
+            "zero_selected_market_count": 0,
+            "max_age_hours": max_age_hours,
+        }
+    markets = [
+        dict(row)
+        for row in list(payload.get("markets") or [])
+        if isinstance(row, dict)
+    ]
+    if not markets:
+        markets = _read_all_csv_rows(expansion_dir / "watchlist_expansion_summary.csv")
+    candidate_rows = _read_all_csv_rows(expansion_dir / "watchlist_expansion_candidates.csv")
+    generated_at = str(payload.get("generated_at") or "").strip()
+    age_hours = age_hours_from_timestamp(generated_at, now) if generated_at else None
+    candidate_count = sum(int(_safe_float(row.get("candidate_row_count"), 0.0)) for row in markets)
+    if candidate_count <= 0:
+        candidate_count = len(candidate_rows)
+    selected_count = sum(int(_safe_float(row.get("selected_count"), 0.0)) for row in markets)
+    zero_selected_market_count = sum(
+        1
+        for row in markets
+        if int(_safe_float(row.get("candidate_row_count"), 0.0)) > 0
+        and int(_safe_float(row.get("selected_count"), 0.0)) <= 0
+    )
+    status = "ready"
+    reason = "ready"
+    if age_hours is None:
+        status = "warning"
+        reason = "missing_generated_at"
+    elif max_age_hours > 0.0 and age_hours > max_age_hours:
+        status = "warning"
+        reason = "stale_watchlist_expansion"
+    elif candidate_count > 0 and selected_count <= 0:
+        status = "warning"
+        reason = "no_selected_growth_candidates"
+    label = "扩展股票池就绪" if status == "ready" else "扩展股票池需复核"
+    enriched = dict(payload)
+    enriched.update(
+        {
+            "status": status,
+            "status_label": label,
+            "reason": reason,
+            "age_hours": age_hours,
+            "max_age_hours": max_age_hours,
+            "market_count": len(markets),
+            "candidate_row_count": candidate_count,
+            "selected_count": selected_count,
+            "zero_selected_market_count": zero_selected_market_count,
+            "markets": markets,
+            "candidate_rows": candidate_rows[:200],
+            "reason_summary": _watchlist_expansion_reason_summary(candidate_rows)[:20],
+            "source_dir": _display_path(expansion_dir),
+            "summary_text": (
+                f"markets={len(markets)} candidates={candidate_count} selected={selected_count} "
+                f"zero_selected_markets={zero_selected_market_count} status={status}"
+            ),
+        }
+    )
+    return enriched
+
+
 def _load_walk_forward_acceptance_payload(walk_forward_dir: Path) -> Dict[str, Any]:
     payload = _load_json(walk_forward_dir / "walk_forward_acceptance_summary.json")
     if payload:
@@ -7997,6 +8111,7 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
         trade_cards,
         auto_order_readiness=auto_order_readiness,
     )
+    watchlist_expansion_summary = _load_watchlist_expansion_payload(summary_dir, cfg)
     ops_overview = _build_ops_overview(
         trade_cards,
         preflight_summary=preflight_summary,
@@ -8023,6 +8138,7 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
         "auto_order_readiness": auto_order_readiness,
         "auto_order_readiness_health": auto_order_readiness_health,
         "open_market_analysis_summary": open_market_analysis_summary,
+        "watchlist_expansion_summary": watchlist_expansion_summary,
         "ibkr_gateway_budget": weekly_ibkr_gateway_budget_payload,
         "ibkr_gateway_budget_rows": weekly_ibkr_gateway_budget_rows,
         "walk_forward_acceptance": walk_forward_acceptance_payload,

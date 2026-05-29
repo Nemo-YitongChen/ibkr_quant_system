@@ -287,6 +287,30 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
             "primary_field": "mr_weight",
             "read_only": True,
         },
+        "watchlist_expansion_summary": {
+            "status": "ready",
+            "summary_text": "markets=2 candidates=10 selected=2 zero_selected_markets=1 status=ready",
+            "selected_count": 2,
+            "candidate_row_count": 10,
+            "zero_selected_market_count": 1,
+            "age_hours": 6.0,
+            "max_age_hours": 168,
+            "account_profile": {"name": "small", "account_equity": 1000.0},
+            "markets": [
+                {"market": "US", "candidate_row_count": 5, "selected_count": 2, "selected_symbols": "SPTM,SCHB"},
+                {"market": "HK", "candidate_row_count": 5, "selected_count": 0, "selected_symbols": ""},
+            ],
+            "candidate_rows": [
+                {"market": "US", "symbol": "SPTM", "selection_status": "SELECTED", "selection_reason": "PASS"},
+                {"market": "US", "symbol": "SCHB", "selection_status": "SELECTED", "selection_reason": "PASS"},
+                {
+                    "market": "HK",
+                    "symbol": "2800.HK",
+                    "selection_status": "REJECTED",
+                    "selection_reason": "expected_cost_above_max,whole_share_not_tradable",
+                },
+            ],
+        },
         "weekly_attribution_waterfall": [{"component": "selection"}],
     }
 
@@ -301,6 +325,7 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
         "evidence_quality",
         "dashboard_control_actions",
         "market_views",
+        "watchlist_expansion",
         "walk_forward_acceptance",
         "strategy_parameter_governance",
         "weekly_attribution_waterfall",
@@ -318,6 +343,7 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
     ]
     assert [block["id"] for block in blocks if block["advanced_only"]] == [
         "market_views",
+        "watchlist_expansion",
         "walk_forward_acceptance",
         "strategy_parameter_governance",
         "weekly_attribution_waterfall",
@@ -377,6 +403,10 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
     assert by_id["market_views"]["rows"][0]["evidence_primary_action"] == "build_weekly_unified_evidence"
     assert by_id["market_views"]["status"] == "warn"
     assert "evidence_attention=2" in by_id["market_views"]["summary"]
+    assert by_id["watchlist_expansion"]["category"] == "advanced"
+    assert by_id["watchlist_expansion"]["metrics"]["selected_count"] == 2
+    assert by_id["watchlist_expansion"]["metrics"]["zero_selected_market_count"] == 1
+    assert by_id["watchlist_expansion"]["metrics"]["top_reject_reason"] == "expected_cost_above_max"
     assert by_id["evidence_focus_actions"]["status"] == "warn"
     assert by_id["evidence_focus_actions"]["metrics"]["focus_action_count"] == 3
     assert by_id["evidence_focus_actions"]["metrics"]["urgent_action_count"] == 2
@@ -519,6 +549,43 @@ def test_market_views_block_handles_malformed_evidence_summary():
     assert block["status"] == "warn"
     assert block["metrics"]["gate_review_market_count"] == 1
     assert block["rows"][0]["evidence_primary_action"] == "review_gate_thresholds"
+
+
+def test_watchlist_expansion_block_warns_when_no_growth_candidates_selected():
+    payload = {
+        "watchlist_expansion_summary": {
+            "status": "warning",
+            "reason": "no_selected_growth_candidates",
+            "candidate_row_count": 4,
+            "selected_count": 0,
+            "markets": [
+                {"market": "ASX", "candidate_row_count": 2, "selected_count": 0},
+                {"market": "HK", "candidate_row_count": 2, "selected_count": 0},
+            ],
+            "candidate_rows": [
+                {
+                    "market": "ASX",
+                    "symbol": "BHP.AX",
+                    "selection_status": "REJECTED",
+                    "selection_reason": "expected_cost_above_max,whole_share_not_tradable",
+                },
+                {
+                    "market": "HK",
+                    "symbol": "2800.HK",
+                    "selection_status": "REJECTED",
+                    "selection_reason": "whole_share_not_tradable",
+                },
+            ],
+        }
+    }
+
+    block = _by_id(build_dashboard_v2_blocks(payload))["watchlist_expansion"]
+
+    assert block["status"] == "warn"
+    assert block["metrics"]["selected_count"] == 0
+    assert block["metrics"]["zero_selected_market_count"] == 2
+    assert block["metrics"]["top_reject_reason"] == "whole_share_not_tradable"
+    assert block["rows"]["reason_summary"][0] == {"reason": "whole_share_not_tradable", "count": 2}
 
 
 def test_evidence_focus_actions_block_keeps_sample_collection_non_warning():

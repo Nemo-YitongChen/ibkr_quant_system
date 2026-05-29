@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 
 import src.tools.generate_dashboard as generate_dashboard
 from src.tools.generate_dashboard import (
@@ -21,6 +22,7 @@ from src.tools.generate_dashboard import (
     _dashboard_v2_block_metrics_text,
     _load_weekly_blocked_vs_allowed_expost_rows,
     _load_weekly_unified_evidence_rows,
+    _load_watchlist_expansion_payload,
     _simple_gateway_is_connected,
     _simple_gateway_runtime_text,
     _simple_market_evidence_action_rows,
@@ -845,6 +847,49 @@ def test_auto_order_readiness_health_warns_when_older_than_gateway_budget() -> N
     assert health["older_than_gateway_budget"] is True
     assert health["age_hours"] == 47.59
     assert "gateway_budget_generated_at=2026-05-28T23:04:35+00:00" in health["summary_text"]
+
+
+def test_load_watchlist_expansion_payload_counts_selected_and_reject_reasons(tmp_path: Path) -> None:
+    summary_dir = tmp_path / "reports_supervisor"
+    expansion_dir = summary_dir / "watchlist_expansion"
+    expansion_dir.mkdir(parents=True, exist_ok=True)
+    (expansion_dir / "watchlist_expansion_summary.json").write_text(
+        json.dumps(
+            {
+                "generated_at": "2026-05-28T00:00:00+00:00",
+                "account_profile": {"name": "small", "account_equity": 1000.0},
+                "policy": {"max_last_close": 100.0},
+                "markets": [
+                    {"market": "US", "candidate_row_count": 2, "selected_count": 1},
+                    {"market": "HK", "candidate_row_count": 1, "selected_count": 0},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (expansion_dir / "watchlist_expansion_candidates.csv").write_text(
+        "\n".join(
+            [
+                "symbol,market,selection_status,selection_reason",
+                "SPTM,US,SELECTED,PASS",
+                "2800.HK,HK,REJECTED,expected_cost_above_max",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    payload = _load_watchlist_expansion_payload(
+        summary_dir,
+        {},
+        now=datetime(2026, 5, 28, 6, 0, tzinfo=timezone.utc),
+    )
+
+    assert payload["status"] == "ready"
+    assert payload["selected_count"] == 1
+    assert payload["candidate_row_count"] == 3
+    assert payload["zero_selected_market_count"] == 1
+    assert payload["age_hours"] == 6.0
+    assert payload["reason_summary"] == [{"reason": "expected_cost_above_max", "count": 1}]
 
 
 def test_build_ops_overview_surfaces_auto_order_readiness_freshness_alert() -> None:

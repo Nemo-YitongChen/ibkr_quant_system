@@ -182,6 +182,7 @@
 - **2026-05-27 已补 Gateway budget-aware opportunity throttle：当 weekly Gateway budget 对应市场为 `degraded` 时，supervisor 会暂停该市场高请求量 `run_investment_opportunity` 扫描并记录 `gateway_budget_degraded`，优先让 request budget 恢复，而不是继续消耗阻塞自动下单的关键资源**
 - **2026-05-29 已补 auto-order readiness freshness health：dashboard 会检查 `auto_order_readiness.json` 是否缺失、过旧或早于 weekly Gateway budget，并把过期自动下单证据降级为 `AUTO_ORDER/readiness_freshness` 告警；这不放宽任何风险、edge、budget 或 submit gate**
 - **2026-05-29 已补 auto-order readiness dependency refresh：supervisor 会在 readiness 同签名但 artifact 过期、或 preflight/weekly Gateway budget/market readiness 比它更新时重写 readiness，并优先消费轻量 Gateway budget artifact，减少对超大 weekly summary 的依赖**
+- **2026-05-29 已把 watchlist expansion 接入 dashboard v2：advanced block 会显示账户 profile、候选行数、选中数、零选中市场和主要 reject reason，当前 small profile 下 selected=`SPTM,SCHB`，ASX/HK/XETRA 主要受 `expected_cost_above_max` / whole-share tradability 阻断**
 - **后续开发报告已补充到 `docs/development_report_2026-05-09.md`：下一步明确为 evidence-driven single strategy parameter suggestions，后续再推进 dashboard/weekly 大文件拆分、config defaults+overrides、walk-forward acceptance rules、execution quality evidence 和 live 变更四件套**
 - **weekly review 已新增 read-only `strategy_parameter_suggestions` 产物：当 candidate model review 出现 `SIGNAL_RANKING_INVERTED` 且样本足够时，每个 market/portfolio/week 只生成一个 primary strategy field 建议，带 linked evidence、acceptance rule、rollback note 和 `auto_apply=0`**
 - **dashboard control audit 已能关联 strategy parameter suggestions：控制 payload 可携带 `strategy_parameter_suggestion_id/primary_field/config_path/resolution_status/resolution_note`，审计历史和 dashboard v2 Governance block 会展示 linked strategy suggestion 与处理状态，但仍不自动写配置**
@@ -484,3 +485,9 @@
 - 如果 preflight summary、weekly review summary、轻量 `weekly_ibkr_gateway_budget_status.json` 或 market readiness 比 readiness artifact 更新，supervisor 也会重写 readiness，并在 payload 里写入 `rewrite_reason=dependency_newer_than_artifact`。
 - Auto-order readiness 的 weekly 输入现在优先用 `weekly_ibkr_gateway_budget_status.json` 覆盖 `weekly_review_summary.json` 内的旧 Gateway budget 字段，减少每轮下单门控对超大 weekly summary 的依赖。
 - 交易含义不变：这只是让证据链自动追上最新 artifact；小账户 paper submit 仍必须满足 BUY leg、整股/金额上限、submit quality、Gateway budget、market readiness、edge/cost 和风险门。
+
+## 31. 2026-05-29 Watchlist expansion dashboard
+
+- Dashboard 现在读取 `reports_supervisor/watchlist_expansion/watchlist_expansion_summary.json`、summary CSV 和 candidate CSV，并输出顶层 `watchlist_expansion_summary`。
+- Dashboard v2 新增 advanced block `watchlist_expansion`，可直接看到当前账户 profile、候选行数、选中数、零选中市场、artifact age、selected symbols 和主要 reject reason。
+- 当前本地 small profile 诊断：65 条候选、2 个选中（`SPTM,SCHB`）、3 个市场零选中，主要 reject reason 是 `expected_cost_above_max`。这说明扩大 ASX/HK/XETRA 可选范围的下一步应优先校准成本/整股可交易/ETF-first universe，而不是绕过风险门。
