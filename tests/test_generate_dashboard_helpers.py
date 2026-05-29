@@ -890,6 +890,11 @@ def test_load_watchlist_expansion_payload_counts_selected_and_reject_reasons(tmp
     assert payload["zero_selected_market_count"] == 1
     assert payload["age_hours"] == 6.0
     assert payload["reason_summary"] == [{"reason": "expected_cost_above_max", "count": 1}]
+    assert payload["primary_recommendation_market"] == "HK"
+    assert payload["primary_recommendation_reason"] == "expected_cost_above_max"
+    assert payload["primary_recommendation_action"] == "calibrate_cost_or_expand_lower_cost_etfs"
+    assert payload["market_recommendations"][0]["market"] == "HK"
+    assert "primary_recommendation_action=calibrate_cost_or_expand_lower_cost_etfs" in payload["summary_text"]
 
 
 def test_build_ops_overview_surfaces_auto_order_readiness_freshness_alert() -> None:

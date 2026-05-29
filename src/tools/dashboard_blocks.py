@@ -4,6 +4,7 @@ from typing import Any, Dict, List
 
 from ..common.alert_classification import summarize_error_classes
 from ..common.dashboard_control_audit import summarize_evidence_action_audit_links
+from ..common.watchlist_expansion import selection_reason_summary, summarize_watchlist_expansion
 
 
 DASHBOARD_BLOCK_CATEGORY_HOME = "home"
@@ -101,22 +102,6 @@ def _followup_verdict_count(rows: List[Dict[str, Any]], verdict: str) -> int:
 
 def _count_insufficient_sample(rows: List[Dict[str, Any]]) -> int:
     return sum(1 for row in rows if _blocked_review_label(row).startswith("INSUFFICIENT"))
-
-
-def _selection_reason_summary(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    counts: Dict[str, int] = {}
-    for row in rows:
-        if str(row.get("selection_status") or "").strip().upper() == "SELECTED":
-            continue
-        for reason in str(row.get("selection_reason") or "").split(","):
-            normalized = reason.strip()
-            if not normalized or normalized.upper() == "PASS":
-                continue
-            counts[normalized] = int(counts.get(normalized, 0)) + 1
-    return [
-        {"reason": reason, "count": count}
-        for reason, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
-    ]
 
 
 def _blocked_review_label_summary(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -586,7 +571,19 @@ def build_watchlist_expansion_block(payload: Dict[str, Any]) -> Dict[str, Any]:
     market_rows = _rows(summary.get("markets"), limit=20)
     candidate_rows = _rows(summary.get("candidate_rows"), limit=100)
     selected_candidates = [row for row in candidate_rows if str(row.get("selection_status") or "").upper() == "SELECTED"]
-    reason_summary = _rows(summary.get("reason_summary"), limit=20) or _selection_reason_summary(candidate_rows)[:20]
+    fallback_summary = summarize_watchlist_expansion(candidate_rows, market_rows=market_rows) if (candidate_rows or market_rows) else {}
+    reason_summary = (
+        _rows(summary.get("reason_summary"), limit=20)
+        or _rows(fallback_summary.get("reason_summary"), limit=20)
+        or selection_reason_summary(candidate_rows)[:20]
+    )
+    market_recommendations = _rows(summary.get("market_recommendations"), limit=20) or _rows(
+        fallback_summary.get("market_recommendations"),
+        limit=20,
+    )
+    primary_market = str(summary.get("primary_recommendation_market") or fallback_summary.get("primary_recommendation_market") or "")
+    primary_reason = str(summary.get("primary_recommendation_reason") or fallback_summary.get("primary_recommendation_reason") or "")
+    primary_action = str(summary.get("primary_recommendation_action") or fallback_summary.get("primary_recommendation_action") or "")
     selected_count = _int(summary.get("selected_count"))
     if selected_count <= 0 and market_rows:
         selected_count = sum(_int(row.get("selected_count")) for row in market_rows)
@@ -623,12 +620,16 @@ def build_watchlist_expansion_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "candidate_row_count": candidate_count,
             "selected_count": selected_count,
             "zero_selected_market_count": zero_selected_market_count,
+            "rejected_count": _int(summary.get("rejected_count") or fallback_summary.get("rejected_count")),
             "stale": int(str(summary.get("reason") or "") == "stale_watchlist_expansion"),
             "age_hours": summary.get("age_hours"),
             "max_age_hours": float(summary.get("max_age_hours", 0.0) or 0.0),
             "account_profile": str(account_profile.get("name") or ""),
             "account_equity": float(account_profile.get("account_equity", 0.0) or 0.0),
             "top_reject_reason": str(reason_summary[0].get("reason") if reason_summary else ""),
+            "primary_recommendation_market": primary_market,
+            "primary_recommendation_reason": primary_reason,
+            "primary_recommendation_action": primary_action,
             "selected_symbols": ",".join(
                 str(row.get("symbol") or "").strip()
                 for row in selected_candidates[:10]
@@ -639,6 +640,7 @@ def build_watchlist_expansion_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "markets": market_rows,
             "selected_candidates": selected_candidates[:20],
             "reason_summary": reason_summary,
+            "market_recommendations": market_recommendations,
             "policy": _dict(summary.get("policy")),
         },
     }

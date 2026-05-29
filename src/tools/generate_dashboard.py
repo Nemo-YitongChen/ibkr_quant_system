@@ -45,6 +45,7 @@ from ..common.open_market_analysis import build_open_market_analysis_summary
 from ..common.runtime_paths import resolve_repo_path, resolve_scoped_runtime_path, scope_from_ibkr_config
 from ..common.sqlite_utils import connect_sqlite
 from ..common.storage import Storage
+from ..common.watchlist_expansion import summarize_watchlist_expansion
 from .dashboard_blocks import build_dashboard_v2_blocks, build_evidence_quality_block
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -972,22 +973,6 @@ def _build_auto_order_readiness_health(
     }
 
 
-def _watchlist_expansion_reason_summary(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    counts: Dict[str, int] = {}
-    for row in rows:
-        if str(row.get("selection_status") or "").strip().upper() == "SELECTED":
-            continue
-        for reason in str(row.get("selection_reason") or "").split(","):
-            normalized = reason.strip()
-            if not normalized or normalized.upper() == "PASS":
-                continue
-            counts[normalized] = int(counts.get(normalized, 0)) + 1
-    return [
-        {"reason": reason, "count": count}
-        for reason, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
-    ]
-
-
 def _load_watchlist_expansion_payload(
     summary_dir: Path,
     cfg: Dict[str, Any],
@@ -1037,6 +1022,7 @@ def _load_watchlist_expansion_payload(
     if not markets:
         markets = _read_all_csv_rows(expansion_dir / "watchlist_expansion_summary.csv")
     candidate_rows = _read_all_csv_rows(expansion_dir / "watchlist_expansion_candidates.csv")
+    expansion_summary = summarize_watchlist_expansion(candidate_rows, market_rows=markets)
     generated_at = str(payload.get("generated_at") or "").strip()
     age_hours = age_hours_from_timestamp(generated_at, now) if generated_at else None
     candidate_count = sum(int(_safe_float(row.get("candidate_row_count"), 0.0)) for row in markets)
@@ -1061,6 +1047,13 @@ def _load_watchlist_expansion_payload(
         status = "warning"
         reason = "no_selected_growth_candidates"
     label = "扩展股票池就绪" if status == "ready" else "扩展股票池需复核"
+    primary_action = str(expansion_summary.get("primary_recommendation_action") or "").strip()
+    summary_text = (
+        f"markets={len(markets)} candidates={candidate_count} selected={selected_count} "
+        f"zero_selected_markets={zero_selected_market_count} status={status}"
+    )
+    if primary_action:
+        summary_text = f"{summary_text} primary_recommendation_action={primary_action}"
     enriched = dict(payload)
     enriched.update(
         {
@@ -1073,14 +1066,17 @@ def _load_watchlist_expansion_payload(
             "candidate_row_count": candidate_count,
             "selected_count": selected_count,
             "zero_selected_market_count": zero_selected_market_count,
+            "rejected_count": int(expansion_summary.get("rejected_count", 0) or 0),
             "markets": markets,
             "candidate_rows": candidate_rows[:200],
-            "reason_summary": _watchlist_expansion_reason_summary(candidate_rows)[:20],
+            "reason_summary": list(expansion_summary.get("reason_summary") or [])[:20],
+            "market_recommendations": list(expansion_summary.get("market_recommendations") or [])[:20],
+            "primary_recommendation_market": str(expansion_summary.get("primary_recommendation_market") or ""),
+            "primary_recommendation_reason": str(expansion_summary.get("primary_recommendation_reason") or ""),
+            "primary_recommendation_action": primary_action,
+            "primary_recommendation_note": str(expansion_summary.get("primary_recommendation_note") or ""),
             "source_dir": _display_path(expansion_dir),
-            "summary_text": (
-                f"markets={len(markets)} candidates={candidate_count} selected={selected_count} "
-                f"zero_selected_markets={zero_selected_market_count} status={status}"
-            ),
+            "summary_text": summary_text,
         }
     )
     return enriched

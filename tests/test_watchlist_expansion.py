@@ -4,6 +4,8 @@ from src.common.watchlist_expansion import (
     WatchlistExpansionPolicy,
     build_watchlist_expansion_rows,
     selected_watchlist_symbols,
+    selection_reason_summary,
+    summarize_watchlist_expansion,
 )
 
 
@@ -210,3 +212,51 @@ def test_watchlist_expansion_policy_merges_account_overrides() -> None:
     assert policy.max_symbols_per_market == 3
     assert policy.max_last_close == 100.0
     assert policy.preferred_asset_classes == ("etf",)
+
+
+def test_watchlist_expansion_summary_recommends_market_followups() -> None:
+    rows = [
+        {
+            "market": "ASX",
+            "symbol": "A200.AX",
+            "selection_status": "REJECTED",
+            "selection_reason": "expected_cost_above_max,whole_share_not_tradable",
+        },
+        {
+            "market": "ASX",
+            "symbol": "VAS.AX",
+            "selection_status": "REJECTED",
+            "selection_reason": "expected_cost_above_max",
+        },
+        {
+            "market": "HK",
+            "symbol": "2800.HK",
+            "selection_status": "REJECTED",
+            "selection_reason": "whole_share_not_tradable",
+        },
+        {
+            "market": "US",
+            "symbol": "SPLG",
+            "selection_status": "SELECTED",
+            "selection_reason": "PASS",
+        },
+    ]
+
+    summary = summarize_watchlist_expansion(
+        rows,
+        market_rows=[
+            {"market": "ASX", "candidate_row_count": 2, "selected_count": 0},
+            {"market": "HK", "candidate_row_count": 1, "selected_count": 0},
+            {"market": "US", "candidate_row_count": 1, "selected_count": 1},
+        ],
+    )
+
+    assert selection_reason_summary(rows)[0] == {"reason": "expected_cost_above_max", "count": 2}
+    assert summary["selected_count"] == 1
+    assert summary["rejected_count"] == 3
+    assert summary["zero_selected_market_count"] == 2
+    assert summary["primary_recommendation_market"] == "ASX"
+    assert summary["primary_recommendation_reason"] == "expected_cost_above_max"
+    assert summary["primary_recommendation_action"] == "calibrate_cost_or_expand_lower_cost_etfs"
+    assert summary["market_recommendations"][1]["market"] == "HK"
+    assert summary["market_recommendations"][1]["recommendation_action"] == "expand_whole_share_tradable_etfs"

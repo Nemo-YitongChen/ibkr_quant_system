@@ -151,6 +151,146 @@ def _asset_class_rank(asset_class: Any, policy: WatchlistExpansionPolicy) -> int
     return len(preferred) + 1
 
 
+def _selection_status(row: Mapping[str, Any]) -> str:
+    status = str(row.get("selection_status") or "").strip().upper()
+    if status:
+        return status
+    return "SELECTED" if _boolish(row.get("selected")) else "REJECTED"
+
+
+def _selection_reason_parts(row: Mapping[str, Any]) -> List[str]:
+    reasons: List[str] = []
+    for reason in str(row.get("selection_reason") or "").split(","):
+        normalized = reason.strip()
+        if normalized and normalized.upper() != "PASS":
+            reasons.append(normalized)
+    return reasons
+
+
+def selection_reason_summary(rows: Iterable[Mapping[str, Any]]) -> List[Dict[str, Any]]:
+    counts: Dict[str, int] = {}
+    for row in list(rows or []):
+        if _selection_status(row) == "SELECTED":
+            continue
+        for reason in _selection_reason_parts(row):
+            counts[reason] = int(counts.get(reason, 0)) + 1
+    return [
+        {"reason": reason, "count": count}
+        for reason, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    ]
+
+
+def _recommendation_for_reason(reason: str) -> Dict[str, str]:
+    normalized = str(reason or "").strip()
+    if normalized == "expected_cost_above_max":
+        return {
+            "action": "calibrate_cost_or_expand_lower_cost_etfs",
+            "note": "Review fee/spread assumptions and expand lower-cost ETF candidates; do not relax submit quality gates.",
+        }
+    if normalized == "whole_share_not_tradable":
+        return {
+            "action": "expand_whole_share_tradable_etfs",
+            "note": "Prefer ETF symbols that fit current max order value, lot rules, and whole-share paper submit constraints.",
+        }
+    if normalized == "last_close_above_account_cap":
+        return {
+            "action": "prefer_lower_price_candidates",
+            "note": "For the current small-account profile, add lower-price whole-share candidates before considering higher-priced stocks.",
+        }
+    if normalized == "liquidity_below_min":
+        return {
+            "action": "expand_liquid_etf_universe",
+            "note": "Look for more liquid ETFs or wait for stronger liquidity evidence before increasing order frequency.",
+        }
+    if normalized == "data_quality_below_min":
+        return {
+            "action": "refresh_data_quality",
+            "note": "Refresh candidate data quality before adding this market to the automatic submit frontier.",
+        }
+    if normalized in {"score_below_min", "expected_edge_below_min", "whole_share_edge_margin_below_min"}:
+        return {
+            "action": "improve_signal_edge_before_expansion",
+            "note": "Keep collecting evidence and improve expected-edge calibration before expanding this market.",
+        }
+    if normalized == "execution_not_ready":
+        return {
+            "action": "refresh_execution_artifacts",
+            "note": "Regenerate report and no-submit execution artifacts before ranking this market for expansion.",
+        }
+    if normalized == "asset_class_not_preferred":
+        return {
+            "action": "keep_etf_first_profile",
+            "note": "For small accounts, keep ETF-first expansion unless evidence supports widening to individual equities.",
+        }
+    if normalized == "action_not_allowed":
+        return {
+            "action": "ignore_non_growth_actions",
+            "note": "Do not expand watchlists with REDUCE/WATCH rows for growth-oriented paper submit.",
+        }
+    return {
+        "action": "monitor_watchlist_expansion",
+        "note": "Review rejected candidates and keep the existing risk, cost, and quality gates intact.",
+    }
+
+
+def summarize_watchlist_expansion(
+    rows: Iterable[Mapping[str, Any]],
+    *,
+    market_rows: Iterable[Mapping[str, Any]] = (),
+) -> Dict[str, Any]:
+    clean_rows = [dict(row or {}) for row in list(rows or [])]
+    clean_market_rows = [dict(row or {}) for row in list(market_rows or [])]
+    selected_rows = [row for row in clean_rows if _selection_status(row) == "SELECTED"]
+    reason_rows = selection_reason_summary(clean_rows)
+    market_recommendations: List[Dict[str, Any]] = []
+    for market_row in clean_market_rows:
+        market = str(market_row.get("market") or "").strip().upper()
+        if not market:
+            continue
+        candidate_count = int(_float(market_row.get("candidate_row_count"), 0.0))
+        selected_count = int(_float(market_row.get("selected_count"), 0.0))
+        if candidate_count <= 0 or selected_count > 0:
+            continue
+        scoped_rows = [
+            row
+            for row in clean_rows
+            if str(row.get("market") or "").strip().upper() == market
+        ]
+        scoped_reasons = selection_reason_summary(scoped_rows)
+        top_reason = str(scoped_reasons[0].get("reason") or "") if scoped_reasons else ""
+        recommendation = _recommendation_for_reason(top_reason)
+        market_recommendations.append(
+            {
+                "market": market,
+                "candidate_row_count": candidate_count,
+                "selected_count": selected_count,
+                "top_reject_reason": top_reason,
+                "top_reject_count": int(scoped_reasons[0].get("count", 0) or 0) if scoped_reasons else 0,
+                "recommendation_action": recommendation["action"],
+                "recommendation_note": recommendation["note"],
+            }
+        )
+    market_recommendations.sort(
+        key=lambda row: (
+            -int(row.get("top_reject_count", 0) or 0),
+            str(row.get("market") or ""),
+        )
+    )
+    primary = dict(market_recommendations[0]) if market_recommendations else {}
+    return {
+        "candidate_row_count": len(clean_rows),
+        "selected_count": len(selected_rows),
+        "rejected_count": len(clean_rows) - len(selected_rows),
+        "zero_selected_market_count": len(market_recommendations),
+        "reason_summary": reason_rows,
+        "market_recommendations": market_recommendations,
+        "primary_recommendation_market": str(primary.get("market") or ""),
+        "primary_recommendation_reason": str(primary.get("top_reject_reason") or ""),
+        "primary_recommendation_action": str(primary.get("recommendation_action") or ""),
+        "primary_recommendation_note": str(primary.get("recommendation_note") or ""),
+    }
+
+
 def build_watchlist_expansion_rows(
     candidate_rows: Iterable[Mapping[str, Any]],
     *,

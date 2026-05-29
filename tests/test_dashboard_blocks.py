@@ -293,9 +293,24 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
             "selected_count": 2,
             "candidate_row_count": 10,
             "zero_selected_market_count": 1,
+            "rejected_count": 1,
             "age_hours": 6.0,
             "max_age_hours": 168,
             "account_profile": {"name": "small", "account_equity": 1000.0},
+            "primary_recommendation_market": "HK",
+            "primary_recommendation_reason": "expected_cost_above_max",
+            "primary_recommendation_action": "calibrate_cost_or_expand_lower_cost_etfs",
+            "primary_recommendation_note": "Review fee/spread assumptions and expand lower-cost ETF candidates.",
+            "market_recommendations": [
+                {
+                    "market": "HK",
+                    "candidate_row_count": 5,
+                    "selected_count": 0,
+                    "top_reject_reason": "expected_cost_above_max",
+                    "top_reject_count": 1,
+                    "recommendation_action": "calibrate_cost_or_expand_lower_cost_etfs",
+                }
+            ],
             "markets": [
                 {"market": "US", "candidate_row_count": 5, "selected_count": 2, "selected_symbols": "SPTM,SCHB"},
                 {"market": "HK", "candidate_row_count": 5, "selected_count": 0, "selected_symbols": ""},
@@ -407,6 +422,9 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
     assert by_id["watchlist_expansion"]["metrics"]["selected_count"] == 2
     assert by_id["watchlist_expansion"]["metrics"]["zero_selected_market_count"] == 1
     assert by_id["watchlist_expansion"]["metrics"]["top_reject_reason"] == "expected_cost_above_max"
+    assert by_id["watchlist_expansion"]["metrics"]["primary_recommendation_market"] == "HK"
+    assert by_id["watchlist_expansion"]["metrics"]["primary_recommendation_action"] == "calibrate_cost_or_expand_lower_cost_etfs"
+    assert by_id["watchlist_expansion"]["rows"]["market_recommendations"][0]["market"] == "HK"
     assert by_id["evidence_focus_actions"]["status"] == "warn"
     assert by_id["evidence_focus_actions"]["metrics"]["focus_action_count"] == 3
     assert by_id["evidence_focus_actions"]["metrics"]["urgent_action_count"] == 2
@@ -585,7 +603,10 @@ def test_watchlist_expansion_block_warns_when_no_growth_candidates_selected():
     assert block["metrics"]["selected_count"] == 0
     assert block["metrics"]["zero_selected_market_count"] == 2
     assert block["metrics"]["top_reject_reason"] == "whole_share_not_tradable"
+    assert block["metrics"]["primary_recommendation_market"] == "ASX"
+    assert block["metrics"]["primary_recommendation_action"] == "calibrate_cost_or_expand_lower_cost_etfs"
     assert block["rows"]["reason_summary"][0] == {"reason": "whole_share_not_tradable", "count": 2}
+    assert block["rows"]["market_recommendations"][0]["market"] == "ASX"
 
 
 def test_evidence_focus_actions_block_keeps_sample_collection_non_warning():

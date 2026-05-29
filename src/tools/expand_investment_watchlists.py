@@ -16,6 +16,7 @@ from ..common.watchlist_expansion import (
     WatchlistExpansionPolicy,
     build_watchlist_expansion_rows,
     selected_watchlist_symbols,
+    summarize_watchlist_expansion,
 )
 from ..offhours.candidates import load_watchlist_symbols
 
@@ -343,6 +344,7 @@ def main() -> None:
 
     _write_csv(analysis_dir / "watchlist_expansion_candidates.csv", all_rows)
     _write_csv(analysis_dir / "watchlist_expansion_summary.csv", summary_rows)
+    expansion_summary = summarize_watchlist_expansion(all_rows, market_rows=summary_rows)
     (analysis_dir / "watchlist_expansion_summary.json").write_text(
         json.dumps(
             {
@@ -352,6 +354,7 @@ def main() -> None:
                 "account_profile": account_profile_payload,
                 "policy": policy.to_dict(),
                 "markets": summary_rows,
+                **expansion_summary,
             },
             indent=2,
         ),
