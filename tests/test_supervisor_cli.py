@@ -113,11 +113,15 @@ class SupervisorCliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             cfg_path = Path(tmp) / "supervisor.yaml"
             out_dir = Path(tmp) / "reports_supervisor"
+            weekly_dir = Path(tmp) / "reports_investment_weekly"
+            preflight_dir = Path(tmp) / "reports_preflight"
             cfg_path.write_text(
                 "\n".join(
                     [
                         'timezone: "Australia/Sydney"',
                         f'summary_out_dir: "{out_dir}"',
+                        f'dashboard_weekly_review_dir: "{weekly_dir}"',
+                        f'dashboard_preflight_dir: "{preflight_dir}"',
                         "auto_order_readiness:",
                         "  enabled: true",
                         "markets:",
@@ -151,6 +155,147 @@ class SupervisorCliTests(unittest.TestCase):
             self.assertTrue(changed)
             self.assertEqual(payload["summary"]["portfolio_count"], 1)
             self.assertEqual(payload["rows"][0]["portfolio_id"], "US:watchlist")
+
+    def test_write_auto_order_readiness_summary_refreshes_stale_same_signature(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = Path(tmp) / "supervisor.yaml"
+            out_dir = Path(tmp) / "reports_supervisor"
+            weekly_dir = Path(tmp) / "reports_investment_weekly"
+            preflight_dir = Path(tmp) / "reports_preflight"
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        f'summary_out_dir: "{out_dir}"',
+                        f'dashboard_weekly_review_dir: "{weekly_dir}"',
+                        f'dashboard_preflight_dir: "{preflight_dir}"',
+                        "auto_order_readiness:",
+                        "  enabled: true",
+                        "  max_artifact_age_hours: 24",
+                        "markets:",
+                        '  - name: "us"',
+                        '    market: "US"',
+                        "    enabled: true",
+                        "    reports: []",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(cfg_path))
+            rows = [{"market": "US", "portfolio_id": "US:watchlist", "status": "READY", "ready": True}]
+            with patch.object(supervisor, "_auto_order_readiness_rows", return_value=rows):
+                self.assertTrue(
+                    supervisor._write_auto_order_readiness_summary(
+                        datetime(2026, 5, 27, 4, 0, tzinfo=timezone.utc)
+                    )
+                )
+                self.assertFalse(
+                    supervisor._write_auto_order_readiness_summary(
+                        datetime(2026, 5, 27, 5, 0, tzinfo=timezone.utc)
+                    )
+                )
+                self.assertTrue(
+                    supervisor._write_auto_order_readiness_summary(
+                        datetime(2026, 5, 28, 5, 1, tzinfo=timezone.utc)
+                    )
+                )
+
+            payload = json.loads((out_dir / "auto_order_readiness.json").read_text(encoding="utf-8"))
+            self.assertEqual(payload["rewrite_reason"], "existing_artifact_stale")
+            self.assertEqual(payload["generated_at"], "2026-05-28T05:01:00+00:00")
+
+    def test_write_auto_order_readiness_summary_refreshes_when_dependency_is_newer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            cfg_path = base / "supervisor.yaml"
+            out_dir = base / "reports_supervisor"
+            preflight_dir = base / "reports_preflight"
+            preflight_dir.mkdir(parents=True, exist_ok=True)
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        f'summary_out_dir: "{out_dir}"',
+                        f'dashboard_preflight_dir: "{preflight_dir}"',
+                        "auto_order_readiness:",
+                        "  enabled: true",
+                        "  max_artifact_age_hours: 168",
+                        "markets:",
+                        '  - name: "us"',
+                        '    market: "US"',
+                        "    enabled: true",
+                        "    reports: []",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(cfg_path))
+            rows = [{"market": "US", "portfolio_id": "US:watchlist", "status": "READY", "ready": True}]
+            with patch.object(supervisor, "_auto_order_readiness_rows", return_value=rows):
+                self.assertTrue(
+                    supervisor._write_auto_order_readiness_summary(
+                        datetime(2026, 5, 27, 4, 0, tzinfo=timezone.utc)
+                    )
+                )
+                preflight_path = preflight_dir / "supervisor_preflight_summary.json"
+                preflight_path.write_text('{"generated_at": "2026-05-28T04:00:00+00:00"}', encoding="utf-8")
+                dependency_ts = datetime(2026, 5, 28, 4, 0, tzinfo=timezone.utc).timestamp()
+                os.utime(preflight_path, (dependency_ts, dependency_ts))
+                self.assertTrue(
+                    supervisor._write_auto_order_readiness_summary(
+                        datetime(2026, 5, 28, 5, 0, tzinfo=timezone.utc)
+                    )
+                )
+
+            payload = json.loads((out_dir / "auto_order_readiness.json").read_text(encoding="utf-8"))
+            self.assertEqual(payload["rewrite_reason"], "dependency_newer_than_artifact")
+
+    def test_auto_order_weekly_summary_prefers_lightweight_gateway_budget_artifact(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            cfg_path = base / "supervisor.yaml"
+            weekly_dir = base / "reports_investment_weekly"
+            weekly_dir.mkdir(parents=True, exist_ok=True)
+            (weekly_dir / "weekly_review_summary.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at": "2026-05-27T00:00:00+00:00",
+                        "ibkr_gateway_budget": {"status": "ok"},
+                        "ibkr_gateway_budget_rows": [{"market": "US", "status": "ok"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (weekly_dir / "weekly_ibkr_gateway_budget_status.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at": "2026-05-28T00:00:00+00:00",
+                        "summary": {"status": "degraded"},
+                        "rows": [{"market": "US", "status": "degraded", "gateway_request_count": 2500}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        f'dashboard_weekly_review_dir: "{weekly_dir}"',
+                        "markets:",
+                        '  - name: "us"',
+                        '    market: "US"',
+                        "    enabled: true",
+                        "    reports: []",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            weekly = Supervisor(str(cfg_path))._auto_order_weekly_summary_payload()
+
+            self.assertEqual(weekly["ibkr_gateway_budget"]["status"], "degraded")
+            self.assertEqual(weekly["ibkr_gateway_budget_rows"][0]["status"], "degraded")
+            self.assertEqual(weekly["ibkr_gateway_budget_generated_at"], "2026-05-28T00:00:00+00:00")
 
     def test_opportunity_gateway_budget_skip_blocks_degraded_market(self):
         with tempfile.TemporaryDirectory() as tmp:

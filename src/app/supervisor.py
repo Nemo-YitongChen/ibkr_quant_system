@@ -38,6 +38,7 @@ from ..common.ibkr_client_id import (
     DEFAULT_CONNECT_MAX_ROUNDS,
     ibkr_task_client_id_offset,
 )
+from ..common.freshness import parse_utc_datetime
 from ..common.market_readiness import build_market_readiness_payload
 from ..common.markets import market_config_path, market_timezone_name, resolve_market_code
 from ..common.runtime_paths import resolve_repo_path, resolve_scoped_runtime_path, scope_from_ibkr_config
@@ -177,6 +178,13 @@ def _load_json_file(path: Path) -> Dict[str, Any]:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return {}
+
+
+def _file_mtime_utc(path: Path) -> datetime | None:
+    try:
+        return datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
+    except OSError:
+        return None
 
 
 def _coerce_int(value: Any, default: int = 0) -> int:
@@ -2794,6 +2802,25 @@ class Supervisor:
         self._weekly_review_summary_cache_payload = dict(payload or {})
         return self._weekly_review_summary_cache_payload
 
+    def _auto_order_weekly_summary_payload(self) -> Dict[str, Any]:
+        weekly = dict(self._weekly_review_summary_payload() or {})
+        gateway_budget_path = self._weekly_review_output_dir() / "weekly_ibkr_gateway_budget_status.json"
+        gateway_budget = _load_json_file(gateway_budget_path)
+        if gateway_budget:
+            summary = dict(gateway_budget.get("summary") or {})
+            rows = [
+                dict(row)
+                for row in list(gateway_budget.get("rows") or [])
+                if isinstance(row, dict)
+            ]
+            if summary:
+                weekly["ibkr_gateway_budget"] = summary
+            if rows:
+                weekly["ibkr_gateway_budget_rows"] = rows
+            if str(gateway_budget.get("generated_at") or "").strip():
+                weekly["ibkr_gateway_budget_generated_at"] = str(gateway_budget.get("generated_at") or "")
+        return weekly
+
     def _market_readiness_summary_payload(self) -> Dict[str, Any]:
         scoped_path = self._summary_output_dir() / "market_readiness.json"
         payload = _load_json_file(scoped_path)
@@ -2844,7 +2871,7 @@ class Supervisor:
     def _auto_order_readiness_common_inputs(self) -> Dict[str, Any]:
         return {
             "preflight_summary": _load_json_file(self._preflight_output_dir() / "supervisor_preflight_summary.json"),
-            "weekly_summary": self._weekly_review_summary_payload(),
+            "weekly_summary": self._auto_order_weekly_summary_payload(),
             "market_readiness_summary": self._market_readiness_summary_payload(),
             "policy": self._auto_order_readiness_policy(),
         }
@@ -2888,6 +2915,45 @@ class Supervisor:
             policy=self._auto_order_readiness_policy(),
         )
 
+    def _auto_order_readiness_dependency_paths(self) -> List[Path]:
+        paths = [
+            self._preflight_output_dir() / "supervisor_preflight_summary.json",
+            self._weekly_review_output_dir() / "weekly_review_summary.json",
+            self._weekly_review_output_dir() / "weekly_ibkr_gateway_budget_status.json",
+            self._summary_output_dir() / "market_readiness.json",
+        ]
+        raw_dir = str(self.cfg.get("summary_out_dir", "reports_supervisor") or "reports_supervisor")
+        fallback_market_readiness = _resolve_path(raw_dir) / "market_readiness.json"
+        if fallback_market_readiness not in paths:
+            paths.append(fallback_market_readiness)
+        return [path for path in paths if path.exists()]
+
+    def _auto_order_readiness_rewrite_reason(
+        self,
+        json_path: Path,
+        *,
+        now: datetime,
+        policy: Dict[str, Any],
+    ) -> str:
+        existing = _load_json_file(json_path)
+        generated_at = parse_utc_datetime(existing.get("generated_at"))
+        if generated_at is None:
+            return "missing_existing_generated_at"
+        max_age_hours = _coerce_float(
+            policy.get("max_artifact_age_hours", policy.get("max_preflight_age_hours", 24)),
+            24.0,
+        )
+        now_utc = now.astimezone(timezone.utc)
+        if max_age_hours > 0.0 and (now_utc - generated_at).total_seconds() > max_age_hours * 3600.0:
+            return "existing_artifact_stale"
+        latest_dependency = max(
+            (mtime for mtime in (_file_mtime_utc(path) for path in self._auto_order_readiness_dependency_paths()) if mtime),
+            default=None,
+        )
+        if latest_dependency is not None and latest_dependency > generated_at:
+            return "dependency_newer_than_artifact"
+        return ""
+
     def _write_auto_order_readiness_summary(self, now: datetime) -> bool:
         policy = self._auto_order_readiness_policy()
         if not bool(policy.get("enabled", False)):
@@ -2906,11 +2972,17 @@ class Supervisor:
         ).hexdigest()
         out_dir = self._summary_output_dir()
         json_path = out_dir / "auto_order_readiness.json"
-        if signature == self._last_auto_order_readiness_signature and json_path.exists():
+        rewrite_reason = (
+            self._auto_order_readiness_rewrite_reason(json_path, now=now, policy=policy)
+            if json_path.exists()
+            else "missing_artifact"
+        )
+        if signature == self._last_auto_order_readiness_signature and json_path.exists() and not rewrite_reason:
             return False
         out_dir.mkdir(parents=True, exist_ok=True)
         payload = {
             "generated_at": now.astimezone(timezone.utc).isoformat(),
+            "rewrite_reason": rewrite_reason or "content_changed",
             **signature_payload,
         }
         json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
