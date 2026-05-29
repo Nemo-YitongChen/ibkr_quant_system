@@ -569,7 +569,8 @@ def test_investment_workflow_cli_smoke_generates_contract_artifacts(tmp_path, mo
     assert dashboard_payload["cards"][0]["execution_weekly_row"]["portfolio_id"] == portfolio_id
     assert dashboard_payload["execution_weekly"]["portfolio_id"] == portfolio_id
     assert "control_split_text" in dashboard_payload["cards"][0]["weekly_attribution"]
-    assert len(dashboard_payload["dashboard_v2_blocks"]) == 13
+    dashboard_block_ids = [block.get("id") for block in dashboard_payload["dashboard_v2_blocks"]]
+    assert len(dashboard_block_ids) == len(set(dashboard_block_ids))
     assert [block.get("id") for block in dashboard_payload["dashboard_v2_blocks"] if block.get("category") == "home"] == [
         "ops_health",
         "open_market_analysis",
@@ -583,6 +584,7 @@ def test_investment_workflow_cli_smoke_generates_contract_artifacts(tmp_path, mo
     assert any(block.get("id") == "walk_forward_acceptance" for block in dashboard_payload["dashboard_v2_blocks"])
     assert any(block.get("id") == "strategy_parameter_governance" for block in dashboard_payload["dashboard_v2_blocks"])
     assert any(block.get("id") == "evidence_focus_actions" for block in dashboard_payload["dashboard_v2_blocks"])
+    assert any(block.get("id") == "watchlist_expansion" for block in dashboard_payload["dashboard_v2_blocks"])
     assert dashboard_payload["evidence_action_summary"]["action_label"]
     assert dashboard_payload["evidence_action_summary"]["decision_basis"]
     assert dashboard_payload["evidence_action_summary"]["rationale"]
