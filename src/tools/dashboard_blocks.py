@@ -4,7 +4,7 @@ from typing import Any, Dict, List
 
 from ..common.alert_classification import summarize_error_classes
 from ..common.dashboard_control_audit import summarize_evidence_action_audit_links
-from ..common.watchlist_expansion import selection_reason_summary, summarize_watchlist_expansion
+from ..common.watchlist_expansion import WatchlistExpansionPolicy, selection_reason_summary, summarize_watchlist_expansion
 
 
 DASHBOARD_BLOCK_CATEGORY_HOME = "home"
@@ -571,7 +571,12 @@ def build_watchlist_expansion_block(payload: Dict[str, Any]) -> Dict[str, Any]:
     market_rows = _rows(summary.get("markets"), limit=20)
     candidate_rows = _rows(summary.get("candidate_rows"), limit=100)
     selected_candidates = [row for row in candidate_rows if str(row.get("selection_status") or "").upper() == "SELECTED"]
-    fallback_summary = summarize_watchlist_expansion(candidate_rows, market_rows=market_rows) if (candidate_rows or market_rows) else {}
+    policy = WatchlistExpansionPolicy.from_mapping(_dict(summary.get("policy")))
+    fallback_summary = (
+        summarize_watchlist_expansion(candidate_rows, market_rows=market_rows, policy=policy)
+        if (candidate_rows or market_rows)
+        else {}
+    )
     reason_summary = (
         _rows(summary.get("reason_summary"), limit=20)
         or _rows(fallback_summary.get("reason_summary"), limit=20)
@@ -630,6 +635,8 @@ def build_watchlist_expansion_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "primary_recommendation_market": primary_market,
             "primary_recommendation_reason": primary_reason,
             "primary_recommendation_action": primary_action,
+            "primary_expansion_target": str(market_recommendations[0].get("expansion_target") if market_recommendations else ""),
+            "preferred_asset_class_gap_count": sum(1 for row in market_recommendations if bool(row.get("preferred_asset_class_gap"))),
             "selected_symbols": ",".join(
                 str(row.get("symbol") or "").strip()
                 for row in selected_candidates[:10]

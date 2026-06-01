@@ -249,6 +249,7 @@ def test_watchlist_expansion_summary_recommends_market_followups() -> None:
             {"market": "HK", "candidate_row_count": 1, "selected_count": 0},
             {"market": "US", "candidate_row_count": 1, "selected_count": 1},
         ],
+        policy=WatchlistExpansionPolicy(preferred_asset_classes=("etf",)),
     )
 
     assert selection_reason_summary(rows)[0] == {"reason": "expected_cost_above_max", "count": 2}
@@ -258,5 +259,8 @@ def test_watchlist_expansion_summary_recommends_market_followups() -> None:
     assert summary["primary_recommendation_market"] == "ASX"
     assert summary["primary_recommendation_reason"] == "expected_cost_above_max"
     assert summary["primary_recommendation_action"] == "calibrate_cost_or_expand_lower_cost_etfs"
+    assert summary["market_recommendations"][0]["preferred_asset_class_gap"] is True
+    assert summary["market_recommendations"][0]["expansion_target"] == "seed_preferred_asset_class_candidates"
+    assert summary["market_recommendations"][0]["near_miss_candidates"][0]["symbol"] == "VAS.AX"
     assert summary["market_recommendations"][1]["market"] == "HK"
     assert summary["market_recommendations"][1]["recommendation_action"] == "expand_whole_share_tradable_etfs"

@@ -167,6 +167,33 @@ def _selection_reason_parts(row: Mapping[str, Any]) -> List[str]:
     return reasons
 
 
+def _clean_asset_class(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def _preferred_asset_classes(policy: WatchlistExpansionPolicy | Mapping[str, Any] | None) -> List[str]:
+    if isinstance(policy, WatchlistExpansionPolicy):
+        raw = policy.preferred_asset_classes
+    elif isinstance(policy, Mapping):
+        raw = policy.get("preferred_asset_classes")
+    else:
+        raw = ()
+    if isinstance(raw, str):
+        raw = [item.strip() for item in raw.split(",")]
+    return [str(item).strip().lower() for item in list(raw or []) if str(item).strip()]
+
+
+def _asset_class_summary(rows: Iterable[Mapping[str, Any]]) -> List[Dict[str, Any]]:
+    counts: Dict[str, int] = {}
+    for row in list(rows or []):
+        asset_class = _clean_asset_class(row.get("asset_class")) or "unknown"
+        counts[asset_class] = int(counts.get(asset_class, 0)) + 1
+    return [
+        {"asset_class": asset_class, "count": count}
+        for asset_class, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    ]
+
+
 def selection_reason_summary(rows: Iterable[Mapping[str, Any]]) -> List[Dict[str, Any]]:
     counts: Dict[str, int] = {}
     for row in list(rows or []):
@@ -233,13 +260,64 @@ def _recommendation_for_reason(reason: str) -> Dict[str, str]:
     }
 
 
+def _expansion_target(top_reason: str, *, preferred_asset_class_gap: bool) -> str:
+    if preferred_asset_class_gap:
+        return "seed_preferred_asset_class_candidates"
+    if top_reason == "expected_cost_above_max":
+        return "lower_cost_whole_share_etf_candidates"
+    if top_reason == "whole_share_not_tradable":
+        return "lower_price_whole_share_candidates"
+    if top_reason == "last_close_above_account_cap":
+        return "lower_price_candidates"
+    if top_reason == "liquidity_below_min":
+        return "higher_liquidity_candidates"
+    if top_reason in {"data_quality_below_min", "execution_not_ready"}:
+        return "refresh_candidate_evidence"
+    return "collect_more_candidate_evidence"
+
+
+def _near_miss_candidates(rows: Iterable[Mapping[str, Any]], *, limit: int = 5) -> List[Dict[str, Any]]:
+    candidates: List[Dict[str, Any]] = []
+    for row in list(rows or []):
+        if _selection_status(row) == "SELECTED":
+            continue
+        reasons = _selection_reason_parts(row)
+        if not reasons:
+            continue
+        candidates.append(
+            {
+                "symbol": _symbol(row.get("symbol")),
+                "asset_class": _clean_asset_class(row.get("asset_class")) or "unknown",
+                "selection_reason": ",".join(reasons),
+                "blocking_reason_count": len(reasons),
+                "score": round(_float(row.get("score"), 0.0), 6),
+                "expected_edge_bps": round(_float(row.get("expected_edge_bps"), 0.0), 6),
+                "expected_cost_bps": round(_float(row.get("expected_cost_bps"), 0.0), 6),
+                "whole_share_edge_margin_bps": round(_float(row.get("whole_share_edge_margin_bps"), 0.0), 6),
+                "last_close": round(_float(row.get("last_close"), 0.0), 6),
+            }
+        )
+    candidates.sort(
+        key=lambda row: (
+            int(row.get("blocking_reason_count", 0) or 0),
+            -float(row.get("score", 0.0) or 0.0),
+            -float(row.get("whole_share_edge_margin_bps", 0.0) or 0.0),
+            float(row.get("expected_cost_bps", 0.0) or 0.0),
+            str(row.get("symbol") or ""),
+        )
+    )
+    return candidates[: max(0, int(limit))]
+
+
 def summarize_watchlist_expansion(
     rows: Iterable[Mapping[str, Any]],
     *,
     market_rows: Iterable[Mapping[str, Any]] = (),
+    policy: WatchlistExpansionPolicy | Mapping[str, Any] | None = None,
 ) -> Dict[str, Any]:
     clean_rows = [dict(row or {}) for row in list(rows or [])]
     clean_market_rows = [dict(row or {}) for row in list(market_rows or [])]
+    preferred_assets = _preferred_asset_classes(policy)
     selected_rows = [row for row in clean_rows if _selection_status(row) == "SELECTED"]
     reason_rows = selection_reason_summary(clean_rows)
     market_recommendations: List[Dict[str, Any]] = []
@@ -258,6 +336,13 @@ def summarize_watchlist_expansion(
         ]
         scoped_reasons = selection_reason_summary(scoped_rows)
         top_reason = str(scoped_reasons[0].get("reason") or "") if scoped_reasons else ""
+        asset_summary = _asset_class_summary(scoped_rows)
+        preferred_count = sum(
+            1
+            for row in scoped_rows
+            if _clean_asset_class(row.get("asset_class")) in set(preferred_assets)
+        )
+        preferred_gap = bool(preferred_assets) and preferred_count <= 0
         recommendation = _recommendation_for_reason(top_reason)
         market_recommendations.append(
             {
@@ -266,8 +351,15 @@ def summarize_watchlist_expansion(
                 "selected_count": selected_count,
                 "top_reject_reason": top_reason,
                 "top_reject_count": int(scoped_reasons[0].get("count", 0) or 0) if scoped_reasons else 0,
+                "asset_class_summary": asset_summary,
+                "preferred_asset_classes": preferred_assets,
+                "preferred_asset_class_count": preferred_count,
+                "preferred_asset_class_gap": preferred_gap,
+                "expansion_target": _expansion_target(top_reason, preferred_asset_class_gap=preferred_gap),
+                "near_miss_candidates": _near_miss_candidates(scoped_rows),
                 "recommendation_action": recommendation["action"],
                 "recommendation_note": recommendation["note"],
+                "do_not_relax_submit_gates": True,
             }
         )
     market_recommendations.sort(

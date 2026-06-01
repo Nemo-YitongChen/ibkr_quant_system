@@ -344,7 +344,7 @@ def main() -> None:
 
     _write_csv(analysis_dir / "watchlist_expansion_candidates.csv", all_rows)
     _write_csv(analysis_dir / "watchlist_expansion_summary.csv", summary_rows)
-    expansion_summary = summarize_watchlist_expansion(all_rows, market_rows=summary_rows)
+    expansion_summary = summarize_watchlist_expansion(all_rows, market_rows=summary_rows, policy=policy)
     (analysis_dir / "watchlist_expansion_summary.json").write_text(
         json.dumps(
             {

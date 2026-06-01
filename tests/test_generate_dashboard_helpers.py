@@ -894,6 +894,9 @@ def test_load_watchlist_expansion_payload_counts_selected_and_reject_reasons(tmp
     assert payload["primary_recommendation_reason"] == "expected_cost_above_max"
     assert payload["primary_recommendation_action"] == "calibrate_cost_or_expand_lower_cost_etfs"
     assert payload["market_recommendations"][0]["market"] == "HK"
+    assert payload["market_recommendations"][0]["preferred_asset_class_gap"] is True
+    assert payload["market_recommendations"][0]["expansion_target"] == "seed_preferred_asset_class_candidates"
+    assert payload["market_recommendations"][0]["near_miss_candidates"][0]["symbol"] == "2800.HK"
     assert "primary_recommendation_action=calibrate_cost_or_expand_lower_cost_etfs" in payload["summary_text"]
 
 

@@ -308,6 +308,15 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
                     "selected_count": 0,
                     "top_reject_reason": "expected_cost_above_max",
                     "top_reject_count": 1,
+                    "preferred_asset_class_gap": True,
+                    "expansion_target": "seed_preferred_asset_class_candidates",
+                    "near_miss_candidates": [
+                        {
+                            "symbol": "2800.HK",
+                            "asset_class": "unknown",
+                            "selection_reason": "expected_cost_above_max,whole_share_not_tradable",
+                        }
+                    ],
                     "recommendation_action": "calibrate_cost_or_expand_lower_cost_etfs",
                 }
             ],
@@ -424,6 +433,7 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
     assert by_id["watchlist_expansion"]["metrics"]["top_reject_reason"] == "expected_cost_above_max"
     assert by_id["watchlist_expansion"]["metrics"]["primary_recommendation_market"] == "HK"
     assert by_id["watchlist_expansion"]["metrics"]["primary_recommendation_action"] == "calibrate_cost_or_expand_lower_cost_etfs"
+    assert by_id["watchlist_expansion"]["metrics"]["primary_expansion_target"] == "seed_preferred_asset_class_candidates"
     assert by_id["watchlist_expansion"]["rows"]["market_recommendations"][0]["market"] == "HK"
     assert by_id["evidence_focus_actions"]["status"] == "warn"
     assert by_id["evidence_focus_actions"]["metrics"]["focus_action_count"] == 3
@@ -605,8 +615,11 @@ def test_watchlist_expansion_block_warns_when_no_growth_candidates_selected():
     assert block["metrics"]["top_reject_reason"] == "whole_share_not_tradable"
     assert block["metrics"]["primary_recommendation_market"] == "ASX"
     assert block["metrics"]["primary_recommendation_action"] == "calibrate_cost_or_expand_lower_cost_etfs"
+    assert block["metrics"]["primary_expansion_target"] == "seed_preferred_asset_class_candidates"
+    assert block["metrics"]["preferred_asset_class_gap_count"] == 2
     assert block["rows"]["reason_summary"][0] == {"reason": "whole_share_not_tradable", "count": 2}
     assert block["rows"]["market_recommendations"][0]["market"] == "ASX"
+    assert block["rows"]["market_recommendations"][0]["near_miss_candidates"][0]["symbol"] == "BHP.AX"
 
 
 def test_evidence_focus_actions_block_keeps_sample_collection_non_warning():

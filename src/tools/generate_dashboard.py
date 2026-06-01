@@ -45,7 +45,7 @@ from ..common.open_market_analysis import build_open_market_analysis_summary
 from ..common.runtime_paths import resolve_repo_path, resolve_scoped_runtime_path, scope_from_ibkr_config
 from ..common.sqlite_utils import connect_sqlite
 from ..common.storage import Storage
-from ..common.watchlist_expansion import summarize_watchlist_expansion
+from ..common.watchlist_expansion import WatchlistExpansionPolicy, summarize_watchlist_expansion
 from .dashboard_blocks import build_dashboard_v2_blocks, build_evidence_quality_block
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -1022,7 +1022,8 @@ def _load_watchlist_expansion_payload(
     if not markets:
         markets = _read_all_csv_rows(expansion_dir / "watchlist_expansion_summary.csv")
     candidate_rows = _read_all_csv_rows(expansion_dir / "watchlist_expansion_candidates.csv")
-    expansion_summary = summarize_watchlist_expansion(candidate_rows, market_rows=markets)
+    policy = WatchlistExpansionPolicy.from_mapping(payload.get("policy") if isinstance(payload.get("policy"), dict) else {})
+    expansion_summary = summarize_watchlist_expansion(candidate_rows, market_rows=markets, policy=policy)
     generated_at = str(payload.get("generated_at") or "").strip()
     age_hours = age_hours_from_timestamp(generated_at, now) if generated_at else None
     candidate_count = sum(int(_safe_float(row.get("candidate_row_count"), 0.0)) for row in markets)
