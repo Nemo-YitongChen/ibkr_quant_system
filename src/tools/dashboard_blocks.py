@@ -586,6 +586,7 @@ def build_watchlist_expansion_block(payload: Dict[str, Any]) -> Dict[str, Any]:
         fallback_summary.get("market_recommendations"),
         limit=20,
     )
+    seed_proposals = _rows(summary.get("seed_proposals"), limit=20) or _rows(fallback_summary.get("seed_proposals"), limit=20)
     primary_market = str(summary.get("primary_recommendation_market") or fallback_summary.get("primary_recommendation_market") or "")
     primary_reason = str(summary.get("primary_recommendation_reason") or fallback_summary.get("primary_recommendation_reason") or "")
     primary_action = str(summary.get("primary_recommendation_action") or fallback_summary.get("primary_recommendation_action") or "")
@@ -637,6 +638,9 @@ def build_watchlist_expansion_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "primary_recommendation_action": primary_action,
             "primary_expansion_target": str(market_recommendations[0].get("expansion_target") if market_recommendations else ""),
             "preferred_asset_class_gap_count": sum(1 for row in market_recommendations if bool(row.get("preferred_asset_class_gap"))),
+            "seed_proposal_count": len(seed_proposals),
+            "manual_seed_proposal_count": sum(1 for row in seed_proposals if not bool(row.get("auto_apply"))),
+            "primary_seed_proposal_action": str(seed_proposals[0].get("proposal_action") if seed_proposals else ""),
             "selected_symbols": ",".join(
                 str(row.get("symbol") or "").strip()
                 for row in selected_candidates[:10]
@@ -648,6 +652,7 @@ def build_watchlist_expansion_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "selected_candidates": selected_candidates[:20],
             "reason_summary": reason_summary,
             "market_recommendations": market_recommendations,
+            "seed_proposals": seed_proposals,
             "policy": _dict(summary.get("policy")),
         },
     }

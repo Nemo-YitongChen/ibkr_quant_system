@@ -320,6 +320,15 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
                     "recommendation_action": "calibrate_cost_or_expand_lower_cost_etfs",
                 }
             ],
+            "seed_proposals": [
+                {
+                    "market": "HK",
+                    "proposal_status": "MANUAL_REVIEW_REQUIRED",
+                    "proposal_action": "create_or_refresh_preferred_asset_seed_watchlist",
+                    "expansion_target": "seed_preferred_asset_class_candidates",
+                    "auto_apply": False,
+                }
+            ],
             "markets": [
                 {"market": "US", "candidate_row_count": 5, "selected_count": 2, "selected_symbols": "SPTM,SCHB"},
                 {"market": "HK", "candidate_row_count": 5, "selected_count": 0, "selected_symbols": ""},
@@ -434,7 +443,11 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
     assert by_id["watchlist_expansion"]["metrics"]["primary_recommendation_market"] == "HK"
     assert by_id["watchlist_expansion"]["metrics"]["primary_recommendation_action"] == "calibrate_cost_or_expand_lower_cost_etfs"
     assert by_id["watchlist_expansion"]["metrics"]["primary_expansion_target"] == "seed_preferred_asset_class_candidates"
+    assert by_id["watchlist_expansion"]["metrics"]["seed_proposal_count"] == 1
+    assert by_id["watchlist_expansion"]["metrics"]["manual_seed_proposal_count"] == 1
+    assert by_id["watchlist_expansion"]["metrics"]["primary_seed_proposal_action"] == "create_or_refresh_preferred_asset_seed_watchlist"
     assert by_id["watchlist_expansion"]["rows"]["market_recommendations"][0]["market"] == "HK"
+    assert by_id["watchlist_expansion"]["rows"]["seed_proposals"][0]["market"] == "HK"
     assert by_id["evidence_focus_actions"]["status"] == "warn"
     assert by_id["evidence_focus_actions"]["metrics"]["focus_action_count"] == 3
     assert by_id["evidence_focus_actions"]["metrics"]["urgent_action_count"] == 2
@@ -617,9 +630,12 @@ def test_watchlist_expansion_block_warns_when_no_growth_candidates_selected():
     assert block["metrics"]["primary_recommendation_action"] == "calibrate_cost_or_expand_lower_cost_etfs"
     assert block["metrics"]["primary_expansion_target"] == "seed_preferred_asset_class_candidates"
     assert block["metrics"]["preferred_asset_class_gap_count"] == 2
+    assert block["metrics"]["seed_proposal_count"] == 2
+    assert block["metrics"]["primary_seed_proposal_action"] == "create_or_refresh_preferred_asset_seed_watchlist"
     assert block["rows"]["reason_summary"][0] == {"reason": "whole_share_not_tradable", "count": 2}
     assert block["rows"]["market_recommendations"][0]["market"] == "ASX"
     assert block["rows"]["market_recommendations"][0]["near_miss_candidates"][0]["symbol"] == "BHP.AX"
+    assert block["rows"]["seed_proposals"][0]["auto_apply"] is False
 
 
 def test_evidence_focus_actions_block_keeps_sample_collection_non_warning():

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from src.common.watchlist_expansion import (
     WatchlistExpansionPolicy,
+    build_watchlist_seed_proposals,
     build_watchlist_expansion_rows,
     selected_watchlist_symbols,
     selection_reason_summary,
@@ -264,3 +265,46 @@ def test_watchlist_expansion_summary_recommends_market_followups() -> None:
     assert summary["market_recommendations"][0]["near_miss_candidates"][0]["symbol"] == "VAS.AX"
     assert summary["market_recommendations"][1]["market"] == "HK"
     assert summary["market_recommendations"][1]["recommendation_action"] == "expand_whole_share_tradable_etfs"
+    assert summary["seed_proposal_count"] == 2
+    assert summary["manual_seed_proposal_count"] == 2
+    assert summary["seed_proposals"][0]["market"] == "ASX"
+    assert summary["seed_proposals"][0]["proposal_action"] == "create_or_refresh_preferred_asset_seed_watchlist"
+    assert summary["seed_proposals"][0]["near_miss_symbols"] == ["VAS.AX", "A200.AX"]
+    assert summary["seed_proposals"][0]["auto_apply"] is False
+    assert summary["seed_proposals"][0]["submit_gate_policy"] == "do_not_relax_submit_gates"
+
+
+def test_watchlist_seed_proposals_keep_manual_acceptance_rules() -> None:
+    proposals = build_watchlist_seed_proposals(
+        [
+            {
+                "market": "XETRA",
+                "expansion_target": "lower_cost_whole_share_etf_candidates",
+                "recommendation_action": "calibrate_cost_or_expand_lower_cost_etfs",
+                "top_reject_reason": "expected_cost_above_max",
+                "preferred_asset_class_gap": False,
+                "preferred_asset_classes": ["etf"],
+                "near_miss_candidates": [{"symbol": "EXS1.DE"}, {"symbol": "IFX.DE"}],
+            }
+        ]
+    )
+
+    assert proposals == [
+        {
+            "market": "XETRA",
+            "proposal_status": "MANUAL_REVIEW_REQUIRED",
+            "proposal_action": "add_lower_cost_whole_share_etf_candidates",
+            "expansion_target": "lower_cost_whole_share_etf_candidates",
+            "linked_recommendation_action": "calibrate_cost_or_expand_lower_cost_etfs",
+            "top_reject_reason": "expected_cost_above_max",
+            "preferred_asset_class_gap": False,
+            "preferred_asset_classes": ["etf"],
+            "near_miss_symbols": ["EXS1.DE", "IFX.DE"],
+            "acceptance_rule": (
+                "Add or tag seed symbols only after they are verified as IBKR-tradable, match the account profile, "
+                "and pass whole-share, cost, liquidity, data-quality, and expected-edge gates in the next candidate report."
+            ),
+            "submit_gate_policy": "do_not_relax_submit_gates",
+            "auto_apply": False,
+        }
+    ]

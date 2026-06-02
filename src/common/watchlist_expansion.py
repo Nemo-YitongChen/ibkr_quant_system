@@ -309,6 +309,60 @@ def _near_miss_candidates(rows: Iterable[Mapping[str, Any]], *, limit: int = 5) 
     return candidates[: max(0, int(limit))]
 
 
+def _seed_proposal_action(expansion_target: str) -> str:
+    if expansion_target == "seed_preferred_asset_class_candidates":
+        return "create_or_refresh_preferred_asset_seed_watchlist"
+    if expansion_target == "lower_cost_whole_share_etf_candidates":
+        return "add_lower_cost_whole_share_etf_candidates"
+    if expansion_target == "lower_price_whole_share_candidates":
+        return "add_lower_price_whole_share_candidates"
+    if expansion_target == "higher_liquidity_candidates":
+        return "add_higher_liquidity_candidates"
+    if expansion_target == "refresh_candidate_evidence":
+        return "refresh_candidate_report_evidence"
+    return "review_candidate_seed_source"
+
+
+def build_watchlist_seed_proposals(market_recommendations: Iterable[Mapping[str, Any]]) -> List[Dict[str, Any]]:
+    proposals: List[Dict[str, Any]] = []
+    for row in list(market_recommendations or []):
+        market = str(row.get("market") or "").strip().upper()
+        if not market:
+            continue
+        expansion_target = str(row.get("expansion_target") or "").strip()
+        near_miss_symbols = [
+            _symbol(item.get("symbol"))
+            for item in list(row.get("near_miss_candidates") or [])
+            if isinstance(item, Mapping) and _symbol(item.get("symbol"))
+        ]
+        proposals.append(
+            {
+                "market": market,
+                "proposal_status": "MANUAL_REVIEW_REQUIRED",
+                "proposal_action": _seed_proposal_action(expansion_target),
+                "expansion_target": expansion_target,
+                "linked_recommendation_action": str(row.get("recommendation_action") or ""),
+                "top_reject_reason": str(row.get("top_reject_reason") or ""),
+                "preferred_asset_class_gap": bool(row.get("preferred_asset_class_gap")),
+                "preferred_asset_classes": list(row.get("preferred_asset_classes") or []),
+                "near_miss_symbols": near_miss_symbols[:5],
+                "acceptance_rule": (
+                    "Add or tag seed symbols only after they are verified as IBKR-tradable, match the account profile, "
+                    "and pass whole-share, cost, liquidity, data-quality, and expected-edge gates in the next candidate report."
+                ),
+                "submit_gate_policy": "do_not_relax_submit_gates",
+                "auto_apply": False,
+            }
+        )
+    proposals.sort(
+        key=lambda row: (
+            0 if bool(row.get("preferred_asset_class_gap")) else 1,
+            str(row.get("market") or ""),
+        )
+    )
+    return proposals
+
+
 def summarize_watchlist_expansion(
     rows: Iterable[Mapping[str, Any]],
     *,
@@ -369,6 +423,7 @@ def summarize_watchlist_expansion(
         )
     )
     primary = dict(market_recommendations[0]) if market_recommendations else {}
+    seed_proposals = build_watchlist_seed_proposals(market_recommendations)
     return {
         "candidate_row_count": len(clean_rows),
         "selected_count": len(selected_rows),
@@ -376,6 +431,9 @@ def summarize_watchlist_expansion(
         "zero_selected_market_count": len(market_recommendations),
         "reason_summary": reason_rows,
         "market_recommendations": market_recommendations,
+        "seed_proposals": seed_proposals,
+        "seed_proposal_count": len(seed_proposals),
+        "manual_seed_proposal_count": sum(1 for row in seed_proposals if bool(row.get("auto_apply")) is False),
         "primary_recommendation_market": str(primary.get("market") or ""),
         "primary_recommendation_reason": str(primary.get("top_reject_reason") or ""),
         "primary_recommendation_action": str(primary.get("recommendation_action") or ""),
