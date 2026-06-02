@@ -81,6 +81,18 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
                         }
                     ],
                 },
+                "frequency_plan": {
+                    "status": "candidate_supply_gap",
+                    "reason": "no_safe_submit_candidate_with_seed_proposals",
+                    "primary_action": "create_or_refresh_preferred_asset_seed_watchlist",
+                    "seed_proposal_count": 1,
+                    "manual_seed_proposal_count": 1,
+                    "seed_proposal_markets": ["US"],
+                    "does_not_change_submit_decision": True,
+                },
+                "candidate_supply_status": "candidate_supply_gap",
+                "candidate_supply_reason": "no_safe_submit_candidate_with_seed_proposals",
+                "candidate_supply_primary_action": "create_or_refresh_preferred_asset_seed_watchlist",
             },
             "rows": [
                 {
@@ -410,6 +422,14 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
     assert by_id["auto_order_readiness"]["metrics"]["frontier_high_quality_count"] == 1
     assert by_id["auto_order_readiness"]["metrics"]["frontier_top_submit_quality_tier"] == "HIGH"
     assert by_id["auto_order_readiness"]["metrics"]["rejected_candidate_count"] == 1
+    assert by_id["auto_order_readiness"]["metrics"]["candidate_supply_status"] == "candidate_supply_gap"
+    assert (
+        by_id["auto_order_readiness"]["metrics"]["candidate_supply_primary_action"]
+        == "create_or_refresh_preferred_asset_seed_watchlist"
+    )
+    assert by_id["auto_order_readiness"]["metrics"]["frequency_seed_proposal_count"] == 1
+    assert by_id["auto_order_readiness"]["metrics"]["frequency_plan_does_not_change_submit_decision"] == 1
+    assert by_id["auto_order_readiness"]["rows"]["frequency_plan"]["seed_proposal_markets"] == ["US"]
     assert by_id["dashboard_control_actions"]["metrics"]["history_count"] == 3
     assert by_id["dashboard_control_actions"]["metrics"]["linked_action_history_count"] == 1
     assert (
@@ -675,6 +695,15 @@ def test_auto_order_readiness_block_warns_when_submit_plan_not_ready():
                     "reason": "no_single_safe_submit_candidate",
                     "frontier_candidates": [{"portfolio_id": "US:watchlist"}],
                 },
+                "frequency_plan": {
+                    "status": "candidate_supply_gap",
+                    "reason": "no_safe_submit_candidate_with_seed_proposals",
+                    "primary_action": "create_or_refresh_preferred_asset_seed_watchlist",
+                    "seed_proposal_count": 1,
+                    "manual_seed_proposal_count": 1,
+                    "seed_proposal_markets": ["US"],
+                    "does_not_change_submit_decision": True,
+                },
             }
         }
     }
@@ -685,6 +714,8 @@ def test_auto_order_readiness_block_warns_when_submit_plan_not_ready():
     assert block["metrics"]["submit_plan_status"] == "BLOCKED"
     assert block["metrics"]["submit_plan_reason"] == "no_single_safe_submit_candidate"
     assert block["metrics"]["frontier_candidate_count"] == 1
+    assert block["metrics"]["candidate_supply_status"] == "candidate_supply_gap"
+    assert block["metrics"]["frequency_seed_proposal_markets"] == ["US"]
 
 
 def test_auto_order_readiness_block_warns_on_stale_readiness_health():

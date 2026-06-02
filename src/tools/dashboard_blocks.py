@@ -288,6 +288,7 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
     health = _dict(payload.get("auto_order_readiness_health"))
     summary = _dict(auto_order.get("summary"))
     submit_plan = _dict(summary.get("submit_plan"))
+    frequency_plan = _dict(summary.get("frequency_plan"))
     rows = _rows(auto_order.get("rows"), limit=50)
     remediation_plan = _rows(summary.get("remediation_plan"), limit=20)
     frontier_candidates = _rows(submit_plan.get("frontier_candidates"), limit=20)
@@ -351,6 +352,17 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "submit_plan_status": submit_status,
             "submit_plan_ready": bool(submit_plan.get("ready", False)),
             "submit_plan_reason": str(submit_plan.get("reason") or ""),
+            "candidate_supply_status": str(summary.get("candidate_supply_status") or frequency_plan.get("status") or ""),
+            "candidate_supply_reason": str(summary.get("candidate_supply_reason") or frequency_plan.get("reason") or ""),
+            "candidate_supply_primary_action": str(
+                summary.get("candidate_supply_primary_action") or frequency_plan.get("primary_action") or ""
+            ),
+            "frequency_seed_proposal_count": _int(frequency_plan.get("seed_proposal_count")),
+            "frequency_manual_seed_proposal_count": _int(frequency_plan.get("manual_seed_proposal_count")),
+            "frequency_seed_proposal_markets": list(frequency_plan.get("seed_proposal_markets") or []),
+            "frequency_plan_does_not_change_submit_decision": int(
+                bool(frequency_plan.get("does_not_change_submit_decision", False))
+            ),
             "candidate_count": _int(submit_plan.get("candidate_count")),
             "frontier_candidate_count": _int(submit_plan.get("frontier_candidate_count"))
             or len(frontier_candidates),
@@ -382,6 +394,7 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
         "rows": {
             "submit_plan": submit_plan,
             "remediation_plan": remediation_plan,
+            "frequency_plan": frequency_plan,
             "frontier_candidates": frontier_candidates,
             "portfolios": rows,
         },

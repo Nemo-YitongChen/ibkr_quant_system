@@ -9,6 +9,7 @@ from src.common.auto_order_readiness import (
     DISABLED_STATUS,
     READY_STATUS,
     WARNING_STATUS,
+    build_auto_order_frequency_plan,
     build_auto_order_submit_plan,
     build_auto_order_readiness_summary,
     evaluate_auto_order_readiness,
@@ -956,3 +957,73 @@ def test_auto_order_readiness_summary_counts_rows() -> None:
     assert summary["offline_recovery_reason_counts"]["preflight_stale_after_offline_gap"] == 1
     assert summary["remediation_plan"][0]["reason"] == "preflight_stale"
     assert summary["remediation_plan"][1]["reason"] == "market_readiness_not_ready"
+
+
+def test_auto_order_frequency_plan_surfaces_seed_proposals_without_changing_submit_decision() -> None:
+    submit_plan = {
+        "status": "BLOCKED",
+        "ready": False,
+        "reason": "no_single_safe_submit_candidate",
+        "candidate_count": 0,
+        "frontier_candidates": [],
+    }
+    expansion_summary = {
+        "seed_proposals": [
+            {
+                "market": "ASX",
+                "proposal_action": "create_or_refresh_preferred_asset_seed_watchlist",
+                "expansion_target": "seed_preferred_asset_class_candidates",
+                "near_miss_symbols": ["BHP.AX", "RIO.AX"],
+                "auto_apply": False,
+                "submit_gate_policy": "do_not_relax_submit_gates",
+            }
+        ]
+    }
+
+    plan = build_auto_order_frequency_plan(
+        [{"market": "ASX", "portfolio_id": "ASX:asx_top_quality"}],
+        submit_plan=submit_plan,
+        watchlist_expansion_summary=expansion_summary,
+    )
+
+    assert plan["status"] == "candidate_supply_gap"
+    assert plan["reason"] == "no_safe_submit_candidate_with_seed_proposals"
+    assert plan["primary_action"] == "create_or_refresh_preferred_asset_seed_watchlist"
+    assert plan["seed_proposal_count"] == 1
+    assert plan["manual_seed_proposal_count"] == 1
+    assert plan["seed_proposal_markets"] == ["ASX"]
+    assert plan["does_not_change_submit_decision"] is True
+    assert plan["submit_gate_policy"] == "do_not_relax_submit_gates"
+    assert plan["next_actions"][0]["near_miss_symbols"] == ["BHP.AX", "RIO.AX"]
+
+
+def test_auto_order_readiness_summary_includes_frequency_plan_from_watchlist_expansion() -> None:
+    summary = build_auto_order_readiness_summary(
+        [
+            {
+                "status": BLOCKED_STATUS,
+                "ready": False,
+                "primary_reason": "market_readiness_not_ready",
+                "hard_blocks": ["market_readiness_not_ready"],
+                "market": "ASX",
+                "portfolio_id": "ASX:asx_top_quality",
+            }
+        ],
+        policy={"enabled": True},
+        watchlist_expansion_summary={
+            "seed_proposals": [
+                {
+                    "market": "ASX",
+                    "proposal_action": "create_or_refresh_preferred_asset_seed_watchlist",
+                    "expansion_target": "seed_preferred_asset_class_candidates",
+                    "auto_apply": False,
+                }
+            ]
+        },
+    )
+
+    assert summary["frequency_plan"]["status"] == "frontier_blocked"
+    assert summary["frequency_plan"]["reason"] == "market_readiness_not_ready"
+    assert summary["frequency_plan"]["seed_proposal_count"] == 1
+    assert summary["candidate_supply_status"] == "frontier_blocked"
+    assert summary["candidate_supply_primary_action"] == "resolve_submit_frontier_blocker"

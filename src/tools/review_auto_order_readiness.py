@@ -38,6 +38,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--preflight_summary", default="", help="Optional preflight summary JSON override.")
     ap.add_argument("--weekly_summary", default="", help="Optional weekly review summary JSON override.")
     ap.add_argument("--market_readiness", default="", help="Optional market readiness JSON override.")
+    ap.add_argument("--watchlist_expansion", default="", help="Optional watchlist expansion summary JSON override.")
     ap.add_argument("--runtime_root", default="runtime_data/paper_investment_only_duq152001", help="Runtime artifact root used to build market readiness if missing.")
     ap.add_argument("--out_dir", default="", help="Output directory. Defaults to supervisor summary_out_dir.")
     return ap
@@ -138,6 +139,7 @@ def _write_markdown(path: Path, payload: Dict[str, Any]) -> None:
             + " |"
         )
     submit_plan = dict(summary.get("submit_plan") or {})
+    frequency_plan = dict(summary.get("frequency_plan") or {})
     frontier_candidates = [
         dict(row)
         for row in list(submit_plan.get("frontier_candidates") or [])
@@ -145,6 +147,23 @@ def _write_markdown(path: Path, payload: Dict[str, Any]) -> None:
     ]
     lines.extend(
         [
+            "",
+            "## Frequency Plan",
+            "",
+            "| status | reason | primary action | seed proposals | markets | policy |",
+            "| --- | --- | --- | ---: | --- | --- |",
+            "| "
+            + " | ".join(
+                [
+                    str(frequency_plan.get("status") or "-"),
+                    str(frequency_plan.get("reason") or "-"),
+                    str(frequency_plan.get("primary_action") or "-"),
+                    str(int(frequency_plan.get("seed_proposal_count", 0) or 0)),
+                    ",".join(str(value) for value in list(frequency_plan.get("seed_proposal_markets") or [])) or "-",
+                    str(frequency_plan.get("submit_gate_policy") or "-"),
+                ]
+            )
+            + " |",
             "",
             "## Submit Plan",
             "",
@@ -243,6 +262,7 @@ def build_auto_order_readiness_payload(
     preflight_summary_path: str = "",
     weekly_summary_path: str = "",
     market_readiness_path: str = "",
+    watchlist_expansion_path: str = "",
     runtime_root: str = "runtime_data/paper_investment_only_duq152001",
 ) -> Dict[str, Any]:
     cfg_path = _resolve(config_path)
@@ -266,9 +286,17 @@ def build_auto_order_readiness_payload(
         else _resolve(str(cfg.get("summary_out_dir", "reports_supervisor") or "reports_supervisor"))
         / "market_readiness.json"
     )
+    watchlist_expansion_json_path = (
+        _resolve(watchlist_expansion_path)
+        if str(watchlist_expansion_path or "").strip()
+        else _resolve(str(cfg.get("summary_out_dir", "reports_supervisor") or "reports_supervisor"))
+        / "watchlist_expansion"
+        / "watchlist_expansion_summary.json"
+    )
     preflight_summary = _load_json(preflight_path)
     weekly_summary = _load_json(weekly_path)
     market_readiness_summary = _load_json(market_readiness_json_path)
+    watchlist_expansion_summary = _load_json(watchlist_expansion_json_path)
     if not market_readiness_summary:
         market_readiness_summary = build_market_readiness_payload(
             base_dir=BASE_DIR,
@@ -295,8 +323,13 @@ def build_auto_order_readiness_payload(
         "preflight_summary_path": str(preflight_path),
         "weekly_summary_path": str(weekly_path),
         "market_readiness_path": str(market_readiness_json_path),
+        "watchlist_expansion_path": str(watchlist_expansion_json_path),
         "policy": policy,
-        "summary": build_auto_order_readiness_summary(rows, policy=policy),
+        "summary": build_auto_order_readiness_summary(
+            rows,
+            policy=policy,
+            watchlist_expansion_summary=watchlist_expansion_summary,
+        ),
         "rows": rows,
     }
 
@@ -311,6 +344,7 @@ def main(argv: List[str] | None = None) -> None:
         preflight_summary_path=str(args.preflight_summary or ""),
         weekly_summary_path=str(args.weekly_summary or ""),
         market_readiness_path=str(args.market_readiness or ""),
+        watchlist_expansion_path=str(args.watchlist_expansion or ""),
         runtime_root=str(args.runtime_root or "runtime_data/paper_investment_only_duq152001"),
     )
     json_path = out_dir / "auto_order_readiness.json"

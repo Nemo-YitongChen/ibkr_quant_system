@@ -2873,6 +2873,9 @@ class Supervisor:
             "preflight_summary": _load_json_file(self._preflight_output_dir() / "supervisor_preflight_summary.json"),
             "weekly_summary": self._auto_order_weekly_summary_payload(),
             "market_readiness_summary": self._market_readiness_summary_payload(),
+            "watchlist_expansion_summary": _load_json_file(
+                self._summary_output_dir() / "watchlist_expansion" / "watchlist_expansion_summary.json"
+            ),
             "policy": self._auto_order_readiness_policy(),
         }
 
@@ -2888,8 +2891,8 @@ class Supervisor:
             now=datetime.now(timezone.utc),
         )
 
-    def _auto_order_readiness_rows(self) -> List[Dict[str, Any]]:
-        common = self._auto_order_readiness_common_inputs()
+    def _auto_order_readiness_rows(self, common_inputs: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        common = common_inputs or self._auto_order_readiness_common_inputs()
         now_dt = datetime.now(timezone.utc)
         rows: List[Dict[str, Any]] = []
         for market in self.markets:
@@ -2921,6 +2924,7 @@ class Supervisor:
             self._weekly_review_output_dir() / "weekly_review_summary.json",
             self._weekly_review_output_dir() / "weekly_ibkr_gateway_budget_status.json",
             self._summary_output_dir() / "market_readiness.json",
+            self._summary_output_dir() / "watchlist_expansion" / "watchlist_expansion_summary.json",
         ]
         raw_dir = str(self.cfg.get("summary_out_dir", "reports_supervisor") or "reports_supervisor")
         fallback_market_readiness = _resolve_path(raw_dir) / "market_readiness.json"
@@ -2958,8 +2962,13 @@ class Supervisor:
         policy = self._auto_order_readiness_policy()
         if not bool(policy.get("enabled", False)):
             return False
-        rows = self._auto_order_readiness_rows()
-        summary = build_auto_order_readiness_summary(rows, policy=policy)
+        common = self._auto_order_readiness_common_inputs()
+        rows = self._auto_order_readiness_rows(common_inputs=common)
+        summary = build_auto_order_readiness_summary(
+            rows,
+            policy=policy,
+            watchlist_expansion_summary=common.get("watchlist_expansion_summary"),
+        )
         signature_payload = {
             "schema_version": "2026Q2.auto_order_readiness.v1",
             "config_path": str(_resolve_path(self.config_path)),

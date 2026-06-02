@@ -1189,10 +1189,98 @@ def build_auto_order_submit_plan(
     }
 
 
+def build_auto_order_frequency_plan(
+    rows: Iterable[Mapping[str, Any]],
+    *,
+    submit_plan: Mapping[str, Any] | None = None,
+    watchlist_expansion_summary: Mapping[str, Any] | None = None,
+) -> Dict[str, Any]:
+    """Explain the next safe path to increase paper submit frequency without changing gates."""
+    clean_rows = [dict(row) for row in list(rows or []) if isinstance(row, Mapping)]
+    plan = dict(submit_plan or {})
+    expansion = dict(watchlist_expansion_summary or {})
+    seed_proposals = [
+        dict(row)
+        for row in list(expansion.get("seed_proposals") or [])
+        if isinstance(row, Mapping)
+    ]
+    submit_ready = bool(plan.get("ready", False))
+    submit_reason = str(plan.get("reason") or "").strip()
+    submit_status = str(plan.get("status") or "").strip().upper()
+    frontier_candidates = [
+        dict(row)
+        for row in list(plan.get("frontier_candidates") or [])
+        if isinstance(row, Mapping)
+    ]
+    top_frontier = dict(frontier_candidates[0]) if frontier_candidates else {}
+    top_frontier_hard_blocks = [
+        str(value).strip()
+        for value in list(top_frontier.get("hard_blocks") or [])
+        if str(value).strip()
+    ]
+    safe_candidate_count = _int(plan.get("candidate_count"), 0)
+    if submit_ready:
+        status = "safe_submit_candidate_ready"
+        reason = submit_reason or "submit_plan_ready"
+        primary_action = "submit_selected_paper_plan_once"
+    elif top_frontier_hard_blocks:
+        status = "frontier_blocked"
+        reason = str(top_frontier.get("frontier_reason") or top_frontier_hard_blocks[0] or "frontier_not_ready")
+        primary_action = str(top_frontier.get("next_action") or "resolve_submit_frontier_blocker")
+    elif seed_proposals and submit_reason == "no_single_safe_submit_candidate":
+        status = "candidate_supply_gap"
+        reason = "no_safe_submit_candidate_with_seed_proposals"
+        primary_action = str(seed_proposals[0].get("proposal_action") or "review_watchlist_seed_proposals")
+    elif seed_proposals:
+        status = "candidate_supply_watch"
+        reason = submit_reason or "submit_plan_not_ready_with_seed_proposals"
+        primary_action = str(seed_proposals[0].get("proposal_action") or "review_watchlist_seed_proposals")
+    elif frontier_candidates:
+        status = "frontier_blocked"
+        reason = str(frontier_candidates[0].get("frontier_reason") or submit_reason or "frontier_not_ready")
+        primary_action = str(frontier_candidates[0].get("next_action") or "resolve_submit_frontier_blocker")
+    else:
+        status = "insufficient_submit_evidence"
+        reason = submit_reason or submit_status.lower() or "missing_submit_frontier"
+        primary_action = "refresh_preflight_market_readiness_and_execution_dry_run"
+    proposal_rows = [
+        {
+            "market": str(row.get("market") or ""),
+            "proposal_action": str(row.get("proposal_action") or ""),
+            "expansion_target": str(row.get("expansion_target") or ""),
+            "near_miss_symbols": list(row.get("near_miss_symbols") or [])[:5],
+            "auto_apply": bool(row.get("auto_apply", False)),
+            "submit_gate_policy": str(row.get("submit_gate_policy") or ""),
+        }
+        for row in seed_proposals[:10]
+    ]
+    return {
+        "status": status,
+        "reason": reason,
+        "primary_action": primary_action,
+        "submit_plan_status": submit_status,
+        "submit_plan_reason": submit_reason,
+        "safe_submit_candidate_count": safe_candidate_count,
+        "frontier_candidate_count": len(frontier_candidates),
+        "seed_proposal_count": len(seed_proposals),
+        "manual_seed_proposal_count": sum(1 for row in seed_proposals if not bool(row.get("auto_apply", False))),
+        "seed_proposal_markets": [
+            str(row.get("market") or "")
+            for row in seed_proposals
+            if str(row.get("market") or "").strip()
+        ],
+        "portfolio_count": len(clean_rows),
+        "does_not_change_submit_decision": True,
+        "submit_gate_policy": "do_not_relax_submit_gates",
+        "next_actions": proposal_rows,
+    }
+
+
 def build_auto_order_readiness_summary(
     rows: Iterable[Mapping[str, Any]],
     *,
     policy: Mapping[str, Any] | None = None,
+    watchlist_expansion_summary: Mapping[str, Any] | None = None,
 ) -> Dict[str, Any]:
     clean_rows = [dict(row) for row in list(rows or []) if isinstance(row, Mapping)]
     ready_rows = [row for row in clean_rows if bool(row.get("ready", False))]
@@ -1305,6 +1393,12 @@ def build_auto_order_readiness_summary(
     sorted_warning_counts = dict(
         sorted(warning_counts.items(), key=lambda item: (_reason_priority(item[0], warning=True), item[0]))
     )
+    submit_plan = build_auto_order_submit_plan(clean_rows, policy=policy)
+    frequency_plan = build_auto_order_frequency_plan(
+        clean_rows,
+        submit_plan=submit_plan,
+        watchlist_expansion_summary=watchlist_expansion_summary,
+    )
     return {
         "status": status,
         "summary_text": (
@@ -1329,5 +1423,9 @@ def build_auto_order_readiness_summary(
         "hard_block_counts": sorted_hard_block_counts,
         "warning_counts": sorted_warning_counts,
         "remediation_plan": remediation_plan,
-        "submit_plan": build_auto_order_submit_plan(clean_rows, policy=policy),
+        "submit_plan": submit_plan,
+        "frequency_plan": frequency_plan,
+        "candidate_supply_status": str(frequency_plan.get("status") or ""),
+        "candidate_supply_reason": str(frequency_plan.get("reason") or ""),
+        "candidate_supply_primary_action": str(frequency_plan.get("primary_action") or ""),
     }
