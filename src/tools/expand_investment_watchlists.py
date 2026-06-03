@@ -102,6 +102,41 @@ def _write_csv(path: Path, rows: Iterable[Mapping[str, Any]]) -> None:
         writer.writerows(clean)
 
 
+def _write_seed_intake_review_files(path: Path, rows: Iterable[Mapping[str, Any]], *, generated_at: str) -> None:
+    clean = [dict(row) for row in list(rows or [])]
+    review_dir = path / "seed_review"
+    review_dir.mkdir(parents=True, exist_ok=True)
+    for row in clean:
+        market = str(row.get("market") or "").strip().lower()
+        if not market:
+            continue
+        payload = {
+            "version": 1,
+            "name": f"{market}_preferred_asset_seed_review",
+            "generated_at": generated_at,
+            "market": str(row.get("market") or "").strip().upper(),
+            "review_only": True,
+            "intake_status": str(row.get("intake_status") or ""),
+            "proposal_action": str(row.get("proposal_action") or ""),
+            "expansion_target": str(row.get("expansion_target") or ""),
+            "top_reject_reason": str(row.get("top_reject_reason") or ""),
+            "preferred_asset_class_gap": bool(row.get("preferred_asset_class_gap")),
+            "preferred_asset_classes": list(row.get("preferred_asset_classes") or []),
+            "symbols": list(row.get("candidate_symbols") or []),
+            "evidence_symbols": list(row.get("evidence_symbols") or []),
+            "acceptance_rule": str(row.get("acceptance_rule") or ""),
+            "submit_gate_policy": str(row.get("submit_gate_policy") or "do_not_relax_submit_gates"),
+            "auto_apply": False,
+            "does_not_change_symbol_master": True,
+            "notes": [
+                "Review-only seed intake artifact.",
+                "Do not wire this file into symbol_master_watchlists until the next candidate report passes all gates.",
+            ],
+        }
+        with (review_dir / f"{market}_preferred_asset_seed_review.yaml").open("w", encoding="utf-8") as handle:
+            yaml.safe_dump(payload, handle, sort_keys=False, allow_unicode=True)
+
+
 def _slugify_report_name(name: str) -> str:
     text = "".join(ch.lower() if ch.isalnum() else "_" for ch in str(name or "").strip())
     while "__" in text:
@@ -345,6 +380,11 @@ def main() -> None:
     _write_csv(analysis_dir / "watchlist_expansion_candidates.csv", all_rows)
     _write_csv(analysis_dir / "watchlist_expansion_summary.csv", summary_rows)
     expansion_summary = summarize_watchlist_expansion(all_rows, market_rows=summary_rows, policy=policy)
+    _write_seed_intake_review_files(
+        analysis_dir,
+        expansion_summary.get("seed_intake_plan", []),
+        generated_at=generated_at,
+    )
     (analysis_dir / "watchlist_expansion_summary.json").write_text(
         json.dumps(
             {

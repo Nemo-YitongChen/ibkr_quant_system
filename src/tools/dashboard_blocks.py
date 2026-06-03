@@ -600,6 +600,10 @@ def build_watchlist_expansion_block(payload: Dict[str, Any]) -> Dict[str, Any]:
         limit=20,
     )
     seed_proposals = _rows(summary.get("seed_proposals"), limit=20) or _rows(fallback_summary.get("seed_proposals"), limit=20)
+    seed_intake_plan = _rows(summary.get("seed_intake_plan"), limit=20) or _rows(
+        fallback_summary.get("seed_intake_plan"),
+        limit=20,
+    )
     primary_market = str(summary.get("primary_recommendation_market") or fallback_summary.get("primary_recommendation_market") or "")
     primary_reason = str(summary.get("primary_recommendation_reason") or fallback_summary.get("primary_recommendation_reason") or "")
     primary_action = str(summary.get("primary_recommendation_action") or fallback_summary.get("primary_recommendation_action") or "")
@@ -616,12 +620,25 @@ def build_watchlist_expansion_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             for row in market_rows
             if _int(row.get("candidate_row_count")) > 0 and _int(row.get("selected_count")) <= 0
         )
+    seed_intake_external_source_count = sum(
+        1
+        for row in seed_intake_plan
+        if str(row.get("intake_status") or "") == "NEEDS_EXTERNAL_PREFERRED_ASSET_SOURCE"
+    )
+    seed_intake_manual_review_count = sum(
+        1 for row in seed_intake_plan if str(row.get("intake_status") or "") == "MANUAL_REVIEW_REQUIRED"
+    )
     status_raw = str(summary.get("status") or "").strip().lower()
     if not summary:
         status = "warn"
     elif status_raw == "degraded":
         status = "fail"
-    elif status_raw == "warning" or (candidate_count > 0 and selected_count <= 0):
+    elif (
+        status_raw == "warning"
+        or (candidate_count > 0 and selected_count <= 0)
+        or zero_selected_market_count > 0
+        or seed_intake_external_source_count > 0
+    ):
         status = "warn"
     else:
         status = "ok"
@@ -654,6 +671,11 @@ def build_watchlist_expansion_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "seed_proposal_count": len(seed_proposals),
             "manual_seed_proposal_count": sum(1 for row in seed_proposals if not bool(row.get("auto_apply"))),
             "primary_seed_proposal_action": str(seed_proposals[0].get("proposal_action") if seed_proposals else ""),
+            "seed_intake_plan_count": len(seed_intake_plan),
+            "seed_intake_external_source_count": seed_intake_external_source_count,
+            "seed_intake_manual_review_count": seed_intake_manual_review_count,
+            "primary_seed_intake_status": str(seed_intake_plan[0].get("intake_status") if seed_intake_plan else ""),
+            "primary_seed_intake_next_action": str(seed_intake_plan[0].get("next_action") if seed_intake_plan else ""),
             "selected_symbols": ",".join(
                 str(row.get("symbol") or "").strip()
                 for row in selected_candidates[:10]
@@ -666,6 +688,7 @@ def build_watchlist_expansion_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "reason_summary": reason_summary,
             "market_recommendations": market_recommendations,
             "seed_proposals": seed_proposals,
+            "seed_intake_plan": seed_intake_plan,
             "policy": _dict(summary.get("policy")),
         },
     }

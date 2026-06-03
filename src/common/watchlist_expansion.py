@@ -363,6 +363,66 @@ def build_watchlist_seed_proposals(market_recommendations: Iterable[Mapping[str,
     return proposals
 
 
+def build_watchlist_seed_intake_plan(market_recommendations: Iterable[Mapping[str, Any]]) -> List[Dict[str, Any]]:
+    """Build a review-only intake queue for candidate supply expansion."""
+    intake_rows: List[Dict[str, Any]] = []
+    for row in list(market_recommendations or []):
+        market = str(row.get("market") or "").strip().upper()
+        if not market:
+            continue
+        preferred_assets = _preferred_asset_classes(row)
+        near_miss = [dict(item) for item in list(row.get("near_miss_candidates") or []) if isinstance(item, Mapping)]
+        evidence_symbols = [_symbol(item.get("symbol")) for item in near_miss if _symbol(item.get("symbol"))]
+        preferred_near_miss_symbols = [
+            _symbol(item.get("symbol"))
+            for item in near_miss
+            if _symbol(item.get("symbol")) and _clean_asset_class(item.get("asset_class")) in set(preferred_assets)
+        ]
+        preferred_gap = bool(row.get("preferred_asset_class_gap"))
+        if preferred_gap and not preferred_near_miss_symbols:
+            intake_status = "NEEDS_EXTERNAL_PREFERRED_ASSET_SOURCE"
+            candidate_symbols: List[str] = []
+            next_action = "source_verified_low_cost_preferred_asset_candidates"
+        else:
+            intake_status = "MANUAL_REVIEW_REQUIRED"
+            candidate_symbols = preferred_near_miss_symbols or evidence_symbols[:5]
+            next_action = "review_seed_candidates_against_acceptance_rule"
+        path_market = market.lower()
+        intake_rows.append(
+            {
+                "market": market,
+                "intake_status": intake_status,
+                "priority": 20 if preferred_gap else 40,
+                "proposal_action": _seed_proposal_action(str(row.get("expansion_target") or "")),
+                "expansion_target": str(row.get("expansion_target") or ""),
+                "top_reject_reason": str(row.get("top_reject_reason") or ""),
+                "preferred_asset_class_gap": preferred_gap,
+                "preferred_asset_classes": preferred_assets,
+                "proposed_watchlist_path": f"config/watchlists/seed_review/{path_market}_preferred_asset_seed_review.yaml",
+                "candidate_symbols": candidate_symbols[:10],
+                "evidence_symbols": evidence_symbols[:10],
+                "candidate_count": len(candidate_symbols[:10]),
+                "evidence_symbol_count": len(evidence_symbols[:10]),
+                "next_action": next_action,
+                "acceptance_rule": (
+                    "Only promote seed candidates into symbol master after the next candidate report verifies "
+                    "IBKR tradability, account-profile fit, whole-share support, expected cost, liquidity, "
+                    "data quality, expected edge, and submit quality."
+                ),
+                "submit_gate_policy": "do_not_relax_submit_gates",
+                "auto_apply": False,
+                "does_not_change_symbol_master": True,
+            }
+        )
+    intake_rows.sort(
+        key=lambda item: (
+            int(item.get("priority", 999) or 999),
+            str(item.get("market") or ""),
+        )
+    )
+    return intake_rows
+
+
 def summarize_watchlist_expansion(
     rows: Iterable[Mapping[str, Any]],
     *,
@@ -424,6 +484,7 @@ def summarize_watchlist_expansion(
     )
     primary = dict(market_recommendations[0]) if market_recommendations else {}
     seed_proposals = build_watchlist_seed_proposals(market_recommendations)
+    seed_intake_plan = build_watchlist_seed_intake_plan(market_recommendations)
     return {
         "candidate_row_count": len(clean_rows),
         "selected_count": len(selected_rows),
@@ -434,6 +495,16 @@ def summarize_watchlist_expansion(
         "seed_proposals": seed_proposals,
         "seed_proposal_count": len(seed_proposals),
         "manual_seed_proposal_count": sum(1 for row in seed_proposals if bool(row.get("auto_apply")) is False),
+        "seed_intake_plan": seed_intake_plan,
+        "seed_intake_plan_count": len(seed_intake_plan),
+        "seed_intake_manual_review_count": sum(
+            1 for row in seed_intake_plan if str(row.get("intake_status") or "") == "MANUAL_REVIEW_REQUIRED"
+        ),
+        "seed_intake_external_source_count": sum(
+            1
+            for row in seed_intake_plan
+            if str(row.get("intake_status") or "") == "NEEDS_EXTERNAL_PREFERRED_ASSET_SOURCE"
+        ),
         "primary_recommendation_market": str(primary.get("market") or ""),
         "primary_recommendation_reason": str(primary.get("top_reject_reason") or ""),
         "primary_recommendation_action": str(primary.get("recommendation_action") or ""),

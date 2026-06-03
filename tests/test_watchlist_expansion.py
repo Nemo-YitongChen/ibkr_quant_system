@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from src.common.watchlist_expansion import (
     WatchlistExpansionPolicy,
+    build_watchlist_seed_intake_plan,
     build_watchlist_seed_proposals,
     build_watchlist_expansion_rows,
     selected_watchlist_symbols,
@@ -272,6 +273,13 @@ def test_watchlist_expansion_summary_recommends_market_followups() -> None:
     assert summary["seed_proposals"][0]["near_miss_symbols"] == ["VAS.AX", "A200.AX"]
     assert summary["seed_proposals"][0]["auto_apply"] is False
     assert summary["seed_proposals"][0]["submit_gate_policy"] == "do_not_relax_submit_gates"
+    assert summary["seed_intake_plan_count"] == 2
+    assert summary["seed_intake_external_source_count"] == 2
+    assert summary["seed_intake_plan"][0]["market"] == "ASX"
+    assert summary["seed_intake_plan"][0]["intake_status"] == "NEEDS_EXTERNAL_PREFERRED_ASSET_SOURCE"
+    assert summary["seed_intake_plan"][0]["candidate_symbols"] == []
+    assert summary["seed_intake_plan"][0]["evidence_symbols"] == ["VAS.AX", "A200.AX"]
+    assert summary["seed_intake_plan"][0]["does_not_change_symbol_master"] is True
 
 
 def test_watchlist_seed_proposals_keep_manual_acceptance_rules() -> None:
@@ -308,3 +316,40 @@ def test_watchlist_seed_proposals_keep_manual_acceptance_rules() -> None:
             "auto_apply": False,
         }
     ]
+
+
+def test_watchlist_seed_intake_plan_keeps_etf_first_review_only() -> None:
+    plan = build_watchlist_seed_intake_plan(
+        [
+            {
+                "market": "ASX",
+                "expansion_target": "seed_preferred_asset_class_candidates",
+                "top_reject_reason": "expected_cost_above_max",
+                "preferred_asset_class_gap": True,
+                "preferred_asset_classes": ["etf"],
+                "near_miss_candidates": [
+                    {"symbol": "BHP.AX", "asset_class": "equity"},
+                    {"symbol": "VAS.AX", "asset_class": "etf"},
+                ],
+            },
+            {
+                "market": "HK",
+                "expansion_target": "seed_preferred_asset_class_candidates",
+                "top_reject_reason": "expected_cost_above_max",
+                "preferred_asset_class_gap": True,
+                "preferred_asset_classes": ["etf"],
+                "near_miss_candidates": [{"symbol": "3988.HK", "asset_class": "equity"}],
+            },
+        ]
+    )
+
+    assert plan[0]["market"] == "ASX"
+    assert plan[0]["intake_status"] == "MANUAL_REVIEW_REQUIRED"
+    assert plan[0]["candidate_symbols"] == ["VAS.AX"]
+    assert plan[0]["evidence_symbols"] == ["BHP.AX", "VAS.AX"]
+    assert plan[0]["auto_apply"] is False
+    assert plan[0]["does_not_change_symbol_master"] is True
+    assert plan[1]["market"] == "HK"
+    assert plan[1]["intake_status"] == "NEEDS_EXTERNAL_PREFERRED_ASSET_SOURCE"
+    assert plan[1]["candidate_symbols"] == []
+    assert plan[1]["evidence_symbols"] == ["3988.HK"]

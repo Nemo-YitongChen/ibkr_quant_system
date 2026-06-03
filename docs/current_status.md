@@ -187,6 +187,7 @@
 - **2026-06-02 已把 watchlist expansion 进一步推进到“市场扩池缺口计划”：每个零选中市场会输出 asset-class coverage、preferred ETF-first gap、expansion target 和 near-miss candidates；当前 ASX/HK/XETRA 都是 `preferred_asset_class_gap=true`，下一步应先补/标注低成本、高流动性、可整股交易的 ETF-first 候选源，再重新跑 candidate report 和 paper execution，而不是把高成本 near-miss 单股直接推入自动下单**
 - **2026-06-03 已新增只读 watchlist seed proposals：`watchlist_expansion_summary` 和 dashboard v2 现在会输出 `seed_proposals / seed_proposal_count / manual_seed_proposal_count / primary_seed_proposal_action`；当前 ASX/HK/XETRA 都生成 `create_or_refresh_preferred_asset_seed_watchlist` 提案，全部 `auto_apply=false` 且 `submit_gate_policy=do_not_relax_submit_gates`，用于提高后续候选覆盖面，但不会自动加入交易池或下单**
 - **2026-06-03 已把 watchlist seed proposals 接入 auto-order frequency plan：`auto_order_readiness` 现在会输出只读 `frequency_plan` 和 `candidate_supply_*` 字段，区分“当前 frontier 被 preflight/Gateway/market readiness 挡住”和“候选池需要扩展”；本地最新诊断为 `frontier_blocked/preflight_stale`，同时保留 ASX/HK/XETRA 3 个手动 seed proposal，且 `does_not_change_submit_decision=true`**
+- **2026-06-03 已把 seed proposal 推进为 review-only seed intake plan：`watchlist_expansion_summary` 和 dashboard v2 会输出 `seed_intake_plan`，并在 `reports_supervisor/watchlist_expansion/seed_review/` 生成 ASX/HK/XETRA 审核文件；当前三个市场都是 `NEEDS_EXTERNAL_PREFERRED_ASSET_SOURCE`，near-miss 股票只作为 `evidence_symbols`，`symbols` 为空，不会进入 symbol master 或自动下单**
 - **后续开发报告已补充到 `docs/development_report_2026-05-09.md`：下一步明确为 evidence-driven single strategy parameter suggestions，后续再推进 dashboard/weekly 大文件拆分、config defaults+overrides、walk-forward acceptance rules、execution quality evidence 和 live 变更四件套**
 - **weekly review 已新增 read-only `strategy_parameter_suggestions` 产物：当 candidate model review 出现 `SIGNAL_RANKING_INVERTED` 且样本足够时，每个 market/portfolio/week 只生成一个 primary strategy field 建议，带 linked evidence、acceptance rule、rollback note 和 `auto_apply=0`**
 - **dashboard control audit 已能关联 strategy parameter suggestions：控制 payload 可携带 `strategy_parameter_suggestion_id/primary_field/config_path/resolution_status/resolution_note`，审计历史和 dashboard v2 Governance block 会展示 linked strategy suggestion 与处理状态，但仍不自动写配置**
@@ -503,3 +504,11 @@
 - 当前真实刷新结果：`frequency_plan.status=frontier_blocked`、`reason=preflight_stale`、`primary_action=Refresh supervisor preflight before automated submit.`；同时保留 ASX/HK/XETRA 三个 `create_or_refresh_preferred_asset_seed_watchlist` 手动提案。
 - 当前 submit plan 仍是 `BLOCKED/no_single_safe_submit_candidate`，第一 frontier 是 `US:watchlist` 的 `SPLG` 小额 LMT BUY 计划，但它被 `preflight_stale` 与 `gateway_budget_degraded` 挡住。另有 ASX/HK 受 `ibkr_gateway_unavailable` 影响。
 - 交易含义不变：该层只提升“为什么不能提高下单频率”的可解释性，不自动加入 symbol、不自动提交 paper、不放宽 risk、edge、cost、market-rule、Gateway budget 或 submit-quality gate。
+
+## 33. 2026-06-03 Watchlist seed intake plan
+
+- `watchlist_expansion` 现在会把 seed proposals 转成 review-only `seed_intake_plan`：每个市场会给出 `intake_status`、目标 review watchlist path、candidate/evidence symbols、next action、acceptance rule 和 `does_not_change_symbol_master=true`。
+- `expand_investment_watchlists` 会在 `reports_supervisor/watchlist_expansion/seed_review/` 写出 ASX/HK/XETRA 的 review-only YAML；这些文件不是 `config/markets/*/universe.yaml` 的 `symbol_master_watchlists`，不会改变自动下单候选池。
+- 当前真实刷新结果：`selected_count=2`、`zero_selected_market_count=3`、`seed_intake_plan_count=3`、`seed_intake_external_source_count=3`，dashboard v2 `watchlist_expansion` block 已因此显示 `warn`。
+- ASX/HK/XETRA 当前都是 `NEEDS_EXTERNAL_PREFERRED_ASSET_SOURCE`。近似高分股票如 `BHP.AX`、`3988.HK`、`IFX.DE` 只作为 `evidence_symbols` 保留；因为 small profile 是 ETF-first，这些股票不会被直接提升为 seed candidate。
+- 下一步应补 verified low-cost ETF-first source，再重新跑 candidate report / paper execution dry-run / market readiness / auto-order readiness；只有通过 account profile、whole-share、cost、liquidity、data quality、expected edge 和 submit quality 的 symbol 才能进入 auto-expanded watchlist。

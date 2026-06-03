@@ -457,6 +457,7 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
     assert by_id["market_views"]["status"] == "warn"
     assert "evidence_attention=2" in by_id["market_views"]["summary"]
     assert by_id["watchlist_expansion"]["category"] == "advanced"
+    assert by_id["watchlist_expansion"]["status"] == "warn"
     assert by_id["watchlist_expansion"]["metrics"]["selected_count"] == 2
     assert by_id["watchlist_expansion"]["metrics"]["zero_selected_market_count"] == 1
     assert by_id["watchlist_expansion"]["metrics"]["top_reject_reason"] == "expected_cost_above_max"
@@ -466,8 +467,12 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
     assert by_id["watchlist_expansion"]["metrics"]["seed_proposal_count"] == 1
     assert by_id["watchlist_expansion"]["metrics"]["manual_seed_proposal_count"] == 1
     assert by_id["watchlist_expansion"]["metrics"]["primary_seed_proposal_action"] == "create_or_refresh_preferred_asset_seed_watchlist"
+    assert by_id["watchlist_expansion"]["metrics"]["seed_intake_plan_count"] == 1
+    assert by_id["watchlist_expansion"]["metrics"]["seed_intake_external_source_count"] == 1
+    assert by_id["watchlist_expansion"]["metrics"]["primary_seed_intake_status"] == "NEEDS_EXTERNAL_PREFERRED_ASSET_SOURCE"
     assert by_id["watchlist_expansion"]["rows"]["market_recommendations"][0]["market"] == "HK"
     assert by_id["watchlist_expansion"]["rows"]["seed_proposals"][0]["market"] == "HK"
+    assert by_id["watchlist_expansion"]["rows"]["seed_intake_plan"][0]["does_not_change_symbol_master"] is True
     assert by_id["evidence_focus_actions"]["status"] == "warn"
     assert by_id["evidence_focus_actions"]["metrics"]["focus_action_count"] == 3
     assert by_id["evidence_focus_actions"]["metrics"]["urgent_action_count"] == 2
@@ -652,10 +657,14 @@ def test_watchlist_expansion_block_warns_when_no_growth_candidates_selected():
     assert block["metrics"]["preferred_asset_class_gap_count"] == 2
     assert block["metrics"]["seed_proposal_count"] == 2
     assert block["metrics"]["primary_seed_proposal_action"] == "create_or_refresh_preferred_asset_seed_watchlist"
+    assert block["metrics"]["seed_intake_plan_count"] == 2
+    assert block["metrics"]["seed_intake_external_source_count"] == 2
+    assert block["metrics"]["primary_seed_intake_next_action"] == "source_verified_low_cost_preferred_asset_candidates"
     assert block["rows"]["reason_summary"][0] == {"reason": "whole_share_not_tradable", "count": 2}
     assert block["rows"]["market_recommendations"][0]["market"] == "ASX"
     assert block["rows"]["market_recommendations"][0]["near_miss_candidates"][0]["symbol"] == "BHP.AX"
     assert block["rows"]["seed_proposals"][0]["auto_apply"] is False
+    assert block["rows"]["seed_intake_plan"][0]["candidate_symbols"] == []
 
 
 def test_evidence_focus_actions_block_keeps_sample_collection_non_warning():
