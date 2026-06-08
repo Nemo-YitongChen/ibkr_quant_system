@@ -479,12 +479,97 @@ def build_watchlist_seed_intake_plan(
     return intake_rows
 
 
+def build_account_growth_tier_plan(
+    account_profile: Mapping[str, Any] | None,
+    *,
+    market_recommendations: Iterable[Mapping[str, Any]] = (),
+    seed_intake_plan: Iterable[Mapping[str, Any]] = (),
+) -> Dict[str, Any]:
+    """Summarize the account-size-specific expansion path without changing gates."""
+    profile = dict(account_profile or {})
+    profile_name = str(profile.get("name") or "").strip().lower() or "unknown"
+    equity = _float(profile.get("broker_equity", profile.get("account_equity")), 0.0)
+    execution = dict(profile.get("execution_overrides") or {})
+    max_orders_per_run = int(_float(execution.get("max_orders_per_run"), 1))
+    max_order_value_pct = _float(execution.get("max_order_value_pct"), 0.0)
+    max_order_value = equity * max_order_value_pct if equity > 0.0 and max_order_value_pct > 0.0 else 0.0
+    min_trade_value = _float(execution.get("min_trade_value"), 0.0)
+    preferred_instruments = [
+        str(item).strip()
+        for item in list(profile.get("preferred_instruments") or [])
+        if str(item).strip()
+    ]
+    recommendation_rows = [dict(row) for row in list(market_recommendations or []) if isinstance(row, Mapping)]
+    intake_rows = [dict(row) for row in list(seed_intake_plan or []) if isinstance(row, Mapping)]
+    seed_source_count = sum(int(row.get("source_candidate_count", 0) or 0) for row in intake_rows)
+    seed_source_markets = [
+        str(row.get("market") or "")
+        for row in intake_rows
+        if int(row.get("source_candidate_count", 0) or 0) > 0 and str(row.get("market") or "").strip()
+    ]
+    external_source_markets = [
+        str(row.get("market") or "")
+        for row in intake_rows
+        if str(row.get("intake_status") or "") == "NEEDS_EXTERNAL_PREFERRED_ASSET_SOURCE"
+        and str(row.get("market") or "").strip()
+    ]
+    if profile_name == "small":
+        primary_action = "verify_one_share_etf_paper_frontier"
+        expansion_mode = "whole_share_tradable_etf_first"
+        submit_frequency_mode = "single_small_limit_order_until_fill_quality_passes"
+        next_equity_milestone = float(profile.get("max_equity", 25000.0) or 25000.0)
+    elif profile_name == "medium":
+        primary_action = "scale_to_low_turnover_etf_and_large_cap_basket"
+        expansion_mode = "etf_plus_liquid_large_cap"
+        submit_frequency_mode = "multi_symbol_limited_paper_batches_after_post_cost_edge"
+        next_equity_milestone = float(profile.get("max_equity", 150000.0) or 150000.0)
+    elif profile_name == "large":
+        primary_action = "scale_market_profile_budgeted_baskets"
+        expansion_mode = "diversified_budgeted_basket"
+        submit_frequency_mode = "budgeted_sliced_batches_with_weekly_attribution"
+        next_equity_milestone = 0.0
+    else:
+        primary_action = "resolve_account_profile_before_frequency_increase"
+        expansion_mode = "unknown"
+        submit_frequency_mode = "review_only"
+        next_equity_milestone = 0.0
+    if external_source_markets:
+        primary_action = "source_verified_preferred_assets_before_frequency_increase"
+    elif seed_source_count > 0 and profile_name == "small":
+        primary_action = "verify_seed_etfs_in_candidate_report_before_submit"
+    return {
+        "profile": profile_name,
+        "label": str(profile.get("label") or profile_name),
+        "equity": round(equity, 6),
+        "equity_band": str(profile.get("equity_band") or ""),
+        "next_equity_milestone": round(next_equity_milestone, 6),
+        "preferred_instruments": preferred_instruments,
+        "max_orders_per_run": max_orders_per_run,
+        "min_trade_value": round(min_trade_value, 6),
+        "max_order_value": round(max_order_value, 6),
+        "primary_action": primary_action,
+        "expansion_mode": expansion_mode,
+        "submit_frequency_mode": submit_frequency_mode,
+        "seed_source_candidate_count": seed_source_count,
+        "seed_source_markets": seed_source_markets,
+        "external_source_markets": external_source_markets,
+        "zero_selected_market_count": len(recommendation_rows),
+        "quality_gate_policy": "do_not_relax_submit_gates",
+        "read_only": True,
+        "summary_text": (
+            f"profile={profile_name or '-'} equity={equity:.2f} "
+            f"mode={expansion_mode} primary_action={primary_action}"
+        ),
+    }
+
+
 def summarize_watchlist_expansion(
     rows: Iterable[Mapping[str, Any]],
     *,
     market_rows: Iterable[Mapping[str, Any]] = (),
     policy: WatchlistExpansionPolicy | Mapping[str, Any] | None = None,
     seed_source_registry: Mapping[str, Any] | None = None,
+    account_profile: Mapping[str, Any] | None = None,
 ) -> Dict[str, Any]:
     clean_rows = [dict(row or {}) for row in list(rows or [])]
     clean_market_rows = [dict(row or {}) for row in list(market_rows or [])]
@@ -545,6 +630,11 @@ def summarize_watchlist_expansion(
         market_recommendations,
         seed_source_registry=seed_source_registry,
     )
+    account_growth_tier_plan = build_account_growth_tier_plan(
+        account_profile,
+        market_recommendations=market_recommendations,
+        seed_intake_plan=seed_intake_plan,
+    )
     return {
         "candidate_row_count": len(clean_rows),
         "selected_count": len(selected_rows),
@@ -571,6 +661,7 @@ def summarize_watchlist_expansion(
         "primary_recommendation_reason": str(primary.get("top_reject_reason") or ""),
         "primary_recommendation_action": str(primary.get("recommendation_action") or ""),
         "primary_recommendation_note": str(primary.get("recommendation_note") or ""),
+        "account_growth_tier_plan": account_growth_tier_plan,
     }
 
 

@@ -9,7 +9,7 @@ from typing import Any, Dict, Iterable, List, Mapping
 
 import yaml
 
-from ..common.account_profile import AccountProfile, load_account_profiles
+from ..common.account_profile import AccountProfile, account_profile_summary, load_account_profiles
 from ..common.markets import load_market_universe_config, resolve_market_code
 from ..common.runtime_paths import resolve_repo_path
 from ..common.watchlist_expansion import (
@@ -288,12 +288,9 @@ def _profile_payload(profile: AccountProfile | None, *, account_equity: float) -
             "equity_band": "",
             "account_equity": float(account_equity or 0.0),
         }
-    return {
-        "name": str(profile.name or ""),
-        "label": str(profile.display_label or ""),
-        "equity_band": str(profile.equity_band_label() or ""),
-        "account_equity": float(account_equity or 0.0),
-    }
+    payload = account_profile_summary(profile, broker_equity=float(account_equity or 0.0))
+    payload["account_equity"] = float(payload.get("broker_equity", account_equity) or account_equity or 0.0)
+    return payload
 
 
 def main() -> None:
@@ -388,6 +385,7 @@ def main() -> None:
         market_rows=summary_rows,
         policy=policy,
         seed_source_registry=seed_source_registry,
+        account_profile=account_profile_payload,
     )
     _write_seed_intake_review_files(
         analysis_dir,

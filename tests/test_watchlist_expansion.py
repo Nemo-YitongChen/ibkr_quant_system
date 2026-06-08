@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from src.common.watchlist_expansion import (
     WatchlistExpansionPolicy,
+    build_account_growth_tier_plan,
     build_watchlist_seed_intake_plan,
     build_watchlist_seed_proposals,
     build_watchlist_expansion_rows,
@@ -280,6 +281,7 @@ def test_watchlist_expansion_summary_recommends_market_followups() -> None:
     assert summary["seed_intake_plan"][0]["candidate_symbols"] == []
     assert summary["seed_intake_plan"][0]["evidence_symbols"] == ["VAS.AX", "A200.AX"]
     assert summary["seed_intake_plan"][0]["does_not_change_symbol_master"] is True
+    assert summary["account_growth_tier_plan"]["quality_gate_policy"] == "do_not_relax_submit_gates"
 
 
 def test_watchlist_seed_proposals_keep_manual_acceptance_rules() -> None:
@@ -353,6 +355,47 @@ def test_watchlist_seed_intake_plan_keeps_etf_first_review_only() -> None:
     assert plan[1]["intake_status"] == "NEEDS_EXTERNAL_PREFERRED_ASSET_SOURCE"
     assert plan[1]["candidate_symbols"] == []
     assert plan[1]["evidence_symbols"] == ["3988.HK"]
+
+
+def test_account_growth_tier_plan_keeps_small_account_etf_first() -> None:
+    plan = build_account_growth_tier_plan(
+        {
+            "name": "small",
+            "label": "小资金",
+            "broker_equity": 1000.0,
+            "max_equity": 25000.0,
+            "equity_band": "< 25,000",
+            "preferred_instruments": ["ETF", "Large Cap"],
+            "execution_overrides": {
+                "max_orders_per_run": 1,
+                "max_order_value_pct": 0.10,
+                "min_trade_value": 25,
+            },
+        },
+        market_recommendations=[{"market": "ASX"}, {"market": "HK"}],
+        seed_intake_plan=[
+            {
+                "market": "ASX",
+                "intake_status": "MANUAL_REVIEW_REQUIRED",
+                "source_candidate_count": 2,
+            },
+            {
+                "market": "HK",
+                "intake_status": "MANUAL_REVIEW_REQUIRED",
+                "source_candidate_count": 2,
+            },
+        ],
+    )
+
+    assert plan["profile"] == "small"
+    assert plan["primary_action"] == "verify_seed_etfs_in_candidate_report_before_submit"
+    assert plan["expansion_mode"] == "whole_share_tradable_etf_first"
+    assert plan["submit_frequency_mode"] == "single_small_limit_order_until_fill_quality_passes"
+    assert plan["max_orders_per_run"] == 1
+    assert plan["max_order_value"] == 100.0
+    assert plan["seed_source_candidate_count"] == 4
+    assert plan["quality_gate_policy"] == "do_not_relax_submit_gates"
+    assert plan["read_only"] is True
 
 
 def test_watchlist_seed_intake_plan_uses_review_only_source_registry() -> None:

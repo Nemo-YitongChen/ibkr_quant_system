@@ -288,7 +288,10 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
     health = _dict(payload.get("auto_order_readiness_health"))
     summary = _dict(auto_order.get("summary"))
     submit_plan = _dict(summary.get("submit_plan"))
-    frequency_plan = _dict(summary.get("frequency_plan"))
+    frequency_plan = _auto_order_frequency_plan_with_watchlist_fallback(
+        _dict(summary.get("frequency_plan")),
+        payload,
+    )
     rows = _rows(auto_order.get("rows"), limit=50)
     remediation_plan = _rows(summary.get("remediation_plan"), limit=20)
     frontier_candidates = _rows(submit_plan.get("frontier_candidates"), limit=20)
@@ -405,6 +408,58 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "portfolios": rows,
         },
     }
+
+
+def _auto_order_frequency_plan_with_watchlist_fallback(
+    frequency_plan: Dict[str, Any],
+    payload: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Backfill display-only seed metrics for legacy readiness artifacts."""
+    merged = dict(frequency_plan or {})
+    if any(
+        key in merged
+        for key in (
+            "seed_intake_plan_count",
+            "seed_source_candidate_count",
+            "seed_intake_external_source_count",
+        )
+    ):
+        return merged
+    expansion = _dict(payload.get("watchlist_expansion_summary"))
+    seed_proposals = _rows(expansion.get("seed_proposals"), limit=50)
+    seed_intake_plan = _rows(expansion.get("seed_intake_plan"), limit=50)
+    if not seed_proposals and not seed_intake_plan:
+        return merged
+    merged.update(
+        {
+            "seed_proposal_count": len(seed_proposals),
+            "manual_seed_proposal_count": sum(1 for row in seed_proposals if not bool(row.get("auto_apply"))),
+            "seed_proposal_markets": [
+                str(row.get("market") or "")
+                for row in seed_proposals
+                if str(row.get("market") or "").strip()
+            ],
+            "seed_intake_plan_count": len(seed_intake_plan),
+            "seed_source_candidate_count": sum(
+                _int(row.get("source_candidate_count"))
+                for row in seed_intake_plan
+            ),
+            "seed_source_markets": [
+                str(row.get("market") or "")
+                for row in seed_intake_plan
+                if _int(row.get("source_candidate_count")) > 0 and str(row.get("market") or "").strip()
+            ],
+            "seed_intake_external_source_count": sum(
+                1
+                for row in seed_intake_plan
+                if str(row.get("intake_status") or "") == "NEEDS_EXTERNAL_PREFERRED_ASSET_SOURCE"
+            ),
+            "does_not_change_submit_decision": bool(
+                merged.get("does_not_change_submit_decision", True)
+            ),
+        }
+    )
+    return merged
 
 
 def build_open_market_analysis_block(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -610,6 +665,9 @@ def build_watchlist_expansion_block(payload: Dict[str, Any]) -> Dict[str, Any]:
         fallback_summary.get("seed_intake_plan"),
         limit=20,
     )
+    account_growth_tier_plan = _dict(summary.get("account_growth_tier_plan")) or _dict(
+        fallback_summary.get("account_growth_tier_plan")
+    )
     primary_market = str(summary.get("primary_recommendation_market") or fallback_summary.get("primary_recommendation_market") or "")
     primary_reason = str(summary.get("primary_recommendation_reason") or fallback_summary.get("primary_recommendation_reason") or "")
     primary_action = str(summary.get("primary_recommendation_action") or fallback_summary.get("primary_recommendation_action") or "")
@@ -686,6 +744,12 @@ def build_watchlist_expansion_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "seed_source_market_count": seed_source_market_count,
             "primary_seed_intake_status": str(seed_intake_plan[0].get("intake_status") if seed_intake_plan else ""),
             "primary_seed_intake_next_action": str(seed_intake_plan[0].get("next_action") if seed_intake_plan else ""),
+            "account_growth_profile": str(account_growth_tier_plan.get("profile") or ""),
+            "account_growth_primary_action": str(account_growth_tier_plan.get("primary_action") or ""),
+            "account_growth_expansion_mode": str(account_growth_tier_plan.get("expansion_mode") or ""),
+            "account_growth_submit_frequency_mode": str(account_growth_tier_plan.get("submit_frequency_mode") or ""),
+            "account_growth_max_orders_per_run": _int(account_growth_tier_plan.get("max_orders_per_run")),
+            "account_growth_max_order_value": float(account_growth_tier_plan.get("max_order_value", 0.0) or 0.0),
             "selected_symbols": ",".join(
                 str(row.get("symbol") or "").strip()
                 for row in selected_candidates[:10]
@@ -699,6 +763,7 @@ def build_watchlist_expansion_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "market_recommendations": market_recommendations,
             "seed_proposals": seed_proposals,
             "seed_intake_plan": seed_intake_plan,
+            "account_growth_tier_plan": account_growth_tier_plan,
             "policy": _dict(summary.get("policy")),
         },
     }

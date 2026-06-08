@@ -303,9 +303,9 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
             "primary_field": "mr_weight",
             "read_only": True,
         },
-        "watchlist_expansion_summary": {
-            "status": "ready",
-            "summary_text": "markets=2 candidates=10 selected=2 zero_selected_markets=1 status=ready",
+            "watchlist_expansion_summary": {
+                "status": "ready",
+                "summary_text": "markets=2 candidates=10 selected=2 zero_selected_markets=1 status=ready",
             "selected_count": 2,
             "candidate_row_count": 10,
             "zero_selected_market_count": 1,
@@ -362,10 +362,20 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
                     "auto_apply": False,
                     "does_not_change_symbol_master": True,
                 }
-            ],
-            "markets": [
-                {"market": "US", "candidate_row_count": 5, "selected_count": 2, "selected_symbols": "SPTM,SCHB"},
-                {"market": "HK", "candidate_row_count": 5, "selected_count": 0, "selected_symbols": ""},
+                ],
+                "account_growth_tier_plan": {
+                    "profile": "small",
+                    "primary_action": "verify_seed_etfs_in_candidate_report_before_submit",
+                    "expansion_mode": "whole_share_tradable_etf_first",
+                    "submit_frequency_mode": "single_small_limit_order_until_fill_quality_passes",
+                    "max_orders_per_run": 1,
+                    "max_order_value": 100.0,
+                    "quality_gate_policy": "do_not_relax_submit_gates",
+                    "read_only": True,
+                },
+                "markets": [
+                    {"market": "US", "candidate_row_count": 5, "selected_count": 2, "selected_symbols": "SPTM,SCHB"},
+                    {"market": "HK", "candidate_row_count": 5, "selected_count": 0, "selected_symbols": ""},
             ],
             "candidate_rows": [
                 {"market": "US", "symbol": "SPTM", "selection_status": "SELECTED", "selection_reason": "PASS"},
@@ -497,9 +507,18 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
     assert by_id["watchlist_expansion"]["metrics"]["seed_source_candidate_count"] == 2
     assert by_id["watchlist_expansion"]["metrics"]["seed_source_market_count"] == 1
     assert by_id["watchlist_expansion"]["metrics"]["primary_seed_intake_status"] == "MANUAL_REVIEW_REQUIRED"
+    assert by_id["watchlist_expansion"]["metrics"]["account_growth_profile"] == "small"
+    assert (
+        by_id["watchlist_expansion"]["metrics"]["account_growth_primary_action"]
+        == "verify_seed_etfs_in_candidate_report_before_submit"
+    )
+    assert by_id["watchlist_expansion"]["metrics"]["account_growth_expansion_mode"] == "whole_share_tradable_etf_first"
+    assert by_id["watchlist_expansion"]["metrics"]["account_growth_max_orders_per_run"] == 1
+    assert by_id["watchlist_expansion"]["metrics"]["account_growth_max_order_value"] == 100.0
     assert by_id["watchlist_expansion"]["rows"]["market_recommendations"][0]["market"] == "HK"
     assert by_id["watchlist_expansion"]["rows"]["seed_proposals"][0]["market"] == "HK"
     assert by_id["watchlist_expansion"]["rows"]["seed_intake_plan"][0]["does_not_change_symbol_master"] is True
+    assert by_id["watchlist_expansion"]["rows"]["account_growth_tier_plan"]["read_only"] is True
     assert by_id["evidence_focus_actions"]["status"] == "warn"
     assert by_id["evidence_focus_actions"]["metrics"]["focus_action_count"] == 3
     assert by_id["evidence_focus_actions"]["metrics"]["urgent_action_count"] == 2
@@ -692,6 +711,58 @@ def test_watchlist_expansion_block_warns_when_no_growth_candidates_selected():
     assert block["rows"]["market_recommendations"][0]["near_miss_candidates"][0]["symbol"] == "BHP.AX"
     assert block["rows"]["seed_proposals"][0]["auto_apply"] is False
     assert block["rows"]["seed_intake_plan"][0]["candidate_symbols"] == []
+
+
+def test_auto_order_readiness_block_backfills_seed_metrics_for_legacy_frequency_plan():
+    payload = {
+        "auto_order_readiness": {
+            "summary": {
+                "status": "blocked",
+                "portfolio_count": 1,
+                "blocked_count": 1,
+                "primary_block_reason": "preflight_stale",
+                "submit_plan": {"status": "BLOCKED", "reason": "no_single_safe_submit_candidate"},
+                "frequency_plan": {
+                    "status": "frontier_blocked",
+                    "reason": "preflight_stale",
+                    "seed_proposal_count": 0,
+                    "manual_seed_proposal_count": 0,
+                    "seed_proposal_markets": [],
+                    "does_not_change_submit_decision": True,
+                },
+            },
+            "rows": [],
+        },
+        "watchlist_expansion_summary": {
+            "seed_proposals": [
+                {"market": "ASX", "auto_apply": False},
+                {"market": "HK", "auto_apply": False},
+            ],
+            "seed_intake_plan": [
+                {
+                    "market": "ASX",
+                    "intake_status": "MANUAL_REVIEW_REQUIRED",
+                    "source_candidate_count": 2,
+                },
+                {
+                    "market": "HK",
+                    "intake_status": "MANUAL_REVIEW_REQUIRED",
+                    "source_candidate_count": 2,
+                },
+            ],
+        },
+    }
+
+    block = _by_id(build_dashboard_v2_blocks(payload))["auto_order_readiness"]
+
+    assert block["metrics"]["frequency_seed_proposal_count"] == 2
+    assert block["metrics"]["frequency_manual_seed_proposal_count"] == 2
+    assert block["metrics"]["frequency_seed_proposal_markets"] == ["ASX", "HK"]
+    assert block["metrics"]["frequency_seed_intake_plan_count"] == 2
+    assert block["metrics"]["frequency_seed_source_candidate_count"] == 4
+    assert block["metrics"]["frequency_seed_source_markets"] == ["ASX", "HK"]
+    assert block["metrics"]["frequency_plan_does_not_change_submit_decision"] == 1
+    assert block["rows"]["frequency_plan"]["seed_source_candidate_count"] == 4
 
 
 def test_evidence_focus_actions_block_keeps_sample_collection_non_warning():
