@@ -977,7 +977,14 @@ def test_auto_order_frequency_plan_surfaces_seed_proposals_without_changing_subm
                 "auto_apply": False,
                 "submit_gate_policy": "do_not_relax_submit_gates",
             }
-        ]
+        ],
+        "seed_intake_plan": [
+            {
+                "market": "ASX",
+                "intake_status": "MANUAL_REVIEW_REQUIRED",
+                "source_candidate_count": 2,
+            }
+        ],
     }
 
     plan = build_auto_order_frequency_plan(
@@ -992,6 +999,10 @@ def test_auto_order_frequency_plan_surfaces_seed_proposals_without_changing_subm
     assert plan["seed_proposal_count"] == 1
     assert plan["manual_seed_proposal_count"] == 1
     assert plan["seed_proposal_markets"] == ["ASX"]
+    assert plan["seed_intake_plan_count"] == 1
+    assert plan["seed_source_candidate_count"] == 2
+    assert plan["seed_source_markets"] == ["ASX"]
+    assert plan["seed_intake_external_source_count"] == 0
     assert plan["does_not_change_submit_decision"] is True
     assert plan["submit_gate_policy"] == "do_not_relax_submit_gates"
     assert plan["next_actions"][0]["near_miss_symbols"] == ["BHP.AX", "RIO.AX"]

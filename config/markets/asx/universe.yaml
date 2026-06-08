@@ -5,6 +5,7 @@ symbol_master_db: "symbol_master.db"
 seed_symbols: []
 seed_watchlist_yaml: "config/watchlists/asx_top_quality.yaml"
 report_watchlist_yaml: "config/watchlists/asx_top_quality.yaml"
+review_seed_source_registry: "config/watchlist_seed_sources.yaml"
 symbol_master_watchlists:
   - "config/watchlists/asx_market_core.yaml"
   - "config/watchlists/auto_expanded/asx_quality_growth.yaml"
@@ -13,6 +14,7 @@ notes:
   - "Uses a curated liquid large-cap quality list for final reporting."
   - "Symbol master is expanded by a broader ASX market-core watchlist for layered scan stage-1 coverage."
   - "Auto-expanded quality-growth watchlist is generated from local candidate evidence and remains empty unless ASX symbols pass whole-share/cost/liquidity filters."
+  - "Review seed registry candidates are scored in reports but remain WATCH/execution_ready=0 until manual promotion."
 layered_scan:
   enabled: true
   include_symbol_master: true

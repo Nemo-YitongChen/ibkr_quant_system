@@ -54,6 +54,7 @@ from ..common.markets import (
 from ..common.runtime_paths import resolve_repo_path
 from ..common.sqlite_utils import connect_sqlite
 from ..common.storage import Storage
+from ..common.watchlist_expansion import watchlist_seed_source_candidates
 from ..data import MarketDataAdapter
 from ..enrichment.providers import EnrichmentProviders
 from ..enrichment.yfinance_history import fetch_daily_bars as fetch_daily_bars_yf
@@ -172,6 +173,51 @@ def _market_leaders(bundle: Dict[str, Any]) -> tuple[str, str]:
 
 def _filter_symbols_for_market(symbols: List[str], market: str) -> List[str]:
     return [str(sym).upper() for sym in symbols if symbol_matches_market(str(sym), market)]
+
+
+def _apply_review_seed_execution_guard(
+    rows: List[Dict[str, Any]],
+    source_candidates: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    source_by_symbol = {
+        str(row.get("symbol") or "").strip().upper(): dict(row)
+        for row in list(source_candidates or [])
+        if str(row.get("symbol") or "").strip()
+    }
+    guarded: List[Dict[str, Any]] = []
+    for raw in list(rows or []):
+        row = dict(raw)
+        symbol = str(row.get("symbol") or "").strip().upper()
+        source = source_by_symbol.get(symbol)
+        if source is None:
+            guarded.append(row)
+            continue
+        row["review_seed_candidate"] = 1
+        row["review_only"] = 1
+        row["review_seed_original_action"] = str(row.get("action") or "").strip().upper()
+        row["review_seed_original_execution_ready"] = int(bool(row.get("execution_ready", False)))
+        row["review_seed_block_reason"] = "manual_promotion_required"
+        row["seed_source_name"] = str(source.get("source_name") or "")
+        row["seed_source_url"] = str(source.get("source_url") or "")
+        row["seed_source_verified_at"] = str(source.get("source_verified_at") or "")
+        row["seed_source_broker_mapping_status"] = str(source.get("broker_mapping_status") or "TO_VERIFY")
+        row["action"] = "WATCH"
+        row["execution_ready"] = 0
+        guarded.append(row)
+    return guarded
+
+
+def _candidate_universe_rows(universe: Any, *, review_seed_symbols: List[str]) -> List[Dict[str, Any]]:
+    review_set = {str(symbol or "").strip().upper() for symbol in list(review_seed_symbols or []) if str(symbol).strip()}
+    rows: List[Dict[str, Any]] = []
+    for symbol in list(universe.symbols or []):
+        normalized = str(symbol or "").strip().upper()
+        meta = dict(universe.meta.get(symbol, {}) or {})
+        reasons = [str(item).strip() for item in list(meta.get("reasons") or []) if str(item).strip()]
+        if normalized in review_set and "review_seed_source" not in reasons:
+            reasons.append("review_seed_source")
+        rows.append({"symbol": normalized, "reasons": ",".join(reasons)})
+    return rows
 
 
 def _rank_sort_key(row: Dict[str, Any]) -> tuple[int, float]:
@@ -1864,6 +1910,34 @@ def main(argv: List[str] | None = None) -> None:
         or market_universe_cfg.get("research_only_yfinance", False)
         or investment_cfg.get("research_only_yfinance", False)
     )
+    review_seed_registry_raw = str(market_universe_cfg.get("review_seed_source_registry") or "").strip()
+    review_seed_registry_path = (
+        _resolve_project_path(review_seed_registry_raw)
+        if review_seed_registry_raw
+        else ""
+    )
+    review_seed_registry = _load_yaml(review_seed_registry_path) if review_seed_registry_path else {}
+    review_seed_candidates = watchlist_seed_source_candidates(
+        review_seed_registry,
+        market=resolved_market,
+        preferred_asset_classes=sorted(
+            _small_account_preferred_asset_classes(
+                market_structure,
+                account_equity_cap=account_equity_cap,
+            )
+            or {"etf"}
+        ),
+    )
+    review_seed_symbols = [str(row.get("symbol") or "").strip().upper() for row in review_seed_candidates]
+    review_seed_symbol_set = set(review_seed_symbols)
+    review_seed_fundamentals = {
+        str(row.get("symbol") or "").strip().upper(): {
+            "asset_class": str(row.get("asset_class") or "").strip().lower(),
+            "asset_theme": "review_seed",
+        }
+        for row in review_seed_candidates
+        if str(row.get("symbol") or "").strip()
+    }
     symbol_master_symbols = load_symbols_from_symbol_master(symbol_master_db_path, resolved_market if resolved_market != "DEFAULT" else "")
     watchlist_symbols = load_watchlist_symbols(watchlist_yaml) if watchlist_yaml else []
     layered_cfg = _layered_scan_config(
@@ -1880,6 +1954,7 @@ def main(argv: List[str] | None = None) -> None:
 
     seed_symbols = _dedupe_keep_order(
         list(watchlist_symbols)
+        + list(review_seed_symbols)
         + (list(symbol_master_symbols) if bool(layered_cfg.include_symbol_master) else [])
     )
     recent_symbols = (
@@ -1900,7 +1975,7 @@ def main(argv: List[str] | None = None) -> None:
     )
     candidates = universe.symbols
     scanner_symbols: List[str] = []
-    uni_rows = [{"symbol": sym, "reasons": ",".join(universe.meta.get(sym, {}).get("reasons", []))} for sym in candidates]
+    uni_rows = _candidate_universe_rows(universe, review_seed_symbols=review_seed_symbols)
     log.info(
         "Investment layered universe seed=%s recent=%s symbol_master=%s initial=%s broad_limit=%s deep_limit=%s",
         len(seed_symbols),
@@ -1938,7 +2013,7 @@ def main(argv: List[str] | None = None) -> None:
                     max_n=int(layered_cfg.broad_limit or args.max_universe),
                 )
                 candidates = universe.symbols
-                uni_rows = [{"symbol": sym, "reasons": ",".join(universe.meta.get(sym, {}).get("reasons", []))} for sym in candidates]
+                uni_rows = _candidate_universe_rows(universe, review_seed_symbols=review_seed_symbols)
             log.info(
                 "Investment research-only scanner expansion market=%s scanner_symbols=%s final_universe=%s",
                 resolved_market,
@@ -1966,7 +2041,7 @@ def main(argv: List[str] | None = None) -> None:
                     max_n=int(layered_cfg.broad_limit or args.max_universe),
                 )
                 candidates = universe.symbols
-                uni_rows = [{"symbol": sym, "reasons": ",".join(universe.meta.get(sym, {}).get("reasons", []))} for sym in candidates]
+                uni_rows = _candidate_universe_rows(universe, review_seed_symbols=review_seed_symbols)
             register_contracts(ib, md, candidates)
             log.info(
                 "Investment scanner expansion market=%s scanner_symbols=%s final_universe=%s",
@@ -2003,7 +2078,10 @@ def main(argv: List[str] | None = None) -> None:
         vix = _extract_vix(bundle)
         macro_high_risk = _macro_high_risk(bundle)
         earnings_map: Dict[str, bool] = {}
-        fundamentals_map: Dict[str, Dict[str, Any]] = {}
+        fundamentals_map: Dict[str, Dict[str, Any]] = {
+            symbol: dict(values)
+            for symbol, values in review_seed_fundamentals.items()
+        }
         recommendations_map: Dict[str, Dict[str, Any]] = {}
         market_leaders, market_laggards = _market_leaders(bundle)
         history_source_counts = {"ibkr": 0, "yfinance": 0, "missing": 0}
@@ -2114,6 +2192,10 @@ def main(argv: List[str] | None = None) -> None:
             max_symbols=max(1, len(enrichment_symbols)),
         ) if enrichment_symbols else {}
         fundamentals_map = {str(symbol).upper(): dict(info) for symbol, info in fundamentals.items()}
+        for symbol, seed_values in review_seed_fundamentals.items():
+            bucket = fundamentals_map.setdefault(symbol, {})
+            for key, value in seed_values.items():
+                bucket.setdefault(key, value)
         microstructure_map: Dict[str, Dict[str, Any]] = {}
         for symbol in enrichment_symbols:
             metrics = _compute_microstructure_metrics(symbol, data_adapter=data_adapter)
@@ -2224,7 +2306,11 @@ def main(argv: List[str] | None = None) -> None:
             list(scanner_symbols)
             + list(recent_symbols)
             + list(watchlist_symbols)
-            + list(candidates[: max(0, int(layered_cfg.deep_limit or 0))])
+            + [
+                symbol
+                for symbol in candidates[: max(0, int(layered_cfg.deep_limit or 0))]
+                if str(symbol).upper() not in review_seed_symbol_set
+            ]
         )
         if ib is not None and short_universe_symbols:
             register_contracts(ib, md, short_universe_symbols)
@@ -2262,8 +2348,13 @@ def main(argv: List[str] | None = None) -> None:
         analysis_run_id = f"{resolved_market}-{int(time.time() * 1000)}-{os.getpid()}"
         portfolio_id = _report_portfolio_id(resolved_market, watchlist_yaml, out_dir)
         source_reason_map = {
-            str(symbol).upper(): [str(item).strip() for item in list(meta.get("reasons", []) or []) if str(item).strip()]
-            for symbol, meta in dict(universe.meta or {}).items()
+            str(row.get("symbol") or "").upper(): [
+                str(item).strip()
+                for item in str(row.get("reasons") or "").split(",")
+                if str(item).strip()
+            ]
+            for row in uni_rows
+            if str(row.get("symbol") or "").strip()
         }
         storage = Storage(db_path)
         shadow_training_rows = storage.get_investment_snapshot_training_rows(
@@ -2306,10 +2397,19 @@ def main(argv: List[str] | None = None) -> None:
         cost_summary["portfolio_id"] = str(portfolio_id or "")
         cost_summary["analysis_run_id"] = str(analysis_run_id)
 
+        broad_ranked = _apply_review_seed_execution_guard(broad_ranked, review_seed_candidates)
+        deep_ranked = _apply_review_seed_execution_guard(deep_ranked, review_seed_candidates)
+        ranked = _apply_review_seed_execution_guard(ranked, review_seed_candidates)
+        review_seed_ranked = [
+            dict(row)
+            for row in broad_ranked
+            if int(row.get("review_seed_candidate", 0) or 0) == 1
+        ]
         write_csv(str(out_dir / "universe_candidates.csv"), uni_rows)
         write_csv(str(out_dir / "investment_broad_candidates.csv"), broad_ranked)
         write_csv(str(out_dir / "investment_deep_candidates.csv"), deep_ranked)
         write_csv(str(out_dir / "investment_candidates.csv"), ranked)
+        write_csv(str(out_dir / "investment_review_seed_candidates.csv"), review_seed_ranked)
         write_csv(str(out_dir / "investment_short_candidates.csv"), short_ranked)
         write_csv(str(out_dir / "investment_short_plan.csv"), short_plans)
         write_csv(str(out_dir / "investment_backtest.csv"), backtests)
@@ -2425,6 +2525,12 @@ def main(argv: List[str] | None = None) -> None:
                 "long_ok": int(len(long_rows)),
                 "ranked_count": int(len(ranked)),
                 "plan_count": int(len(plans)),
+                "review_seed_source_registry": str(review_seed_registry_path or ""),
+                "review_seed_source_count": int(len(review_seed_candidates)),
+                "review_seed_ranked_count": int(len(review_seed_ranked)),
+                "review_seed_execution_blocked_count": int(
+                    sum(int(row.get("review_seed_candidate", 0) or 0) == 1 for row in ranked)
+                ),
                 "backtest_count": int(len(backtests)),
                 "account_equity_cap": float(account_equity_cap),
                 "account_profile": dict(account_profile_summary or {}),

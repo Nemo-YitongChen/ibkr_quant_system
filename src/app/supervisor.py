@@ -2845,6 +2845,20 @@ class Supervisor:
             log.warning("Unable to build market readiness payload for auto-order gate: %s", exc)
             return {}
 
+    def _watchlist_expansion_summary_payload(self) -> Dict[str, Any]:
+        relative_path = Path("watchlist_expansion") / "watchlist_expansion_summary.json"
+        scoped_path = self._summary_output_dir() / relative_path
+        payload = _load_json_file(scoped_path)
+        if payload:
+            return payload
+        raw_dir = str(self.cfg.get("summary_out_dir", "reports_supervisor") or "reports_supervisor")
+        fallback_path = _resolve_path(raw_dir) / relative_path
+        if fallback_path != scoped_path:
+            payload = _load_json_file(fallback_path)
+            if payload:
+                return payload
+        return {}
+
     def _auto_order_readiness_policy(self) -> Dict[str, Any]:
         raw = self.cfg.get("auto_order_readiness")
         return dict(raw or {}) if isinstance(raw, dict) else {}
@@ -2873,9 +2887,7 @@ class Supervisor:
             "preflight_summary": _load_json_file(self._preflight_output_dir() / "supervisor_preflight_summary.json"),
             "weekly_summary": self._auto_order_weekly_summary_payload(),
             "market_readiness_summary": self._market_readiness_summary_payload(),
-            "watchlist_expansion_summary": _load_json_file(
-                self._summary_output_dir() / "watchlist_expansion" / "watchlist_expansion_summary.json"
-            ),
+            "watchlist_expansion_summary": self._watchlist_expansion_summary_payload(),
             "policy": self._auto_order_readiness_policy(),
         }
 
@@ -2930,6 +2942,11 @@ class Supervisor:
         fallback_market_readiness = _resolve_path(raw_dir) / "market_readiness.json"
         if fallback_market_readiness not in paths:
             paths.append(fallback_market_readiness)
+        fallback_watchlist_expansion = (
+            _resolve_path(raw_dir) / "watchlist_expansion" / "watchlist_expansion_summary.json"
+        )
+        if fallback_watchlist_expansion not in paths:
+            paths.append(fallback_watchlist_expansion)
         return [path for path in paths if path.exists()]
 
     def _auto_order_readiness_rewrite_reason(

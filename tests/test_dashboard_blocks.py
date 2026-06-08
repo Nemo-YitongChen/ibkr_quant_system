@@ -88,6 +88,10 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
                     "seed_proposal_count": 1,
                     "manual_seed_proposal_count": 1,
                     "seed_proposal_markets": ["US"],
+                    "seed_intake_plan_count": 1,
+                    "seed_source_candidate_count": 2,
+                    "seed_source_markets": ["US"],
+                    "seed_intake_external_source_count": 0,
                     "does_not_change_submit_decision": True,
                 },
                 "candidate_supply_status": "candidate_supply_gap",
@@ -341,6 +345,24 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
                     "auto_apply": False,
                 }
             ],
+            "seed_intake_plan": [
+                {
+                    "market": "HK",
+                    "intake_status": "MANUAL_REVIEW_REQUIRED",
+                    "candidate_symbols": ["2800.HK", "2833.HK"],
+                    "source_candidate_count": 2,
+                    "source_candidates": [
+                        {
+                            "symbol": "2800.HK",
+                            "asset_class": "etf",
+                            "broker_mapping_status": "TO_VERIFY",
+                        }
+                    ],
+                    "next_action": "verify_seed_source_candidates_in_candidate_report",
+                    "auto_apply": False,
+                    "does_not_change_symbol_master": True,
+                }
+            ],
             "markets": [
                 {"market": "US", "candidate_row_count": 5, "selected_count": 2, "selected_symbols": "SPTM,SCHB"},
                 {"market": "HK", "candidate_row_count": 5, "selected_count": 0, "selected_symbols": ""},
@@ -428,6 +450,8 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
         == "create_or_refresh_preferred_asset_seed_watchlist"
     )
     assert by_id["auto_order_readiness"]["metrics"]["frequency_seed_proposal_count"] == 1
+    assert by_id["auto_order_readiness"]["metrics"]["frequency_seed_source_candidate_count"] == 2
+    assert by_id["auto_order_readiness"]["metrics"]["frequency_seed_source_markets"] == ["US"]
     assert by_id["auto_order_readiness"]["metrics"]["frequency_plan_does_not_change_submit_decision"] == 1
     assert by_id["auto_order_readiness"]["rows"]["frequency_plan"]["seed_proposal_markets"] == ["US"]
     assert by_id["dashboard_control_actions"]["metrics"]["history_count"] == 3
@@ -468,8 +492,11 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
     assert by_id["watchlist_expansion"]["metrics"]["manual_seed_proposal_count"] == 1
     assert by_id["watchlist_expansion"]["metrics"]["primary_seed_proposal_action"] == "create_or_refresh_preferred_asset_seed_watchlist"
     assert by_id["watchlist_expansion"]["metrics"]["seed_intake_plan_count"] == 1
-    assert by_id["watchlist_expansion"]["metrics"]["seed_intake_external_source_count"] == 1
-    assert by_id["watchlist_expansion"]["metrics"]["primary_seed_intake_status"] == "NEEDS_EXTERNAL_PREFERRED_ASSET_SOURCE"
+    assert by_id["watchlist_expansion"]["metrics"]["seed_intake_external_source_count"] == 0
+    assert by_id["watchlist_expansion"]["metrics"]["seed_intake_manual_review_count"] == 1
+    assert by_id["watchlist_expansion"]["metrics"]["seed_source_candidate_count"] == 2
+    assert by_id["watchlist_expansion"]["metrics"]["seed_source_market_count"] == 1
+    assert by_id["watchlist_expansion"]["metrics"]["primary_seed_intake_status"] == "MANUAL_REVIEW_REQUIRED"
     assert by_id["watchlist_expansion"]["rows"]["market_recommendations"][0]["market"] == "HK"
     assert by_id["watchlist_expansion"]["rows"]["seed_proposals"][0]["market"] == "HK"
     assert by_id["watchlist_expansion"]["rows"]["seed_intake_plan"][0]["does_not_change_symbol_master"] is True

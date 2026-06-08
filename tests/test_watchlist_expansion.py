@@ -353,3 +353,51 @@ def test_watchlist_seed_intake_plan_keeps_etf_first_review_only() -> None:
     assert plan[1]["intake_status"] == "NEEDS_EXTERNAL_PREFERRED_ASSET_SOURCE"
     assert plan[1]["candidate_symbols"] == []
     assert plan[1]["evidence_symbols"] == ["3988.HK"]
+
+
+def test_watchlist_seed_intake_plan_uses_review_only_source_registry() -> None:
+    plan = build_watchlist_seed_intake_plan(
+        [
+            {
+                "market": "XETRA",
+                "expansion_target": "seed_preferred_asset_class_candidates",
+                "top_reject_reason": "expected_cost_above_max",
+                "preferred_asset_class_gap": True,
+                "preferred_asset_classes": ["etf"],
+                "near_miss_candidates": [{"symbol": "IFX.DE", "asset_class": "equity"}],
+            }
+        ],
+        seed_source_registry={
+            "review_only": True,
+            "markets": {
+                "XETRA": {
+                    "candidates": [
+                        {
+                            "symbol": "EUN1.DE",
+                            "exchange_ticker": "EUN1",
+                            "asset_class": "etf",
+                            "product_name": "iShares STOXX Europe 50 UCITS ETF",
+                            "source_name": "Official product page",
+                            "source_url": "https://example.test/eun1",
+                            "source_verified_at": "2026-06-08",
+                            "broker_mapping_status": "TO_VERIFY",
+                            "rationale": "Broad European large-cap exposure.",
+                        },
+                        {
+                            "symbol": "IFX.DE",
+                            "asset_class": "equity",
+                        },
+                    ]
+                }
+            },
+        },
+    )
+
+    assert plan[0]["intake_status"] == "MANUAL_REVIEW_REQUIRED"
+    assert plan[0]["candidate_symbols"] == ["EUN1.DE"]
+    assert plan[0]["source_candidate_count"] == 1
+    assert plan[0]["source_candidates"][0]["exchange_ticker"] == "EUN1"
+    assert plan[0]["source_candidates"][0]["broker_mapping_status"] == "TO_VERIFY"
+    assert plan[0]["next_action"] == "verify_seed_source_candidates_in_candidate_report"
+    assert plan[0]["auto_apply"] is False
+    assert plan[0]["does_not_change_symbol_master"] is True

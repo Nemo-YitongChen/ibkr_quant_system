@@ -323,6 +323,46 @@ def _seed_proposal_action(expansion_target: str) -> str:
     return "review_candidate_seed_source"
 
 
+def watchlist_seed_source_candidates(
+    seed_source_registry: Mapping[str, Any] | None,
+    *,
+    market: str,
+    preferred_asset_classes: Sequence[str],
+) -> List[Dict[str, Any]]:
+    registry = dict(seed_source_registry or {})
+    markets = registry.get("markets")
+    market_rows = dict(markets or {}).get(str(market or "").strip().upper()) if isinstance(markets, Mapping) else {}
+    candidates = dict(market_rows or {}).get("candidates") if isinstance(market_rows, Mapping) else []
+    preferred = {str(item).strip().lower() for item in list(preferred_asset_classes or []) if str(item).strip()}
+    normalized: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for raw in list(candidates or []):
+        if not isinstance(raw, Mapping):
+            continue
+        row = dict(raw)
+        symbol = _symbol(row.get("symbol"))
+        asset_class = _clean_asset_class(row.get("asset_class"))
+        if not symbol or symbol in seen:
+            continue
+        if preferred and asset_class not in preferred:
+            continue
+        seen.add(symbol)
+        normalized.append(
+            {
+                "symbol": symbol,
+                "exchange_ticker": str(row.get("exchange_ticker") or "").strip(),
+                "asset_class": asset_class or "unknown",
+                "product_name": str(row.get("product_name") or "").strip(),
+                "source_name": str(row.get("source_name") or "").strip(),
+                "source_url": str(row.get("source_url") or "").strip(),
+                "source_verified_at": str(row.get("source_verified_at") or "").strip(),
+                "broker_mapping_status": str(row.get("broker_mapping_status") or "TO_VERIFY").strip().upper(),
+                "rationale": str(row.get("rationale") or "").strip(),
+            }
+        )
+    return normalized
+
+
 def build_watchlist_seed_proposals(market_recommendations: Iterable[Mapping[str, Any]]) -> List[Dict[str, Any]]:
     proposals: List[Dict[str, Any]] = []
     for row in list(market_recommendations or []):
@@ -363,7 +403,11 @@ def build_watchlist_seed_proposals(market_recommendations: Iterable[Mapping[str,
     return proposals
 
 
-def build_watchlist_seed_intake_plan(market_recommendations: Iterable[Mapping[str, Any]]) -> List[Dict[str, Any]]:
+def build_watchlist_seed_intake_plan(
+    market_recommendations: Iterable[Mapping[str, Any]],
+    *,
+    seed_source_registry: Mapping[str, Any] | None = None,
+) -> List[Dict[str, Any]]:
     """Build a review-only intake queue for candidate supply expansion."""
     intake_rows: List[Dict[str, Any]] = []
     for row in list(market_recommendations or []):
@@ -378,8 +422,18 @@ def build_watchlist_seed_intake_plan(market_recommendations: Iterable[Mapping[st
             for item in near_miss
             if _symbol(item.get("symbol")) and _clean_asset_class(item.get("asset_class")) in set(preferred_assets)
         ]
+        source_candidates = watchlist_seed_source_candidates(
+            seed_source_registry,
+            market=market,
+            preferred_asset_classes=preferred_assets,
+        )
+        source_candidate_symbols = [str(item.get("symbol") or "") for item in source_candidates]
         preferred_gap = bool(row.get("preferred_asset_class_gap"))
-        if preferred_gap and not preferred_near_miss_symbols:
+        if source_candidate_symbols:
+            intake_status = "MANUAL_REVIEW_REQUIRED"
+            candidate_symbols = source_candidate_symbols
+            next_action = "verify_seed_source_candidates_in_candidate_report"
+        elif preferred_gap and not preferred_near_miss_symbols:
             intake_status = "NEEDS_EXTERNAL_PREFERRED_ASSET_SOURCE"
             candidate_symbols: List[str] = []
             next_action = "source_verified_low_cost_preferred_asset_candidates"
@@ -400,8 +454,10 @@ def build_watchlist_seed_intake_plan(market_recommendations: Iterable[Mapping[st
                 "preferred_asset_classes": preferred_assets,
                 "proposed_watchlist_path": f"config/watchlists/seed_review/{path_market}_preferred_asset_seed_review.yaml",
                 "candidate_symbols": candidate_symbols[:10],
+                "source_candidates": source_candidates[:10],
                 "evidence_symbols": evidence_symbols[:10],
                 "candidate_count": len(candidate_symbols[:10]),
+                "source_candidate_count": len(source_candidates[:10]),
                 "evidence_symbol_count": len(evidence_symbols[:10]),
                 "next_action": next_action,
                 "acceptance_rule": (
@@ -428,6 +484,7 @@ def summarize_watchlist_expansion(
     *,
     market_rows: Iterable[Mapping[str, Any]] = (),
     policy: WatchlistExpansionPolicy | Mapping[str, Any] | None = None,
+    seed_source_registry: Mapping[str, Any] | None = None,
 ) -> Dict[str, Any]:
     clean_rows = [dict(row or {}) for row in list(rows or [])]
     clean_market_rows = [dict(row or {}) for row in list(market_rows or [])]
@@ -484,7 +541,10 @@ def summarize_watchlist_expansion(
     )
     primary = dict(market_recommendations[0]) if market_recommendations else {}
     seed_proposals = build_watchlist_seed_proposals(market_recommendations)
-    seed_intake_plan = build_watchlist_seed_intake_plan(market_recommendations)
+    seed_intake_plan = build_watchlist_seed_intake_plan(
+        market_recommendations,
+        seed_source_registry=seed_source_registry,
+    )
     return {
         "candidate_row_count": len(clean_rows),
         "selected_count": len(selected_rows),
@@ -505,6 +565,8 @@ def summarize_watchlist_expansion(
             for row in seed_intake_plan
             if str(row.get("intake_status") or "") == "NEEDS_EXTERNAL_PREFERRED_ASSET_SOURCE"
         ),
+        "seed_source_candidate_count": sum(int(row.get("source_candidate_count", 0) or 0) for row in seed_intake_plan),
+        "seed_source_market_count": sum(1 for row in seed_intake_plan if int(row.get("source_candidate_count", 0) or 0) > 0),
         "primary_recommendation_market": str(primary.get("market") or ""),
         "primary_recommendation_reason": str(primary.get("top_reject_reason") or ""),
         "primary_recommendation_action": str(primary.get("recommendation_action") or ""),

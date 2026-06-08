@@ -52,6 +52,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min_whole_share_edge_margin_bps", type=float, default=None)
     parser.add_argument("--max_last_close", type=float, default=None)
     parser.add_argument("--account_profile_config", default="config/account_profiles.yaml")
+    parser.add_argument("--seed_source_registry", default="config/watchlist_seed_sources.yaml")
     parser.add_argument("--account_equity", type=float, default=0.0)
     parser.add_argument("--account_profile", default="")
     parser.add_argument("--allow_non_whole_share", action="store_true")
@@ -123,6 +124,7 @@ def _write_seed_intake_review_files(path: Path, rows: Iterable[Mapping[str, Any]
             "preferred_asset_class_gap": bool(row.get("preferred_asset_class_gap")),
             "preferred_asset_classes": list(row.get("preferred_asset_classes") or []),
             "symbols": list(row.get("candidate_symbols") or []),
+            "source_candidates": list(row.get("source_candidates") or []),
             "evidence_symbols": list(row.get("evidence_symbols") or []),
             "acceptance_rule": str(row.get("acceptance_rule") or ""),
             "submit_gate_policy": str(row.get("submit_gate_policy") or "do_not_relax_submit_gates"),
@@ -308,6 +310,8 @@ def main() -> None:
     profile = _resolve_profile(args)
     account_equity = _safe_float(args.account_equity, 0.0)
     policy = _policy_from_args(args, profile)
+    seed_source_registry_path = _resolve(str(args.seed_source_registry or "config/watchlist_seed_sources.yaml"))
+    seed_source_registry = _load_yaml(seed_source_registry_path)
     account_profile_payload = _profile_payload(profile, account_equity=account_equity)
     generated_at = datetime.now(timezone.utc).isoformat()
     all_rows: List[Dict[str, Any]] = []
@@ -379,7 +383,12 @@ def main() -> None:
 
     _write_csv(analysis_dir / "watchlist_expansion_candidates.csv", all_rows)
     _write_csv(analysis_dir / "watchlist_expansion_summary.csv", summary_rows)
-    expansion_summary = summarize_watchlist_expansion(all_rows, market_rows=summary_rows, policy=policy)
+    expansion_summary = summarize_watchlist_expansion(
+        all_rows,
+        market_rows=summary_rows,
+        policy=policy,
+        seed_source_registry=seed_source_registry,
+    )
     _write_seed_intake_review_files(
         analysis_dir,
         expansion_summary.get("seed_intake_plan", []),
@@ -391,6 +400,8 @@ def main() -> None:
                 "generated_at": generated_at,
                 "config_path": str(config_path),
                 "runtime_root": str(runtime_root),
+                "seed_source_registry_path": str(seed_source_registry_path),
+                "seed_source_registry_version": seed_source_registry.get("version"),
                 "account_profile": account_profile_payload,
                 "policy": policy.to_dict(),
                 "markets": summary_rows,

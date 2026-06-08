@@ -38,8 +38,10 @@ from src.ibkr.market_data import MarketDataService
 from src.ibkr.market_data import OHLCVBar
 from src.strategies.mid_regime import RegimeConfig
 from src.tools.generate_investment_report import (
+    _apply_review_seed_execution_guard,
     _apply_weekly_feedback_penalties,
     _build_market_sentiment,
+    _candidate_universe_rows,
     _collect_symbol_feature_results,
     _layered_scan_config,
     _maybe_collect_research_scanner_symbols,
@@ -1325,6 +1327,55 @@ class InvestmentModuleTests(unittest.TestCase):
         self.assertEqual(row["whole_share_tradability_reason"], "PASS")
         self.assertAlmostEqual(float(row["whole_share_expected_edge_bps"]), 29.4, places=6)
         self.assertEqual(int(row["small_account_preferred_candidate"]), 1)
+
+    def test_review_seed_execution_guard_keeps_scoring_evidence_but_blocks_execution(self):
+        rows = _apply_review_seed_execution_guard(
+            [
+                {
+                    "symbol": "A200.AX",
+                    "action": "ACCUMULATE",
+                    "execution_ready": 1,
+                    "score": 0.71,
+                },
+                {
+                    "symbol": "BHP.AX",
+                    "action": "ACCUMULATE",
+                    "execution_ready": 1,
+                    "score": 0.68,
+                },
+            ],
+            [
+                {
+                    "symbol": "A200.AX",
+                    "source_name": "Official product page",
+                    "source_url": "https://example.test/a200",
+                    "source_verified_at": "2026-06-08",
+                    "broker_mapping_status": "TO_VERIFY",
+                }
+            ],
+        )
+        by_symbol = {str(row["symbol"]): row for row in rows}
+
+        self.assertEqual(by_symbol["A200.AX"]["review_seed_original_action"], "ACCUMULATE")
+        self.assertEqual(by_symbol["A200.AX"]["review_seed_original_execution_ready"], 1)
+        self.assertEqual(by_symbol["A200.AX"]["action"], "WATCH")
+        self.assertEqual(by_symbol["A200.AX"]["execution_ready"], 0)
+        self.assertEqual(by_symbol["A200.AX"]["review_seed_block_reason"], "manual_promotion_required")
+        self.assertEqual(by_symbol["BHP.AX"]["action"], "ACCUMULATE")
+        self.assertEqual(by_symbol["BHP.AX"]["execution_ready"], 1)
+
+    def test_candidate_universe_rows_marks_review_seed_source(self):
+        class _Universe:
+            symbols = ["A200.AX", "BHP.AX"]
+            meta = {
+                "A200.AX": {"reasons": ["seed"]},
+                "BHP.AX": {"reasons": ["symbol_master"]},
+            }
+
+        rows = _candidate_universe_rows(_Universe(), review_seed_symbols=["A200.AX"])
+
+        self.assertEqual(rows[0]["reasons"], "seed,review_seed_source")
+        self.assertEqual(rows[1]["reasons"], "symbol_master")
 
     def test_target_allocations_use_small_account_preferred_priority_boost(self):
         ranked = [

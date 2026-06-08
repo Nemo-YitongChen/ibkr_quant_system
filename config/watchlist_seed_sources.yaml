@@ -1,0 +1,65 @@
+version: 1
+review_only: true
+auto_apply: false
+submit_gate_policy: do_not_relax_submit_gates
+markets:
+  ASX:
+    candidates:
+      - symbol: A200.AX
+        exchange_ticker: A200
+        asset_class: etf
+        product_name: Betashares Australia 200 ETF
+        source_name: Betashares official product page
+        source_url: https://www.betashares.com.au/fund/australia-200-etf/
+        source_verified_at: "2026-06-08"
+        broker_mapping_status: TO_VERIFY
+        rationale: Broad ASX large-cap exposure with a low published management cost.
+      - symbol: VAS.AX
+        exchange_ticker: VAS
+        asset_class: etf
+        product_name: Vanguard Australian Shares Index ETF
+        source_name: Vanguard Australia official ETF page
+        source_url: https://www.vanguard.com.au/personal/campaign/etf
+        source_verified_at: "2026-06-08"
+        broker_mapping_status: TO_VERIFY
+        rationale: Broad ASX 300 exposure from a large established Australian ETF.
+  HK:
+    candidates:
+      - symbol: 2800.HK
+        exchange_ticker: "2800"
+        asset_class: etf
+        product_name: Tracker Fund of Hong Kong
+        source_name: Tracker Fund official product page
+        source_url: https://www.trahk.com.hk/en-hk/trahk-fund/
+        source_verified_at: "2026-06-08"
+        broker_mapping_status: TO_VERIFY
+        rationale: Broad Hang Seng Index exposure; board-lot and all-in cost must be verified.
+      - symbol: 2833.HK
+        exchange_ticker: "2833"
+        asset_class: etf
+        product_name: Hang Seng Index ETF
+        source_name: Hang Seng Investment official key facts statement
+        source_url: https://cms.hangsenginvestment.com/cms/ivp/hsvm/document/2833_kfs_e.pdf
+        source_verified_at: "2026-06-08"
+        broker_mapping_status: TO_VERIFY
+        rationale: Broad Hang Seng Index exposure; board-lot and all-in cost must be verified.
+  XETRA:
+    candidates:
+      - symbol: EUN1.DE
+        exchange_ticker: EUN1
+        asset_class: etf
+        product_name: iShares STOXX Europe 50 UCITS ETF
+        source_name: iShares official product page
+        source_url: https://www.ishares.com/de/privatanleger/de/produkte/251929/ishares-stoxx-europe-50-ucits-etf
+        source_verified_at: "2026-06-08"
+        broker_mapping_status: TO_VERIFY
+        rationale: Diversified exposure to 50 large European developed-market companies.
+      - symbol: EXW1.DE
+        exchange_ticker: EXW1
+        asset_class: etf
+        product_name: iShares Core EURO STOXX 50 UCITS ETF
+        source_name: iShares official factsheet
+        source_url: https://www.ishares.com/de/privatanleger/de/literature/fact-sheet/exw1-ishares-core-euro-stoxx-50-ucits-etf-de-fund-fact-sheet-de-de.pdf
+        source_verified_at: "2026-06-08"
+        broker_mapping_status: TO_VERIFY
+        rationale: Diversified Eurozone blue-chip exposure with a published low expense ratio.

@@ -5,6 +5,7 @@ symbol_master_db: "symbol_master.db"
 seed_symbols: []
 seed_watchlist_yaml: "config/watchlists/resolved_hk_top100_tech_growth.yaml"
 report_watchlist_yaml: "config/watchlists/resolved_hk_market_core.yaml"
+review_seed_source_registry: "config/watchlist_seed_sources.yaml"
 symbol_master_watchlists:
   - "config/watchlists/resolved_hk_market_core.yaml"
   - "config/watchlists/auto_expanded/hk_quality_growth.yaml"
@@ -13,6 +14,7 @@ notes:
   - "Report universe uses the union of bluechip and tech-growth watchlists."
   - "Resolved HK market core remains the broad stage-1 source until a larger verified HK universe is added."
   - "Auto-expanded quality-growth watchlist is generated from local candidate evidence and remains empty unless HK symbols pass whole-share/cost/liquidity filters."
+  - "Review seed registry candidates are scored in reports but remain WATCH/execution_ready=0 until manual promotion."
 layered_scan:
   enabled: true
   include_symbol_master: true

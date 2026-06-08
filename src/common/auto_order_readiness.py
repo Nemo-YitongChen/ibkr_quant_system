@@ -1204,6 +1204,11 @@ def build_auto_order_frequency_plan(
         for row in list(expansion.get("seed_proposals") or [])
         if isinstance(row, Mapping)
     ]
+    seed_intake_plan = [
+        dict(row)
+        for row in list(expansion.get("seed_intake_plan") or [])
+        if isinstance(row, Mapping)
+    ]
     submit_ready = bool(plan.get("ready", False))
     submit_reason = str(plan.get("reason") or "").strip()
     submit_status = str(plan.get("status") or "").strip().upper()
@@ -1269,6 +1274,18 @@ def build_auto_order_frequency_plan(
             for row in seed_proposals
             if str(row.get("market") or "").strip()
         ],
+        "seed_intake_plan_count": len(seed_intake_plan),
+        "seed_source_candidate_count": sum(int(row.get("source_candidate_count", 0) or 0) for row in seed_intake_plan),
+        "seed_source_markets": [
+            str(row.get("market") or "")
+            for row in seed_intake_plan
+            if int(row.get("source_candidate_count", 0) or 0) > 0 and str(row.get("market") or "").strip()
+        ],
+        "seed_intake_external_source_count": sum(
+            1
+            for row in seed_intake_plan
+            if str(row.get("intake_status") or "") == "NEEDS_EXTERNAL_PREFERRED_ASSET_SOURCE"
+        ),
         "portfolio_count": len(clean_rows),
         "does_not_change_submit_decision": True,
         "submit_gate_policy": "do_not_relax_submit_gates",

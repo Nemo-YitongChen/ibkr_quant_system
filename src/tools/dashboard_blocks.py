@@ -360,6 +360,12 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "frequency_seed_proposal_count": _int(frequency_plan.get("seed_proposal_count")),
             "frequency_manual_seed_proposal_count": _int(frequency_plan.get("manual_seed_proposal_count")),
             "frequency_seed_proposal_markets": list(frequency_plan.get("seed_proposal_markets") or []),
+            "frequency_seed_intake_plan_count": _int(frequency_plan.get("seed_intake_plan_count")),
+            "frequency_seed_source_candidate_count": _int(frequency_plan.get("seed_source_candidate_count")),
+            "frequency_seed_source_markets": list(frequency_plan.get("seed_source_markets") or []),
+            "frequency_seed_intake_external_source_count": _int(
+                frequency_plan.get("seed_intake_external_source_count")
+            ),
             "frequency_plan_does_not_change_submit_decision": int(
                 bool(frequency_plan.get("does_not_change_submit_decision", False))
             ),
@@ -628,6 +634,8 @@ def build_watchlist_expansion_block(payload: Dict[str, Any]) -> Dict[str, Any]:
     seed_intake_manual_review_count = sum(
         1 for row in seed_intake_plan if str(row.get("intake_status") or "") == "MANUAL_REVIEW_REQUIRED"
     )
+    seed_source_candidate_count = sum(int(row.get("source_candidate_count", 0) or 0) for row in seed_intake_plan)
+    seed_source_market_count = sum(1 for row in seed_intake_plan if int(row.get("source_candidate_count", 0) or 0) > 0)
     status_raw = str(summary.get("status") or "").strip().lower()
     if not summary:
         status = "warn"
@@ -674,6 +682,8 @@ def build_watchlist_expansion_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "seed_intake_plan_count": len(seed_intake_plan),
             "seed_intake_external_source_count": seed_intake_external_source_count,
             "seed_intake_manual_review_count": seed_intake_manual_review_count,
+            "seed_source_candidate_count": seed_source_candidate_count,
+            "seed_source_market_count": seed_source_market_count,
             "primary_seed_intake_status": str(seed_intake_plan[0].get("intake_status") if seed_intake_plan else ""),
             "primary_seed_intake_next_action": str(seed_intake_plan[0].get("next_action") if seed_intake_plan else ""),
             "selected_symbols": ",".join(

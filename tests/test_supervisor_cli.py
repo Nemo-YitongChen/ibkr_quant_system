@@ -250,6 +250,70 @@ class SupervisorCliTests(unittest.TestCase):
             payload = json.loads((out_dir / "auto_order_readiness.json").read_text(encoding="utf-8"))
             self.assertEqual(payload["rewrite_reason"], "dependency_newer_than_artifact")
 
+    def test_auto_order_readiness_uses_canonical_watchlist_expansion_when_scoped_summary_is_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            cfg_path = base / "supervisor.yaml"
+            canonical_dir = base / "reports_supervisor"
+            scoped_dir = base / "runtime" / "reports_supervisor"
+            expansion_path = canonical_dir / "watchlist_expansion" / "watchlist_expansion_summary.json"
+            expansion_path.parent.mkdir(parents=True, exist_ok=True)
+            expansion_path.write_text(
+                json.dumps(
+                    {
+                        "seed_intake_plan": [
+                            {
+                                "market": "ASX",
+                                "intake_status": "MANUAL_REVIEW_REQUIRED",
+                                "source_candidate_count": 2,
+                            },
+                            {
+                                "market": "HK",
+                                "intake_status": "MANUAL_REVIEW_REQUIRED",
+                                "source_candidate_count": 2,
+                            },
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        f'summary_out_dir: "{canonical_dir}"',
+                        "auto_order_readiness:",
+                        "  enabled: true",
+                        "markets:",
+                        '  - name: "us"',
+                        '    market: "US"',
+                        "    enabled: true",
+                        "    reports: []",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(cfg_path))
+            with (
+                patch.object(supervisor, "_summary_output_dir", return_value=scoped_dir),
+                patch.object(supervisor, "_auto_order_readiness_rows", return_value=[]),
+            ):
+                self.assertEqual(
+                    supervisor._watchlist_expansion_summary_payload()["seed_intake_plan"][0]["market"],
+                    "ASX",
+                )
+                self.assertIn(expansion_path.resolve(), supervisor._auto_order_readiness_dependency_paths())
+                self.assertTrue(
+                    supervisor._write_auto_order_readiness_summary(
+                        datetime(2026, 6, 8, 4, 0, tzinfo=timezone.utc)
+                    )
+                )
+
+            payload = json.loads((scoped_dir / "auto_order_readiness.json").read_text(encoding="utf-8"))
+            frequency_plan = payload["summary"]["frequency_plan"]
+            self.assertEqual(frequency_plan["seed_source_candidate_count"], 4)
+            self.assertEqual(frequency_plan["seed_source_markets"], ["ASX", "HK"])
+
     def test_auto_order_weekly_summary_prefers_lightweight_gateway_budget_artifact(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
