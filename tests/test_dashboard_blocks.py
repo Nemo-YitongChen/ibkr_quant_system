@@ -721,7 +721,19 @@ def test_auto_order_readiness_block_backfills_seed_metrics_for_legacy_frequency_
                 "portfolio_count": 1,
                 "blocked_count": 1,
                 "primary_block_reason": "preflight_stale",
-                "submit_plan": {"status": "BLOCKED", "reason": "no_single_safe_submit_candidate"},
+                "submit_plan": {
+                    "status": "BLOCKED",
+                    "reason": "no_single_safe_submit_candidate",
+                    "frontier_candidates": [
+                        {
+                            "market": "US",
+                            "portfolio_id": "US:watchlist",
+                            "planned_order_symbols": "SPLG",
+                            "submit_quality_status": "PASS",
+                            "hard_blocks": ["gateway_budget_degraded"],
+                        }
+                    ],
+                },
                 "frequency_plan": {
                     "status": "frontier_blocked",
                     "reason": "preflight_stale",
@@ -731,7 +743,22 @@ def test_auto_order_readiness_block_backfills_seed_metrics_for_legacy_frequency_
                     "does_not_change_submit_decision": True,
                 },
             },
-            "rows": [],
+            "rows": [
+                {
+                    "market": "US",
+                    "portfolio_id": "US:watchlist",
+                    "hard_blocks": ["gateway_budget_degraded"],
+                    "hard_block_details": [
+                        {
+                            "reason": "gateway_budget_degraded",
+                            "detail": (
+                                "market=US reason=gateway_request_budget_exceeded "
+                                "projected_recovery_at=2026-06-12T23:59:59+00:00"
+                            ),
+                        }
+                    ],
+                }
+            ],
         },
         "watchlist_expansion_summary": {
             "seed_proposals": [
@@ -762,7 +789,17 @@ def test_auto_order_readiness_block_backfills_seed_metrics_for_legacy_frequency_
     assert block["metrics"]["frequency_seed_source_candidate_count"] == 4
     assert block["metrics"]["frequency_seed_source_markets"] == ["ASX", "HK"]
     assert block["metrics"]["frequency_plan_does_not_change_submit_decision"] == 1
+    assert block["metrics"]["recovery_plan_status"] == "wait_gateway_budget"
+    assert block["metrics"]["recovery_plan_target_portfolio_id"] == "US:watchlist"
+    assert block["metrics"]["recovery_plan_target_symbols"] == "SPLG"
+    assert block["metrics"]["recovery_plan_gateway_refresh_portfolio_limit"] == 1
+    assert block["metrics"]["recovery_plan_does_not_submit_orders"] == 1
     assert block["rows"]["frequency_plan"]["seed_source_candidate_count"] == 4
+    assert (
+        block["rows"]["recovery_plan"]["gateway_budget_projected_recovery_at"]
+        == "2026-06-12T23:59:59+00:00"
+    )
+    assert block["rows"]["recovery_plan"]["steps"][0]["submit_orders"] is False
 
 
 def test_evidence_focus_actions_block_keeps_sample_collection_non_warning():

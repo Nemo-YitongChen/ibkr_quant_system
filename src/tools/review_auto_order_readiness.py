@@ -140,6 +140,7 @@ def _write_markdown(path: Path, payload: Dict[str, Any]) -> None:
         )
     submit_plan = dict(summary.get("submit_plan") or {})
     frequency_plan = dict(summary.get("frequency_plan") or {})
+    recovery_plan = dict(summary.get("recovery_plan") or {})
     frontier_candidates = [
         dict(row)
         for row in list(submit_plan.get("frontier_candidates") or [])
@@ -164,6 +165,38 @@ def _write_markdown(path: Path, payload: Dict[str, Any]) -> None:
                 ]
             )
             + " |",
+            "",
+            "## Minimum-Request Recovery Plan",
+            "",
+            f"- Status: {recovery_plan.get('status', '-')}",
+            f"- Primary action: {recovery_plan.get('primary_action', '-')}",
+            f"- Target: {recovery_plan.get('target_market', '-')}/{recovery_plan.get('target_portfolio_id', '-')}",
+            f"- Request policy: {recovery_plan.get('request_policy', '-')}",
+            "",
+            "| order | phase | action | market | portfolio | Gateway | condition |",
+            "| ---: | --- | --- | --- | --- | --- | --- |",
+        ]
+    )
+    for step in list(recovery_plan.get("steps") or []):
+        if not isinstance(step, dict):
+            continue
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    str(int(step.get("order", 0) or 0)),
+                    str(step.get("phase") or "-"),
+                    str(step.get("action") or "-"),
+                    str(step.get("market") or "-"),
+                    str(step.get("portfolio_id") or "-"),
+                    "yes" if bool(step.get("requires_ibkr_gateway", False)) else "no",
+                    str(step.get("condition") or "-"),
+                ]
+            )
+            + " |"
+        )
+    lines.extend(
+        [
             "",
             "## Submit Plan",
             "",

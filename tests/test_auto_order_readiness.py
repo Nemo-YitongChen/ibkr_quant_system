@@ -10,6 +10,7 @@ from src.common.auto_order_readiness import (
     READY_STATUS,
     WARNING_STATUS,
     build_auto_order_frequency_plan,
+    build_auto_order_recovery_plan,
     build_auto_order_submit_plan,
     build_auto_order_readiness_summary,
     evaluate_auto_order_readiness,
@@ -916,6 +917,10 @@ def test_auto_order_readiness_blocks_matching_gateway_budget_degraded() -> None:
     assert "top_tool=run_investment_opportunity:us:watchlist" in detail["detail"]
     assert "projected_recovery_days=3" in detail["detail"]
     assert "after 2026-05-13T23:59:59.999999+00:00" in detail["remediation"]
+    assert result["gateway_budget_request_count"] == 8034
+    assert result["gateway_budget_request_limit"] == 2000
+    assert result["gateway_budget_top_tool"] == "run_investment_opportunity:us:watchlist"
+    assert result["gateway_budget_projected_recovery_at"] == "2026-05-13T23:59:59.999999+00:00"
 
 
 def test_auto_order_readiness_summary_counts_rows() -> None:
@@ -1008,6 +1013,92 @@ def test_auto_order_frequency_plan_surfaces_seed_proposals_without_changing_subm
     assert plan["next_actions"][0]["near_miss_symbols"] == ["BHP.AX", "RIO.AX"]
 
 
+def test_auto_order_recovery_plan_targets_one_quality_frontier_after_budget_recovery() -> None:
+    rows = [
+        {
+            "market": "US",
+            "portfolio_id": "US:watchlist",
+            "hard_blocks": ["preflight_stale", "gateway_budget_degraded"],
+            "gateway_budget_projected_recovery_at": "2026-06-12T23:59:59+00:00",
+        },
+        {
+            "market": "HK",
+            "portfolio_id": "HK:bluechip",
+            "hard_blocks": ["ibkr_gateway_unavailable", "gateway_budget_degraded"],
+            "gateway_budget_projected_recovery_at": "2026-06-13T23:59:59+00:00",
+        },
+    ]
+    submit_plan = {
+        "status": "BLOCKED",
+        "ready": False,
+        "frontier_candidates": [
+            {
+                "market": "US",
+                "portfolio_id": "US:watchlist",
+                "planned_order_symbols": "SPLG",
+                "submit_quality_status": "PASS",
+                "submit_quality_min_net_edge_bps": 10.8,
+                "submit_quality_min_edge_margin_bps": 4.8,
+                "hard_blocks": ["preflight_stale", "gateway_budget_degraded"],
+            },
+            {
+                "market": "HK",
+                "portfolio_id": "HK:bluechip",
+                "planned_order_symbols": "2800.HK",
+                "submit_quality_status": "NO_ORDERS",
+            },
+        ],
+    }
+
+    plan = build_auto_order_recovery_plan(rows, submit_plan=submit_plan)
+
+    assert plan["status"] == "wait_gateway_budget"
+    assert plan["target_market"] == "US"
+    assert plan["target_portfolio_id"] == "US:watchlist"
+    assert plan["target_symbols"] == "SPLG"
+    assert plan["gateway_budget_projected_recovery_at"] == "2026-06-12T23:59:59+00:00"
+    assert plan["gateway_refresh_portfolio_limit"] == 1
+    assert plan["estimated_gateway_refresh_count"] == 1
+    assert plan["request_policy"] == "single_highest_quality_frontier_only"
+    assert [step["action"] for step in plan["steps"]] == [
+        "refresh_supervisor_preflight",
+        "hold_high_request_scans_until_gateway_budget_recovers",
+        "refresh_frontier_report_and_execution_no_submit",
+        "rebuild_market_readiness_auto_order_readiness_and_dashboard",
+    ]
+    assert plan["steps"][2]["portfolio_id"] == "US:watchlist"
+    assert plan["steps"][2]["requires_ibkr_gateway"] is True
+    assert all(step["submit_orders"] is False for step in plan["steps"])
+    assert plan["does_not_submit_orders"] is True
+    assert plan["does_not_relax_submit_gates"] is True
+
+
+def test_auto_order_recovery_plan_does_not_refresh_when_submit_plan_is_ready() -> None:
+    plan = build_auto_order_recovery_plan(
+        [{"market": "US", "portfolio_id": "US:watchlist", "ready": True}],
+        submit_plan={
+            "status": "READY_SINGLE_CANDIDATE",
+            "ready": True,
+            "selected_market": "US",
+            "selected_portfolio_id": "US:watchlist",
+            "selected_planned_order_symbols": "SPLG",
+            "frontier_candidates": [
+                {
+                    "market": "US",
+                    "portfolio_id": "US:watchlist",
+                    "submit_quality_status": "PASS",
+                }
+            ],
+        },
+    )
+
+    assert plan["status"] == "submit_review_ready"
+    assert plan["request_policy"] == "no_refresh_when_submit_plan_is_ready"
+    assert plan["estimated_gateway_refresh_count"] == 0
+    assert [step["action"] for step in plan["steps"]] == ["operator_review_selected_paper_plan"]
+    assert plan["steps"][0]["submit_orders"] is False
+
+
 def test_auto_order_readiness_summary_includes_frequency_plan_from_watchlist_expansion() -> None:
     summary = build_auto_order_readiness_summary(
         [
@@ -1038,3 +1129,5 @@ def test_auto_order_readiness_summary_includes_frequency_plan_from_watchlist_exp
     assert summary["frequency_plan"]["seed_proposal_count"] == 1
     assert summary["candidate_supply_status"] == "frontier_blocked"
     assert summary["candidate_supply_primary_action"] == "resolve_submit_frontier_blocker"
+    assert summary["recovery_plan"]["status"] == "manual_review_required"
+    assert summary["recovery_plan"]["does_not_submit_orders"] is True

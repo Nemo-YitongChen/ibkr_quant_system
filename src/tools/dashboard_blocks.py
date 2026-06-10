@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 from ..common.alert_classification import summarize_error_classes
+from ..common.auto_order_readiness import build_auto_order_recovery_plan
 from ..common.dashboard_control_audit import summarize_evidence_action_audit_links
 from ..common.watchlist_expansion import WatchlistExpansionPolicy, selection_reason_summary, summarize_watchlist_expansion
 
@@ -293,6 +294,10 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
         payload,
     )
     rows = _rows(auto_order.get("rows"), limit=50)
+    recovery_plan = _dict(summary.get("recovery_plan")) or build_auto_order_recovery_plan(
+        rows,
+        submit_plan=submit_plan,
+    )
     remediation_plan = _rows(summary.get("remediation_plan"), limit=20)
     frontier_candidates = _rows(submit_plan.get("frontier_candidates"), limit=20)
     top_frontier = dict(frontier_candidates[0]) if frontier_candidates else {}
@@ -372,6 +377,18 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "frequency_plan_does_not_change_submit_decision": int(
                 bool(frequency_plan.get("does_not_change_submit_decision", False))
             ),
+            "recovery_plan_status": str(recovery_plan.get("status") or ""),
+            "recovery_plan_primary_action": str(recovery_plan.get("primary_action") or ""),
+            "recovery_plan_target_market": str(recovery_plan.get("target_market") or ""),
+            "recovery_plan_target_portfolio_id": str(recovery_plan.get("target_portfolio_id") or ""),
+            "recovery_plan_target_symbols": str(recovery_plan.get("target_symbols") or ""),
+            "recovery_plan_step_count": _int(recovery_plan.get("step_count")),
+            "recovery_plan_gateway_refresh_portfolio_limit": _int(
+                recovery_plan.get("gateway_refresh_portfolio_limit")
+            ),
+            "recovery_plan_does_not_submit_orders": int(
+                bool(recovery_plan.get("does_not_submit_orders", False))
+            ),
             "candidate_count": _int(submit_plan.get("candidate_count")),
             "frontier_candidate_count": _int(submit_plan.get("frontier_candidate_count"))
             or len(frontier_candidates),
@@ -404,6 +421,7 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "submit_plan": submit_plan,
             "remediation_plan": remediation_plan,
             "frequency_plan": frequency_plan,
+            "recovery_plan": recovery_plan,
             "frontier_candidates": frontier_candidates,
             "portfolios": rows,
         },

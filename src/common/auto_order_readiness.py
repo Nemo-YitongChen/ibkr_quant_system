@@ -964,6 +964,12 @@ def evaluate_auto_order_readiness(
         "strategy_auto_apply_count": auto_apply_count,
         "strategy_stale_suggestion_count": stale_suggestion_count,
         "gateway_budget_status": gateway_status or "",
+        "gateway_budget_request_count": _int(gateway_row.get("gateway_request_count"), 0),
+        "gateway_budget_request_limit": _int(gateway_row.get("weekly_gateway_request_budget"), 0),
+        "gateway_budget_usage_pct": _float(gateway_row.get("budget_usage_pct"), 0.0),
+        "gateway_budget_top_request_kind": str(gateway_row.get("top_request_kind") or ""),
+        "gateway_budget_top_tool": str(gateway_row.get("top_tool") or ""),
+        "gateway_budget_projected_recovery_at": str(gateway_row.get("projected_recovery_at") or ""),
         "market_readiness_status": market_readiness_status,
         "market_readiness_reason": market_readiness_reason,
         "market_readiness_artifact_health_status": market_artifact_health_status,
@@ -1293,6 +1299,211 @@ def build_auto_order_frequency_plan(
     }
 
 
+def build_auto_order_recovery_plan(
+    rows: Iterable[Mapping[str, Any]],
+    *,
+    submit_plan: Mapping[str, Any] | None = None,
+) -> Dict[str, Any]:
+    """Build the minimum-request recovery path for the highest-quality paper frontier."""
+    clean_rows = [dict(row) for row in list(rows or []) if isinstance(row, Mapping)]
+    plan = dict(submit_plan or {})
+    frontier_candidates = [
+        dict(row)
+        for row in list(plan.get("frontier_candidates") or [])
+        if isinstance(row, Mapping)
+    ]
+    top_frontier = dict(frontier_candidates[0]) if frontier_candidates else {}
+    if bool(plan.get("ready", False)):
+        selected_portfolio_id = str(plan.get("selected_portfolio_id") or "").strip()
+        selected_market = _market(plan.get("selected_market"))
+        return {
+            "status": "submit_review_ready",
+            "primary_action": "operator_review_selected_paper_plan",
+            "target_market": selected_market,
+            "target_portfolio_id": selected_portfolio_id,
+            "target_symbols": str(plan.get("selected_planned_order_symbols") or ""),
+            "target_submit_quality_status": str(top_frontier.get("submit_quality_status") or "").strip().upper(),
+            "target_net_edge_bps": _float(top_frontier.get("submit_quality_min_net_edge_bps"), 0.0),
+            "target_edge_margin_bps": _float(top_frontier.get("submit_quality_min_edge_margin_bps"), 0.0),
+            "gateway_budget_projected_recovery_at": "",
+            "gateway_refresh_portfolio_limit": 0,
+            "estimated_gateway_refresh_count": 0,
+            "request_policy": "no_refresh_when_submit_plan_is_ready",
+            "step_count": 1,
+            "steps": [
+                {
+                    "order": 1,
+                    "phase": "operator_review",
+                    "action": "operator_review_selected_paper_plan",
+                    "requires_ibkr_gateway": False,
+                    "market": selected_market,
+                    "portfolio_id": selected_portfolio_id,
+                    "condition": "review the selected paper plan before any submit action",
+                    "submit_orders": False,
+                }
+            ],
+            "paper_only": True,
+            "does_not_submit_orders": True,
+            "does_not_relax_submit_gates": True,
+        }
+    all_hard_blocks = {
+        str(reason or "").strip()
+        for row in clean_rows
+        for reason in list(row.get("hard_blocks") or [])
+        if str(reason or "").strip()
+    }
+    target_quality = str(top_frontier.get("submit_quality_status") or "").strip().upper()
+    target_portfolio_id = str(top_frontier.get("portfolio_id") or "").strip()
+    target_market = _market(top_frontier.get("market"))
+    actionable_target = bool(target_portfolio_id and target_quality == "PASS")
+    target_hard_blocks = {
+        str(reason or "").strip()
+        for reason in list(top_frontier.get("hard_blocks") or [])
+        if str(reason or "").strip()
+    }
+    operational_blocks = target_hard_blocks if actionable_target else all_hard_blocks
+    recovery_rows = [
+        row
+        for row in clean_rows
+        if (
+            not actionable_target
+            or (
+                str(row.get("portfolio_id") or "").strip() == target_portfolio_id
+                or (
+                    not str(row.get("portfolio_id") or "").strip()
+                    and _market(row.get("market")) == target_market
+                )
+            )
+        )
+    ]
+    recovery_times: set[str] = {
+        str(row.get("gateway_budget_projected_recovery_at") or "").strip()
+        for row in recovery_rows
+        if str(row.get("gateway_budget_projected_recovery_at") or "").strip()
+    }
+    for row in recovery_rows:
+        for detail in list(row.get("hard_block_details") or []) + list(row.get("warning_details") or []):
+            if not isinstance(detail, Mapping):
+                continue
+            detail_text = str(detail.get("detail") or "")
+            marker = "projected_recovery_at="
+            if marker not in detail_text:
+                continue
+            recovery_at = detail_text.partition(marker)[2].split()[0].strip()
+            if recovery_at:
+                recovery_times.add(recovery_at)
+    sorted_recovery_times = sorted(recovery_times)
+    steps: List[Dict[str, Any]] = []
+
+    def add_step(
+        action: str,
+        *,
+        phase: str,
+        requires_gateway: bool,
+        portfolio_id: str = "",
+        market: str = "",
+        condition: str = "",
+    ) -> None:
+        steps.append(
+            {
+                "order": len(steps) + 1,
+                "phase": phase,
+                "action": action,
+                "requires_ibkr_gateway": bool(requires_gateway),
+                "market": market,
+                "portfolio_id": portfolio_id,
+                "condition": condition,
+                "submit_orders": False,
+            }
+        )
+
+    if operational_blocks.intersection({"preflight_missing", "preflight_failed", "preflight_stale"}):
+        add_step(
+            "refresh_supervisor_preflight",
+            phase="local_evidence",
+            requires_gateway=False,
+            condition="before any Gateway-backed refresh",
+        )
+    if "ibkr_gateway_unavailable" in operational_blocks:
+        add_step(
+            "restore_ibkr_gateway_paper_api",
+            phase="gateway_recovery",
+            requires_gateway=False,
+            condition="confirm configured paper API port is listening before continuing",
+        )
+    if "gateway_budget_degraded" in operational_blocks:
+        add_step(
+            "hold_high_request_scans_until_gateway_budget_recovers",
+            phase="gateway_budget",
+            requires_gateway=False,
+            condition=(
+                f"resume after {sorted_recovery_times[-1]}"
+                if sorted_recovery_times
+                else "resume after the rolling telemetry window returns below budget"
+            ),
+        )
+    if actionable_target:
+        add_step(
+            "refresh_frontier_report_and_execution_no_submit",
+            phase="targeted_gateway_refresh",
+            requires_gateway=True,
+            portfolio_id=target_portfolio_id,
+            market=target_market,
+            condition="only after Gateway availability and request budget gates pass",
+        )
+        add_step(
+            "rebuild_market_readiness_auto_order_readiness_and_dashboard",
+            phase="local_evidence",
+            requires_gateway=False,
+            portfolio_id=target_portfolio_id,
+            market=target_market,
+            condition="after the targeted no-submit execution refresh",
+        )
+    elif not steps:
+        add_step(
+            "review_submit_frontier_and_candidate_evidence",
+            phase="manual_review",
+            requires_gateway=False,
+            condition="no quality-passing frontier is available",
+        )
+
+    if "ibkr_gateway_unavailable" in operational_blocks:
+        status = "gateway_restore_required"
+        primary_action = "restore_ibkr_gateway_paper_api"
+    elif "gateway_budget_degraded" in operational_blocks:
+        status = "wait_gateway_budget"
+        primary_action = "hold_high_request_scans_until_gateway_budget_recovers"
+    elif operational_blocks.intersection({"preflight_missing", "preflight_failed", "preflight_stale"}):
+        status = "local_preflight_refresh_required"
+        primary_action = "refresh_supervisor_preflight"
+    elif actionable_target:
+        status = "targeted_frontier_refresh_required"
+        primary_action = "refresh_frontier_report_and_execution_no_submit"
+    else:
+        status = "manual_review_required"
+        primary_action = "review_submit_frontier_and_candidate_evidence"
+
+    return {
+        "status": status,
+        "primary_action": primary_action,
+        "target_market": target_market if actionable_target else "",
+        "target_portfolio_id": target_portfolio_id if actionable_target else "",
+        "target_symbols": str(top_frontier.get("planned_order_symbols") or "") if actionable_target else "",
+        "target_submit_quality_status": target_quality,
+        "target_net_edge_bps": _float(top_frontier.get("submit_quality_min_net_edge_bps"), 0.0),
+        "target_edge_margin_bps": _float(top_frontier.get("submit_quality_min_edge_margin_bps"), 0.0),
+        "gateway_budget_projected_recovery_at": sorted_recovery_times[-1] if sorted_recovery_times else "",
+        "gateway_refresh_portfolio_limit": 1 if actionable_target else 0,
+        "estimated_gateway_refresh_count": 1 if actionable_target else 0,
+        "request_policy": "single_highest_quality_frontier_only",
+        "step_count": len(steps),
+        "steps": steps,
+        "paper_only": True,
+        "does_not_submit_orders": True,
+        "does_not_relax_submit_gates": True,
+    }
+
+
 def build_auto_order_readiness_summary(
     rows: Iterable[Mapping[str, Any]],
     *,
@@ -1416,6 +1627,10 @@ def build_auto_order_readiness_summary(
         submit_plan=submit_plan,
         watchlist_expansion_summary=watchlist_expansion_summary,
     )
+    recovery_plan = build_auto_order_recovery_plan(
+        clean_rows,
+        submit_plan=submit_plan,
+    )
     return {
         "status": status,
         "summary_text": (
@@ -1442,6 +1657,7 @@ def build_auto_order_readiness_summary(
         "remediation_plan": remediation_plan,
         "submit_plan": submit_plan,
         "frequency_plan": frequency_plan,
+        "recovery_plan": recovery_plan,
         "candidate_supply_status": str(frequency_plan.get("status") or ""),
         "candidate_supply_reason": str(frequency_plan.get("reason") or ""),
         "candidate_supply_primary_action": str(frequency_plan.get("primary_action") or ""),
