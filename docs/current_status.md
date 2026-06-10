@@ -515,3 +515,12 @@
 - 当前真实刷新结果：`selected_count=2`、`zero_selected_market_count=3`、`seed_intake_plan_count=3`、`seed_intake_external_source_count=3`，dashboard v2 `watchlist_expansion` block 已因此显示 `warn`。
 - ASX/HK/XETRA 当前都是 `NEEDS_EXTERNAL_PREFERRED_ASSET_SOURCE`。近似高分股票如 `BHP.AX`、`3988.HK`、`IFX.DE` 只作为 `evidence_symbols` 保留；因为 small profile 是 ETF-first，这些股票不会被直接提升为 seed candidate。
 - 下一步应补 verified low-cost ETF-first source，再重新跑 candidate report / paper execution dry-run / market readiness / auto-order readiness；只有通过 account profile、whole-share、cost、liquidity、data quality、expected edge 和 submit quality 的 symbol 才能进入 auto-expanded watchlist。
+
+## 34. 2026-06-10 Target-scoped recovery execution
+
+- `auto_order_readiness` 新增 `recovery_eligibility` contract，明确区分 budget recovery 时间未到、时间已到但 budget evidence 尚未刷新、以及可执行单一目标 dry-run 三种状态。
+- Supervisor 现在会消费该 contract：recovery 激活时暂停非目标 investment report/execution，并暂停 opportunity 扫描；只有目标 frontier 仍为 `PASS` 且 budget evidence 已恢复时，才允许目标 report 与一次 execution no-submit。
+- 即使配置里 `submit_investment_execution=true`，targeted recovery 也会复制运行参数并强制关闭 submit，不修改原配置。
+- CLI readiness JSON/markdown 与 dashboard v2 使用同一 eligibility 字段，避免展示层和调度层结论不一致。
+- broker snapshot 与 risk guard 不受该恢复限流影响，避免为了减少请求而削弱账户一致性和保护性控制。
+- 本次没有修改或自动提升 watchlist symbol，也没有放宽 risk、edge、cost、liquidity、market-rule、Gateway budget 或 submit-quality gate。

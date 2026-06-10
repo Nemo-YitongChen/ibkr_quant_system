@@ -109,6 +109,129 @@ class SupervisorCliTests(unittest.TestCase):
             self.assertFalse(allowed)
             self.assertEqual(plan["reason"], "not_selected_by_submit_plan")
 
+    def test_auto_order_recovery_action_allows_only_target_report_and_dry_run_execution(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = Path(tmp) / "supervisor.yaml"
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        "auto_order_readiness:",
+                        "  enabled: true",
+                        "markets:",
+                        '  - name: "us"',
+                        '    market: "US"',
+                        "    enabled: true",
+                        "    watchlists: []",
+                        "    reports:",
+                        '      - kind: "investment"',
+                        '        watchlist_yaml: "config/watchlist.yaml"',
+                        "        run_investment_execution: true",
+                        "        submit_investment_execution: true",
+                        "    short_safety_sync:",
+                        "      enabled: false",
+                        "    trading:",
+                        "      enabled: false",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(cfg_path))
+            item = supervisor.markets[0].reports[0]
+            recovery_context = {
+                "eligibility": {
+                    "active": True,
+                    "eligible": True,
+                    "reason": "eligible_targeted_no_submit_refresh",
+                    "target_market": "US",
+                    "target_portfolio_id": "US:watchlist",
+                }
+            }
+
+            report = supervisor._auto_order_recovery_action_decision(
+                item,
+                "US",
+                action="report",
+                recovery_context=recovery_context,
+            )
+            execution = supervisor._auto_order_recovery_action_decision(
+                item,
+                "US",
+                action="execution",
+                recovery_context=recovery_context,
+            )
+            opportunity = supervisor._auto_order_recovery_action_decision(
+                item,
+                "US",
+                action="opportunity",
+                recovery_context=recovery_context,
+            )
+
+            self.assertTrue(report["allowed"])
+            self.assertTrue(execution["allowed"])
+            self.assertTrue(execution["force_no_submit"])
+            self.assertFalse(opportunity["allowed"])
+            self.assertEqual(opportunity["reason"], "auto_order_recovery:opportunity_suppressed")
+
+    def test_auto_order_recovery_action_blocks_non_target_and_unrecovered_budget(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = Path(tmp) / "supervisor.yaml"
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        "markets:",
+                        '  - name: "hk"',
+                        '    market: "HK"',
+                        "    enabled: true",
+                        "    watchlists: []",
+                        "    reports:",
+                        '      - kind: "investment"',
+                        '        watchlist_yaml: "config/hk_watchlist.yaml"',
+                        "    short_safety_sync:",
+                        "      enabled: false",
+                        "    trading:",
+                        "      enabled: false",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(cfg_path))
+            item = supervisor.markets[0].reports[0]
+
+            non_target = supervisor._auto_order_recovery_action_decision(
+                item,
+                "HK",
+                action="report",
+                recovery_context={
+                    "eligibility": {
+                        "active": True,
+                        "eligible": True,
+                        "target_market": "US",
+                        "target_portfolio_id": "US:watchlist",
+                    }
+                },
+            )
+            waiting = supervisor._auto_order_recovery_action_decision(
+                item,
+                "HK",
+                action="execution",
+                recovery_context={
+                    "eligibility": {
+                        "active": True,
+                        "eligible": False,
+                        "reason": "gateway_budget_recovery_not_reached",
+                        "target_market": "US",
+                        "target_portfolio_id": "US:watchlist",
+                    }
+                },
+            )
+
+            self.assertFalse(non_target["allowed"])
+            self.assertEqual(non_target["reason"], "auto_order_recovery:not_selected_frontier")
+            self.assertFalse(waiting["allowed"])
+            self.assertEqual(waiting["reason"], "auto_order_recovery:gateway_budget_recovery_not_reached")
+
     def test_write_auto_order_readiness_summary_uses_summary_out_dir(self):
         with tempfile.TemporaryDirectory() as tmp:
             cfg_path = Path(tmp) / "supervisor.yaml"
@@ -7491,6 +7614,105 @@ class SupervisorCliTests(unittest.TestCase):
                 supervisor.run_cycle(next_day)
                 mock_exec.assert_called_once()
             self.assertEqual(item["_last_execution_for_report_day"], "2026-03-12")
+
+    def test_targeted_recovery_execution_forces_no_submit_and_bypasses_submit_gate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = Path(tmp) / "supervisor.yaml"
+            summary_dir = Path(tmp) / "reports_supervisor"
+            reports_root = Path(tmp) / "reports_investment"
+            report_dir = reports_root / "watchlist"
+            report_dir.mkdir(parents=True, exist_ok=True)
+            for name, body in (
+                ("investment_candidates.csv", "symbol,action\nSPLG,BUY\n"),
+                ("investment_plan.csv", "symbol,action\nSPLG,BUY\n"),
+                ("investment_report.md", "# report\n"),
+            ):
+                (report_dir / name).write_text(body, encoding="utf-8")
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        f'summary_out_dir: "{summary_dir}"',
+                        "auto_order_readiness:",
+                        "  enabled: true",
+                        "markets:",
+                        '  - name: "us"',
+                        '    market: "US"',
+                        '    local_timezone: "Australia/Sydney"',
+                        "    enabled: true",
+                        "    watchlists: []",
+                        "    reports:",
+                        '      - kind: "investment"',
+                        f'        out_dir: "{reports_root}"',
+                        '        watchlist_yaml: "config/watchlist.yaml"',
+                        "        run_investment_execution: true",
+                        '        execution_time: "12:00"',
+                        "        submit_investment_execution: true",
+                        "    short_safety_sync:",
+                        "      enabled: false",
+                        "    trading:",
+                        "      enabled: false",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(cfg_path))
+            item = supervisor.markets[0].reports[0]
+            item["_last_successful_report_day"] = "2026-06-10"
+            now = datetime(2026, 6, 10, 13, 0, tzinfo=supervisor.tz)
+            recovery_context = {
+                "eligibility": {
+                    "active": True,
+                    "eligible": True,
+                    "reason": "eligible_targeted_no_submit_refresh",
+                    "target_market": "US",
+                    "target_portfolio_id": "US:watchlist",
+                }
+            }
+
+            with patch.object(
+                supervisor,
+                "_auto_order_recovery_context",
+                return_value=recovery_context,
+            ), patch.object(
+                supervisor,
+                "_report_action_reason",
+                return_value=(False, "already_generated"),
+            ), patch.object(
+                supervisor,
+                "_auto_order_readiness_for_item",
+                side_effect=AssertionError("submit gate must not run for recovery dry-run"),
+            ), patch.object(
+                supervisor,
+                "_run_investment_execution",
+                return_value=True,
+            ) as mock_exec, patch.object(
+                supervisor,
+                "_run_investment_labeling",
+                return_value=False,
+            ), patch.object(
+                supervisor,
+                "_run_investment_weekly_review",
+                return_value=False,
+            ), patch.object(
+                supervisor,
+                "_write_cycle_summary",
+                return_value=False,
+            ), patch.object(
+                supervisor,
+                "_write_auto_order_readiness_summary",
+                return_value=False,
+            ), patch.object(
+                supervisor,
+                "_write_dashboard_control_state",
+            ):
+                supervisor.run_cycle(now)
+
+            execution_item = mock_exec.call_args.args[1]
+            self.assertIsNot(execution_item, item)
+            self.assertFalse(execution_item["submit_investment_execution"])
+            self.assertTrue(item["submit_investment_execution"])
+            self.assertEqual(item["_last_execution_for_report_day"], "2026-06-10")
 
     def test_restore_report_state_from_report_and_execution_files(self):
         with tempfile.TemporaryDirectory() as tmp:

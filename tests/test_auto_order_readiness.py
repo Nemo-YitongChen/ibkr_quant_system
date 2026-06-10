@@ -14,6 +14,7 @@ from src.common.auto_order_readiness import (
     build_auto_order_submit_plan,
     build_auto_order_readiness_summary,
     evaluate_auto_order_readiness,
+    evaluate_auto_order_recovery_eligibility,
 )
 from src.tools.review_auto_order_readiness import build_auto_order_readiness_payload
 
@@ -633,6 +634,8 @@ def test_auto_order_readiness_payload_builds_market_readiness_when_missing(tmp_p
     row = payload["rows"][0]
     assert row["ready"] is True
     assert row["market_readiness_status"] == "READY_FOR_PAPER_REVIEW"
+    assert payload["summary"]["recovery_eligibility"]["reason"] == "submit_plan_ready_no_refresh"
+    assert payload["summary"]["recovery_eligibility"]["eligible"] is False
 
 
 def test_auto_order_readiness_blocks_live_without_explicit_policy() -> None:
@@ -1097,6 +1100,85 @@ def test_auto_order_recovery_plan_does_not_refresh_when_submit_plan_is_ready() -
     assert plan["estimated_gateway_refresh_count"] == 0
     assert [step["action"] for step in plan["steps"]] == ["operator_review_selected_paper_plan"]
     assert plan["steps"][0]["submit_orders"] is False
+
+
+def test_auto_order_recovery_eligibility_waits_for_fresh_budget_evidence() -> None:
+    plan = {
+        "status": "wait_gateway_budget",
+        "target_market": "US",
+        "target_portfolio_id": "US:watchlist",
+        "target_submit_quality_status": "PASS",
+        "gateway_budget_projected_recovery_at": "2026-06-12T23:59:59+00:00",
+        "gateway_refresh_portfolio_limit": 1,
+        "estimated_gateway_refresh_count": 1,
+        "paper_only": True,
+        "does_not_submit_orders": True,
+        "does_not_relax_submit_gates": True,
+    }
+
+    before = evaluate_auto_order_recovery_eligibility(
+        plan,
+        now=datetime(2026, 6, 12, 12, 0, tzinfo=timezone.utc),
+    )
+    after = evaluate_auto_order_recovery_eligibility(
+        plan,
+        now=datetime(2026, 6, 13, 1, 0, tzinfo=timezone.utc),
+    )
+
+    assert before["active"] is True
+    assert before["eligible"] is False
+    assert before["reason"] == "gateway_budget_recovery_not_reached"
+    assert after["active"] is True
+    assert after["eligible"] is False
+    assert after["reason"] == "gateway_budget_evidence_refresh_required"
+
+
+def test_auto_order_recovery_eligibility_allows_only_targeted_no_submit_refresh() -> None:
+    result = evaluate_auto_order_recovery_eligibility(
+        {
+            "status": "targeted_frontier_refresh_required",
+            "target_market": "US",
+            "target_portfolio_id": "US:watchlist",
+            "target_symbols": "SPLG",
+            "target_submit_quality_status": "PASS",
+            "gateway_refresh_portfolio_limit": 1,
+            "estimated_gateway_refresh_count": 1,
+            "request_policy": "single_highest_quality_frontier_only",
+            "paper_only": True,
+            "does_not_submit_orders": True,
+            "does_not_relax_submit_gates": True,
+        },
+        now=datetime(2026, 6, 13, 1, 0, tzinfo=timezone.utc),
+    )
+
+    assert result["active"] is True
+    assert result["eligible"] is True
+    assert result["reason"] == "eligible_targeted_no_submit_refresh"
+    assert result["allowed_actions"] == [
+        "generate_investment_report",
+        "run_investment_execution_no_submit",
+    ]
+    assert result["submit_orders"] is False
+
+
+def test_auto_order_recovery_eligibility_rejects_unsafe_contract() -> None:
+    result = evaluate_auto_order_recovery_eligibility(
+        {
+            "status": "targeted_frontier_refresh_required",
+            "target_market": "US",
+            "target_portfolio_id": "US:watchlist",
+            "target_submit_quality_status": "PASS",
+            "gateway_refresh_portfolio_limit": 2,
+            "estimated_gateway_refresh_count": 2,
+            "paper_only": True,
+            "does_not_submit_orders": True,
+            "does_not_relax_submit_gates": True,
+        }
+    )
+
+    assert result["active"] is True
+    assert result["eligible"] is False
+    assert result["reason"] == "unsafe_recovery_contract"
 
 
 def test_auto_order_readiness_summary_includes_frequency_plan_from_watchlist_expansion() -> None:

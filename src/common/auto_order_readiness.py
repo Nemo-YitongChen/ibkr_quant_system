@@ -1504,6 +1504,83 @@ def build_auto_order_recovery_plan(
     }
 
 
+def evaluate_auto_order_recovery_eligibility(
+    recovery_plan: Mapping[str, Any] | None,
+    *,
+    now: datetime | None = None,
+) -> Dict[str, Any]:
+    """Evaluate whether one target-scoped paper recovery refresh may run."""
+    plan = dict(recovery_plan or {})
+    status = str(plan.get("status") or "").strip().lower()
+    target_market = _market(plan.get("target_market"))
+    target_portfolio_id = str(plan.get("target_portfolio_id") or "").strip()
+    target_quality = str(plan.get("target_submit_quality_status") or "").strip().upper()
+    recovery_at_text = str(plan.get("gateway_budget_projected_recovery_at") or "").strip()
+    recovery_at = parse_utc_datetime(recovery_at_text)
+    now_utc = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    recovery_time_reached = bool(recovery_at is None or now_utc >= recovery_at)
+    contract_safe = bool(
+        plan.get("paper_only", False)
+        and plan.get("does_not_submit_orders", False)
+        and plan.get("does_not_relax_submit_gates", False)
+        and _int(plan.get("gateway_refresh_portfolio_limit"), 0) <= 1
+        and _int(plan.get("estimated_gateway_refresh_count"), 0) <= 1
+    )
+    active_statuses = {
+        "gateway_restore_required",
+        "wait_gateway_budget",
+        "local_preflight_refresh_required",
+        "targeted_frontier_refresh_required",
+    }
+    active = status in active_statuses and bool(target_market and target_portfolio_id)
+    eligible = False
+    reason = "recovery_plan_not_active"
+    if status == "submit_review_ready":
+        reason = "submit_plan_ready_no_refresh"
+    elif not active:
+        reason = "recovery_target_missing" if status in active_statuses else "recovery_plan_not_active"
+    elif not contract_safe:
+        reason = "unsafe_recovery_contract"
+    elif target_quality != "PASS":
+        reason = "target_quality_not_pass"
+    elif status == "gateway_restore_required":
+        reason = "ibkr_gateway_unavailable"
+    elif status == "local_preflight_refresh_required":
+        reason = "local_preflight_refresh_required"
+    elif status == "wait_gateway_budget":
+        reason = (
+            "gateway_budget_evidence_refresh_required"
+            if recovery_time_reached
+            else "gateway_budget_recovery_not_reached"
+        )
+    elif status == "targeted_frontier_refresh_required":
+        eligible = True
+        reason = "eligible_targeted_no_submit_refresh"
+
+    return {
+        "active": bool(active),
+        "eligible": bool(eligible),
+        "reason": reason,
+        "status": status,
+        "target_market": target_market,
+        "target_portfolio_id": target_portfolio_id,
+        "target_symbols": str(plan.get("target_symbols") or ""),
+        "target_submit_quality_status": target_quality,
+        "gateway_budget_projected_recovery_at": recovery_at_text,
+        "gateway_budget_recovery_time_reached": bool(recovery_time_reached),
+        "gateway_refresh_portfolio_limit": _int(plan.get("gateway_refresh_portfolio_limit"), 0),
+        "request_policy": str(plan.get("request_policy") or ""),
+        "allowed_actions": (
+            ["generate_investment_report", "run_investment_execution_no_submit"]
+            if eligible
+            else []
+        ),
+        "paper_only": True,
+        "submit_orders": False,
+        "does_not_relax_submit_gates": True,
+    }
+
+
 def build_auto_order_readiness_summary(
     rows: Iterable[Mapping[str, Any]],
     *,

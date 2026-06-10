@@ -794,6 +794,12 @@ def test_auto_order_readiness_block_backfills_seed_metrics_for_legacy_frequency_
     assert block["metrics"]["recovery_plan_target_symbols"] == "SPLG"
     assert block["metrics"]["recovery_plan_gateway_refresh_portfolio_limit"] == 1
     assert block["metrics"]["recovery_plan_does_not_submit_orders"] == 1
+    assert block["metrics"]["recovery_eligibility_active"] == 1
+    assert block["metrics"]["recovery_eligibility_eligible"] == 0
+    assert block["metrics"]["recovery_eligibility_reason"] in {
+        "gateway_budget_recovery_not_reached",
+        "gateway_budget_evidence_refresh_required",
+    }
     assert block["rows"]["frequency_plan"]["seed_source_candidate_count"] == 4
     assert (
         block["rows"]["recovery_plan"]["gateway_budget_projected_recovery_at"]

@@ -12,6 +12,7 @@ from ..analysis.report import write_json
 from ..common.auto_order_readiness import (
     build_auto_order_readiness_summary,
     evaluate_auto_order_readiness,
+    evaluate_auto_order_recovery_eligibility,
     normalize_auto_order_readiness_policy,
 )
 from ..common.cli import build_cli_parser, emit_cli_summary
@@ -141,6 +142,7 @@ def _write_markdown(path: Path, payload: Dict[str, Any]) -> None:
     submit_plan = dict(summary.get("submit_plan") or {})
     frequency_plan = dict(summary.get("frequency_plan") or {})
     recovery_plan = dict(summary.get("recovery_plan") or {})
+    recovery_eligibility = dict(summary.get("recovery_eligibility") or {})
     frontier_candidates = [
         dict(row)
         for row in list(submit_plan.get("frontier_candidates") or [])
@@ -172,6 +174,8 @@ def _write_markdown(path: Path, payload: Dict[str, Any]) -> None:
             f"- Primary action: {recovery_plan.get('primary_action', '-')}",
             f"- Target: {recovery_plan.get('target_market', '-')}/{recovery_plan.get('target_portfolio_id', '-')}",
             f"- Request policy: {recovery_plan.get('request_policy', '-')}",
+            f"- Eligibility: {recovery_eligibility.get('eligible', False)} "
+            f"({recovery_eligibility.get('reason', '-')})",
             "",
             "| order | phase | action | market | portfolio | Gateway | condition |",
             "| ---: | --- | --- | --- | --- | --- | --- |",
@@ -349,6 +353,15 @@ def build_auto_order_readiness_payload(
         )
         for portfolio in _report_portfolios(cfg)
     ]
+    summary = build_auto_order_readiness_summary(
+        rows,
+        policy=policy,
+        watchlist_expansion_summary=watchlist_expansion_summary,
+    )
+    summary["recovery_eligibility"] = evaluate_auto_order_recovery_eligibility(
+        summary.get("recovery_plan"),
+        now=now,
+    )
     return {
         "generated_at": now.isoformat(),
         "schema_version": "2026Q2.auto_order_readiness.v1",
@@ -358,11 +371,7 @@ def build_auto_order_readiness_payload(
         "market_readiness_path": str(market_readiness_json_path),
         "watchlist_expansion_path": str(watchlist_expansion_json_path),
         "policy": policy,
-        "summary": build_auto_order_readiness_summary(
-            rows,
-            policy=policy,
-            watchlist_expansion_summary=watchlist_expansion_summary,
-        ),
+        "summary": summary,
         "rows": rows,
     }
 

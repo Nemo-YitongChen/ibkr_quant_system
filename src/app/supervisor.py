@@ -27,8 +27,10 @@ from ..common.adaptive_strategy import (
 )
 from ..common.auto_order_readiness import (
     build_auto_order_readiness_summary,
+    build_auto_order_recovery_plan,
     build_auto_order_submit_plan,
     evaluate_auto_order_readiness,
+    evaluate_auto_order_recovery_eligibility,
 )
 from ..common.ibkr_client_id import (
     IBKR_CLIENT_ID_OFFSET_ENV,
@@ -2930,6 +2932,78 @@ class Supervisor:
             policy=self._auto_order_readiness_policy(),
         )
 
+    def _auto_order_recovery_context(self, now: datetime) -> Dict[str, Any]:
+        if not self._auto_order_readiness_enabled():
+            return {
+                "plan": {},
+                "eligibility": {
+                    "active": False,
+                    "eligible": False,
+                    "reason": "auto_order_readiness_disabled",
+                },
+            }
+        rows = self._auto_order_readiness_rows()
+        submit_plan = build_auto_order_submit_plan(
+            rows,
+            policy=self._auto_order_readiness_policy(),
+        )
+        recovery_plan = build_auto_order_recovery_plan(rows, submit_plan=submit_plan)
+        return {
+            "plan": recovery_plan,
+            "eligibility": evaluate_auto_order_recovery_eligibility(recovery_plan, now=now),
+        }
+
+    def _auto_order_recovery_action_decision(
+        self,
+        item: Dict[str, Any],
+        report_market: str,
+        *,
+        action: str,
+        recovery_context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        context = dict(recovery_context or {})
+        eligibility = dict(context.get("eligibility") or {})
+        if not bool(eligibility.get("active", False)):
+            return {
+                "allowed": True,
+                "reason": "recovery_plan_not_active",
+                "force_no_submit": False,
+            }
+        target_market = resolve_market_code(str(eligibility.get("target_market") or ""))
+        target_portfolio_id = str(eligibility.get("target_portfolio_id") or "").strip()
+        current_portfolio_id = self._portfolio_id_for_item(item, report_market)
+        if not bool(eligibility.get("eligible", False)):
+            return {
+                "allowed": False,
+                "reason": f"auto_order_recovery:{eligibility.get('reason') or 'not_eligible'}",
+                "force_no_submit": False,
+                "target_market": target_market,
+                "target_portfolio_id": target_portfolio_id,
+            }
+        if resolve_market_code(report_market) != target_market or current_portfolio_id != target_portfolio_id:
+            return {
+                "allowed": False,
+                "reason": "auto_order_recovery:not_selected_frontier",
+                "force_no_submit": False,
+                "target_market": target_market,
+                "target_portfolio_id": target_portfolio_id,
+            }
+        if action == "opportunity":
+            return {
+                "allowed": False,
+                "reason": "auto_order_recovery:opportunity_suppressed",
+                "force_no_submit": False,
+                "target_market": target_market,
+                "target_portfolio_id": target_portfolio_id,
+            }
+        return {
+            "allowed": action in {"report", "execution"},
+            "reason": "auto_order_recovery:targeted_no_submit_refresh",
+            "force_no_submit": action == "execution",
+            "target_market": target_market,
+            "target_portfolio_id": target_portfolio_id,
+        }
+
     def _auto_order_readiness_dependency_paths(self) -> List[Path]:
         paths = [
             self._preflight_output_dir() / "supervisor_preflight_summary.json",
@@ -2985,6 +3059,10 @@ class Supervisor:
             rows,
             policy=policy,
             watchlist_expansion_summary=common.get("watchlist_expansion_summary"),
+        )
+        summary["recovery_eligibility"] = evaluate_auto_order_recovery_eligibility(
+            summary.get("recovery_plan"),
+            now=now,
         )
         signature_payload = {
             "schema_version": "2026Q2.auto_order_readiness.v1",
@@ -4247,11 +4325,26 @@ class Supervisor:
                 timeout_sec=float(item.get("timeout_sec", self.cfg.get("watchlist_timeout_sec", 180))),
             )
 
-    def _generate_reports(self, market: MarketRuntime, *, day_key: str, market_now: datetime) -> None:
+    def _generate_reports(
+        self,
+        market: MarketRuntime,
+        *,
+        day_key: str,
+        market_now: datetime,
+        recovery_context: Optional[Dict[str, Any]] = None,
+    ) -> None:
         for item in market.reports:
             report_market = resolve_market_code(str(item.get("market", market.market_code)))
             item["_local_timezone"] = market.local_timezone
             self._restore_report_state(item, report_market)
+            recovery_decision = self._auto_order_recovery_action_decision(
+                item,
+                report_market,
+                action="report",
+                recovery_context=recovery_context,
+            )
+            if not bool(recovery_decision.get("allowed", False)):
+                continue
             if not self._should_rerun_report_for_macro_change(
                 market,
                 item,
@@ -4774,6 +4867,15 @@ class Supervisor:
         try:
             now = now or datetime.now(self.tz)
             cycle_summary: List[Dict[str, Any]] = []
+            try:
+                recovery_context = self._auto_order_recovery_context(now)
+            except Exception as exc:
+                log.warning(
+                    "Auto-order recovery context unavailable; continuing with normal non-submit safeguards: %s: %s",
+                    type(exc).__name__,
+                    exc,
+                )
+                recovery_context = {}
 
             for idx, market in enumerate(self._ordered_markets(now), start=1):
                 market_now = self._market_now(now, market)
@@ -4810,6 +4912,16 @@ class Supervisor:
                         day_key=day_key,
                         market_now=market_now,
                     )
+                    if should_run:
+                        recovery_decision = self._auto_order_recovery_action_decision(
+                            item,
+                            report_market,
+                            action="report",
+                            recovery_context=recovery_context,
+                        )
+                        if not bool(recovery_decision.get("allowed", False)):
+                            should_run = False
+                            reason = str(recovery_decision.get("reason") or "auto_order_recovery:not_eligible")
                     slug = Path(str(item.get("watchlist_yaml", "") or report_market)).stem
                     if should_run:
                         has_due_reports = True
@@ -4854,7 +4966,12 @@ class Supervisor:
                         id(item): str(item.get("_last_successful_report_day", "") or "")
                         for item in market.reports
                     }
-                    self._generate_reports(market, day_key=day_key, market_now=market_now)
+                    self._generate_reports(
+                        market,
+                        day_key=day_key,
+                        market_now=market_now,
+                        recovery_context=recovery_context,
+                    )
                     for item in market.reports:
                         if str(item.get("_last_successful_report_day", "") or "") == day_key and report_days_before.get(id(item), "") != day_key:
                             market_summary["reports_run"] = int(market_summary["reports_run"]) + 1
@@ -4917,6 +5034,18 @@ class Supervisor:
                     report_market = resolve_market_code(str(item.get("market", market.market_code)))
                     item["_local_timezone"] = market.local_timezone
                     self._restore_report_state(item, report_market)
+                    recovery_decision = self._auto_order_recovery_action_decision(
+                        item,
+                        report_market,
+                        action="execution",
+                        recovery_context=recovery_context,
+                    )
+                    if not bool(recovery_decision.get("allowed", False)):
+                        self._add_reason(
+                            market_summary["execution_skip_reasons"],
+                            str(recovery_decision.get("reason") or "auto_order_recovery:not_eligible"),
+                        )
+                        continue
                     report_day = str(item.get("_last_successful_report_day", "") or "").strip()
                     if not report_day:
                         continue
@@ -4974,8 +5103,25 @@ class Supervisor:
                                 opp_reason,
                             )
                         else:
-                            skip_budget, budget_reason, budget_row = self._opportunity_gateway_budget_skip(report_market)
-                            if skip_budget:
+                            opportunity_recovery = self._auto_order_recovery_action_decision(
+                                item,
+                                report_market,
+                                action="opportunity",
+                                recovery_context=recovery_context,
+                            )
+                            if not bool(opportunity_recovery.get("allowed", False)):
+                                self._add_reason(
+                                    market_summary["opportunity_skip_reasons"],
+                                    str(
+                                        opportunity_recovery.get("reason")
+                                        or "auto_order_recovery:not_eligible"
+                                    ),
+                                )
+                            else:
+                                skip_budget, budget_reason, budget_row = self._opportunity_gateway_budget_skip(
+                                    report_market
+                                )
+                            if bool(opportunity_recovery.get("allowed", False)) and skip_budget:
                                 self._add_reason(market_summary["opportunity_skip_reasons"], budget_reason)
                                 log.info(
                                     "Skip opportunity before execution: market=%s watchlist=%s reason=%s top_tool=%s projected_recovery_at=%s",
@@ -4985,10 +5131,17 @@ class Supervisor:
                                     str(budget_row.get("top_tool") or ""),
                                     str(budget_row.get("projected_recovery_at") or ""),
                                 )
-                            elif self._run_investment_opportunity(market, item):
+                            elif bool(opportunity_recovery.get("allowed", False)) and self._run_investment_opportunity(
+                                market, item
+                            ):
                                 item["_last_opportunity_run_ts"] = now.timestamp()
                                 market_summary["opportunity_run"] = int(market_summary["opportunity_run"]) + 1
-                    if bool(item.get("submit_investment_execution", False)) and self._auto_order_readiness_enabled():
+                    recovery_force_no_submit = bool(recovery_decision.get("force_no_submit", False))
+                    if (
+                        bool(item.get("submit_investment_execution", False))
+                        and not recovery_force_no_submit
+                        and self._auto_order_readiness_enabled()
+                    ):
                         readiness = self._auto_order_readiness_for_item(item, report_market)
                         if not bool(readiness.get("ready", False)):
                             reason = str(readiness.get("primary_reason") or "not_ready")
@@ -5022,11 +5175,16 @@ class Supervisor:
                                 self._portfolio_id_for_item(item, report_market),
                             )
                             continue
-                    if self._run_investment_execution(market, item):
+                    execution_item = item
+                    if recovery_force_no_submit:
+                        execution_item = dict(item)
+                        execution_item["submit_investment_execution"] = False
+                    if self._run_investment_execution(market, execution_item):
                         item["_last_execution_for_report_day"] = report_day
                         market_summary["execution_run"] = int(market_summary["execution_run"]) + 1
                         market_summary["notable_actions"].append(
-                            f"execution:{Path(str(item['watchlist_yaml'])).stem}:{'submit' if bool(item.get('submit_investment_execution', False)) else 'dry_run'}"
+                            f"execution:{Path(str(item['watchlist_yaml'])).stem}:"
+                            f"{'submit' if bool(execution_item.get('submit_investment_execution', False)) else 'dry_run'}"
                         )
 
                     # Continue to guard checks in the same cycle if configured; no early continue.
@@ -5083,6 +5241,18 @@ class Supervisor:
                     report_market = resolve_market_code(str(item.get("market", market.market_code)))
                     item["_local_timezone"] = market.local_timezone
                     self._restore_report_state(item, report_market)
+                    recovery_decision = self._auto_order_recovery_action_decision(
+                        item,
+                        report_market,
+                        action="opportunity",
+                        recovery_context=recovery_context,
+                    )
+                    if not bool(recovery_decision.get("allowed", False)):
+                        self._add_reason(
+                            market_summary["opportunity_skip_reasons"],
+                            str(recovery_decision.get("reason") or "auto_order_recovery:not_eligible"),
+                        )
+                        continue
                     opportunity_start = str(item.get("opportunity_start", "") or "").strip()
                     opportunity_end = str(item.get("opportunity_end", "") or "").strip()
                     if not opportunity_start or not opportunity_end:

@@ -3,7 +3,10 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 from ..common.alert_classification import summarize_error_classes
-from ..common.auto_order_readiness import build_auto_order_recovery_plan
+from ..common.auto_order_readiness import (
+    build_auto_order_recovery_plan,
+    evaluate_auto_order_recovery_eligibility,
+)
 from ..common.dashboard_control_audit import summarize_evidence_action_audit_links
 from ..common.watchlist_expansion import WatchlistExpansionPolicy, selection_reason_summary, summarize_watchlist_expansion
 
@@ -298,6 +301,9 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
         rows,
         submit_plan=submit_plan,
     )
+    recovery_eligibility = _dict(
+        summary.get("recovery_eligibility")
+    ) or evaluate_auto_order_recovery_eligibility(recovery_plan)
     remediation_plan = _rows(summary.get("remediation_plan"), limit=20)
     frontier_candidates = _rows(submit_plan.get("frontier_candidates"), limit=20)
     top_frontier = dict(frontier_candidates[0]) if frontier_candidates else {}
@@ -389,6 +395,9 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "recovery_plan_does_not_submit_orders": int(
                 bool(recovery_plan.get("does_not_submit_orders", False))
             ),
+            "recovery_eligibility_active": int(bool(recovery_eligibility.get("active", False))),
+            "recovery_eligibility_eligible": int(bool(recovery_eligibility.get("eligible", False))),
+            "recovery_eligibility_reason": str(recovery_eligibility.get("reason") or ""),
             "candidate_count": _int(submit_plan.get("candidate_count")),
             "frontier_candidate_count": _int(submit_plan.get("frontier_candidate_count"))
             or len(frontier_candidates),
@@ -422,6 +431,7 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "remediation_plan": remediation_plan,
             "frequency_plan": frequency_plan,
             "recovery_plan": recovery_plan,
+            "recovery_eligibility": recovery_eligibility,
             "frontier_candidates": frontier_candidates,
             "portfolios": rows,
         },
