@@ -524,3 +524,15 @@
 - CLI readiness JSON/markdown 与 dashboard v2 使用同一 eligibility 字段，避免展示层和调度层结论不一致。
 - broker snapshot 与 risk guard 不受该恢复限流影响，避免为了减少请求而削弱账户一致性和保护性控制。
 - 本次没有修改或自动提升 watchlist symbol，也没有放宽 risk、edge、cost、liquidity、market-rule、Gateway budget 或 submit-quality gate。
+
+## 35. 2026-06-11 Recovery flow and watchlist resilience
+
+- 已停止 2026-06-08 启动、仍加载旧 schema 的 Supervisor，并用当前代码验证 recovery gate：report、opportunity、execution、submit 当前均未放行。
+- 本地 preflight 已刷新为 `29 PASS / 0 WARN / 0 FAIL`，`preflight_stale` 已从恢复步骤移除。
+- 当前目标仍是 `US:watchlist / SPLG`，submit quality 为 `PASS`；Gateway budget 预计恢复时间为 UTC `2026-06-13T23:59:59.999999+00:00`，即悉尼时间 2026-06-14 09:59:59。到时仍需先刷新 budget evidence，不能只凭时间自动下单。
+- `refresh_watchlist` 新增 last-known-good 保护：动态源全失败时不覆盖 resolved 文件；部分失败且候选集合异常收缩时也保留旧列表；正常刷新改为原子替换。
+- auto-order readiness 内容签名忽略连续变化的 age-hour 字段，避免 Supervisor 每 30 秒重写 readiness 并重复生成 dashboard；状态、blocker、依赖更新和 stale 门槛仍会触发刷新。
+- 运行态发现同一 scoped runtime 曾同时存在两个 Supervisor；现已增加 OS 级 `supervisor.lock`，重复实例会在启动任何 dashboard/Gateway/scheduler 工作前以非零状态退出。
+- 最新 broker snapshot 显示 US/HK 存在活动持仓，因此 risk guard 继续作为保护性路径运行；recovery gate 仅暂停 report、opportunity、execution 和 submit 等收益生成路径。
+- 验证结果：integration tier `115 passed`，恢复/锁定/watchlist 聚焦测试 `14 passed`，`pip check` 与 Python compile 均通过。
+- 本轮不自动加入 symbol，不放宽 risk、edge、cost、liquidity、market-rule、Gateway budget 或 submit-quality gate。

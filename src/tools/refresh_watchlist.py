@@ -3,11 +3,12 @@ from __future__ import annotations
 """Refresh auto-updated watchlists from public constituents pages."""
 
 import argparse
+import math
 import os
 import re
 import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List, Tuple
 
 import requests
 import yaml
@@ -45,16 +46,22 @@ def _source_config_value(path: Path) -> str:
 
 
 def _generated_at_value(out_path: Path, resolved_symbols: List[str]) -> str:
-    if out_path.exists():
-        try:
-            existing = yaml.safe_load(out_path.read_text(encoding="utf-8")) or {}
-        except Exception:
-            existing = {}
-        existing_symbols = [str(x).upper() for x in list(existing.get("symbols") or [])]
-        existing_generated_at = str(existing.get("generated_at") or "").strip()
-        if existing_generated_at and existing_symbols == [str(x).upper() for x in list(resolved_symbols or [])]:
-            return existing_generated_at
+    existing = _load_existing_watchlist(out_path)
+    existing_symbols = [str(x).upper() for x in list(existing.get("symbols") or [])]
+    existing_generated_at = str(existing.get("generated_at") or "").strip()
+    if existing_generated_at and existing_symbols == [str(x).upper() for x in list(resolved_symbols or [])]:
+        return existing_generated_at
     return time.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _load_existing_watchlist(out_path: Path) -> Dict[str, Any]:
+    if not out_path.exists():
+        return {}
+    try:
+        payload = yaml.safe_load(out_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {}
+    return dict(payload) if isinstance(payload, dict) else {}
 
 
 def load_yaml(path: str) -> Dict[str, Any]:
@@ -99,31 +106,87 @@ def dedupe_keep_order(xs: List[str]) -> List[str]:
     return out
 
 
-def main() -> None:
-    args = parse_args()
-    config_path = _resolve_path(args.config)
-    out_path = _resolve_path(args.out)
+def _preserve_existing_reason(
+    *,
+    existing_symbols: List[str],
+    resolved_symbols: List[str],
+    source_count: int,
+    source_success_count: int,
+    source_failure_count: int,
+    min_existing_retention_ratio: float,
+) -> str:
+    if not existing_symbols or source_count <= 0:
+        return ""
+    if source_success_count <= 0:
+        return "all_dynamic_sources_failed"
+    if source_failure_count <= 0:
+        return ""
+    minimum_count = max(1, int(math.ceil(len(existing_symbols) * min_existing_retention_ratio)))
+    if len(resolved_symbols) < minimum_count:
+        return (
+            f"partial_source_failure_shrink:{len(resolved_symbols)}"
+            f"<{minimum_count}:existing={len(existing_symbols)}"
+        )
+    return ""
+
+
+def refresh_watchlist(
+    config_path: Path,
+    out_path: Path,
+    *,
+    fetcher: Callable[[str], str] = fetch_html,
+) -> Tuple[Dict[str, Any], bool, str]:
     cfg = load_yaml(str(config_path))
 
     target_n = int(cfg.get("target_n", 100))
     manual_include = [str(x).upper() for x in (cfg.get("manual_include") or [])]
     sources = cfg.get("sources") or []
+    existing = _load_existing_watchlist(out_path)
+    existing_symbols = [str(x).upper() for x in list(existing.get("symbols") or []) if str(x).strip()]
 
     collected: List[str] = []
+    source_success_count = 0
+    source_failure_count = 0
     for src in sources:
         url = src.get("url")
         if not url:
             continue
         try:
-            html = fetch_html(url)
+            html = fetcher(url)
             syms = parse_hk_codes_from_html(html)
-            log.info(f"Fetched {len(syms)} symbols from {url}")
+            if not syms:
+                source_failure_count += 1
+                log.warning("source returned no symbols: %s", url)
+                continue
+            source_success_count += 1
+            log.info("Fetched %s symbols from %s", len(syms), url)
             collected.extend(syms)
         except Exception as e:
-            log.warning(f"fetch failed: {url} -> {type(e).__name__} {e}")
+            source_failure_count += 1
+            log.warning("fetch failed: %s -> %s %s", url, type(e).__name__, e)
 
     combined = dedupe_keep_order(manual_include + collected)
     resolved = combined[:target_n]
+    preserve_reason = _preserve_existing_reason(
+        existing_symbols=existing_symbols,
+        resolved_symbols=resolved,
+        source_count=len(sources),
+        source_success_count=source_success_count,
+        source_failure_count=source_failure_count,
+        min_existing_retention_ratio=max(
+            0.0,
+            min(1.0, float(cfg.get("min_existing_retention_ratio", 0.6) or 0.6)),
+        ),
+    )
+    if preserve_reason:
+        log.warning(
+            "Preserving last-known-good watchlist: path=%s reason=%s existing=%s candidate=%s",
+            out_path,
+            preserve_reason,
+            len(existing_symbols),
+            len(resolved),
+        )
+        return existing, False, preserve_reason
 
     out_doc = {
         "version": int(cfg.get("version", 1)),
@@ -134,13 +197,25 @@ def main() -> None:
         "symbols": resolved,
         "source_config": _source_config_value(config_path),
         "sources": sources,
+        "source_success_count": source_success_count,
+        "source_failure_count": source_failure_count,
     }
 
     os.makedirs(out_path.parent, exist_ok=True)
-    with out_path.open("w", encoding="utf-8") as f:
+    temp_path = out_path.with_name(f".{out_path.name}.{os.getpid()}.tmp")
+    with temp_path.open("w", encoding="utf-8") as f:
         yaml.safe_dump(out_doc, f, sort_keys=False, allow_unicode=True)
+    os.replace(temp_path, out_path)
 
-    log.info(f"Wrote {len(resolved)} symbols -> {out_path}")
+    log.info("Wrote %s symbols -> %s", len(resolved), out_path)
+    return out_doc, True, ""
+
+
+def main() -> None:
+    args = parse_args()
+    config_path = _resolve_path(args.config)
+    out_path = _resolve_path(args.out)
+    refresh_watchlist(config_path, out_path)
 
 
 if __name__ == "__main__":

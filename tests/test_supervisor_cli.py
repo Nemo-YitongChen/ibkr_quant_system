@@ -306,7 +306,15 @@ class SupervisorCliTests(unittest.TestCase):
             )
             supervisor = Supervisor(str(cfg_path))
             rows = [{"market": "US", "portfolio_id": "US:watchlist", "status": "READY", "ready": True}]
-            with patch.object(supervisor, "_auto_order_readiness_rows", return_value=rows):
+            with patch.object(
+                supervisor,
+                "_auto_order_readiness_rows",
+                return_value=rows,
+            ), patch.object(
+                supervisor,
+                "_auto_order_readiness_dependency_paths",
+                return_value=[],
+            ):
                 self.assertTrue(
                     supervisor._write_auto_order_readiness_summary(
                         datetime(2026, 5, 27, 4, 0, tzinfo=timezone.utc)
@@ -326,6 +334,71 @@ class SupervisorCliTests(unittest.TestCase):
             payload = json.loads((out_dir / "auto_order_readiness.json").read_text(encoding="utf-8"))
             self.assertEqual(payload["rewrite_reason"], "existing_artifact_stale")
             self.assertEqual(payload["generated_at"], "2026-05-28T05:01:00+00:00")
+
+    def test_write_auto_order_readiness_summary_ignores_continuous_age_drift(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = Path(tmp) / "supervisor.yaml"
+            out_dir = Path(tmp) / "reports_supervisor"
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        f'summary_out_dir: "{out_dir}"',
+                        "auto_order_readiness:",
+                        "  enabled: true",
+                        "  max_artifact_age_hours: 24",
+                        "markets:",
+                        '  - name: "us"',
+                        '    market: "US"',
+                        "    enabled: true",
+                        "    reports: []",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(cfg_path))
+            rows = [
+                {
+                    "market": "US",
+                    "portfolio_id": "US:watchlist",
+                    "status": "BLOCKED",
+                    "ready": False,
+                    "preflight_age_hours": 1.0,
+                    "weekly_review_age_hours": 12.0,
+                    "market_readiness_artifact_age_hours": 2.0,
+                    "offline_recovery_gap_hours": 3.0,
+                }
+            ]
+            with patch.object(
+                supervisor,
+                "_auto_order_readiness_rows",
+                return_value=rows,
+            ), patch.object(
+                supervisor,
+                "_auto_order_readiness_dependency_paths",
+                return_value=[],
+            ):
+                self.assertTrue(
+                    supervisor._write_auto_order_readiness_summary(
+                        datetime(2026, 6, 11, 10, 0, tzinfo=timezone.utc)
+                    )
+                )
+                rows[0].update(
+                    {
+                        "preflight_age_hours": 1.01,
+                        "weekly_review_age_hours": 12.01,
+                        "market_readiness_artifact_age_hours": 2.01,
+                        "offline_recovery_gap_hours": 3.01,
+                    }
+                )
+                self.assertFalse(
+                    supervisor._write_auto_order_readiness_summary(
+                        datetime(2026, 6, 11, 10, 1, tzinfo=timezone.utc)
+                    )
+                )
+
+            payload = json.loads((out_dir / "auto_order_readiness.json").read_text(encoding="utf-8"))
+            self.assertEqual(payload["rows"][0]["preflight_age_hours"], 1.0)
 
     def test_write_auto_order_readiness_summary_refreshes_when_dependency_is_newer(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -590,6 +663,35 @@ class SupervisorCliTests(unittest.TestCase):
         args = parse_args(["--config", "config/supervisor.yaml", "--once"])
         self.assertEqual(args.config, "config/supervisor.yaml")
         self.assertTrue(args.once)
+
+    def test_supervisor_instance_lock_rejects_duplicate_process_owner(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = Path(tmp) / "supervisor.yaml"
+            summary_dir = Path(tmp) / "reports_supervisor"
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        f'summary_out_dir: "{summary_dir}"',
+                        "markets: []",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            first = Supervisor(str(cfg_path))
+            second = Supervisor(str(cfg_path))
+
+            self.assertTrue(first._acquire_instance_lock())
+            try:
+                self.assertFalse(second._acquire_instance_lock())
+                owner = json.loads((summary_dir / "supervisor.lock").read_text(encoding="utf-8"))
+                self.assertEqual(owner["pid"], os.getpid())
+                self.assertEqual(owner["config_path"], str(cfg_path.resolve()))
+            finally:
+                first._release_instance_lock()
+
+            self.assertTrue(second._acquire_instance_lock())
+            second._release_instance_lock()
 
     def test_supervisor_signal_handler_interrupts_foreground_process(self):
         supervisor = Supervisor.__new__(Supervisor)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import fcntl
 import hashlib
 import os
 import signal
@@ -154,6 +155,12 @@ IBKR_GATEWAY_TASK_PREFIXES = (
     "short_safety_sync:",
     "label_investment_snapshots:",
 )
+_AUTO_ORDER_SIGNATURE_VOLATILE_FIELDS = {
+    "market_readiness_artifact_age_hours",
+    "offline_recovery_gap_hours",
+    "preflight_age_hours",
+    "weekly_review_age_hours",
+}
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
@@ -201,6 +208,18 @@ def _coerce_float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except Exception:
         return float(default)
+
+
+def _stable_auto_order_signature_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            str(key): _stable_auto_order_signature_value(item)
+            for key, item in value.items()
+            if str(key) not in _AUTO_ORDER_SIGNATURE_VOLATILE_FIELDS
+        }
+    if isinstance(value, list):
+        return [_stable_auto_order_signature_value(item) for item in value]
+    return value
 
 
 def _review_week_start_dt(text: str) -> datetime | None:
@@ -277,6 +296,10 @@ class MarketRuntime:
     last_short_safety_sync_attempt_ts: float = 0.0
 
 
+class SupervisorInstanceLockError(RuntimeError):
+    pass
+
+
 class Supervisor:
     def __init__(self, config_path: str = "config/supervisor.yaml"):
         self.config_path = config_path
@@ -313,6 +336,7 @@ class Supervisor:
         self._dashboard_control_last_action_ts = ""
         self._dashboard_control_last_error = ""
         self._dashboard_control_action_history: List[Dict[str, Any]] = []
+        self._instance_lock_handle: Any = None
         self._capture_dashboard_control_baselines()
         self._apply_dashboard_control_overrides()
 
@@ -332,6 +356,53 @@ class Supervisor:
         if scope is None:
             return (BASE_DIR / raw_dir).resolve()
         return resolve_scoped_runtime_path(BASE_DIR, raw_dir, scope)
+
+    def _instance_lock_path(self) -> Path:
+        configured = str(self.cfg.get("instance_lock_path", "") or "").strip()
+        if configured:
+            return _resolve_path(configured)
+        return self._summary_output_dir() / "supervisor.lock"
+
+    def _acquire_instance_lock(self) -> bool:
+        if self._instance_lock_handle is not None:
+            return True
+        lock_path = self._instance_lock_path()
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        handle = lock_path.open("a+", encoding="utf-8")
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            handle.seek(0)
+            owner = handle.read().strip()
+            handle.close()
+            log.error("Supervisor instance lock is already held: path=%s owner=%s", lock_path, owner or "unknown")
+            return False
+        handle.seek(0)
+        handle.truncate()
+        handle.write(
+            json.dumps(
+                {
+                    "pid": os.getpid(),
+                    "config_path": str(_resolve_path(self.config_path)),
+                    "started_at": datetime.now(timezone.utc).isoformat(),
+                },
+                ensure_ascii=False,
+            )
+        )
+        handle.flush()
+        self._instance_lock_handle = handle
+        log.info("Acquired Supervisor instance lock -> %s", lock_path)
+        return True
+
+    def _release_instance_lock(self) -> None:
+        handle = self._instance_lock_handle
+        if handle is None:
+            return
+        self._instance_lock_handle = None
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            handle.close()
 
     def _dashboard_db_path(self) -> Path:
         raw_path = str(self.cfg.get("dashboard_db", "audit.db") or "audit.db")
@@ -3064,7 +3135,7 @@ class Supervisor:
             summary.get("recovery_plan"),
             now=now,
         )
-        signature_payload = {
+        payload_fields = {
             "schema_version": "2026Q2.auto_order_readiness.v1",
             "config_path": str(_resolve_path(self.config_path)),
             "policy": policy,
@@ -3072,7 +3143,11 @@ class Supervisor:
             "rows": rows,
         }
         signature = hashlib.sha1(
-            json.dumps(signature_payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+            json.dumps(
+                _stable_auto_order_signature_value(payload_fields),
+                ensure_ascii=False,
+                sort_keys=True,
+            ).encode("utf-8")
         ).hexdigest()
         out_dir = self._summary_output_dir()
         json_path = out_dir / "auto_order_readiness.json"
@@ -3087,7 +3162,7 @@ class Supervisor:
         payload = {
             "generated_at": now.astimezone(timezone.utc).isoformat(),
             "rewrite_reason": rewrite_reason or "content_changed",
-            **signature_payload,
+            **payload_fields,
         }
         json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         self._last_auto_order_readiness_signature = signature
@@ -5364,17 +5439,23 @@ class Supervisor:
             self._cycle_running = False
 
     def run_once(self) -> None:
+        if not self._acquire_instance_lock():
+            raise SupervisorInstanceLockError(f"Supervisor already running for {self._instance_lock_path()}")
         log.info(
             "Supervisor single cycle starting: config=%s markets=%s",
             self.config_path,
             ",".join(market.market_code for market in self.markets if market.enabled) or "-",
         )
-        self.run_cycle()
-        self.trade_proc.stop()
-        log.info("Supervisor single cycle complete")
+        try:
+            self.run_cycle()
+            log.info("Supervisor single cycle complete")
+        finally:
+            self.trade_proc.stop()
+            self._release_instance_lock()
 
     def run_forever(self) -> None:
-        self._setup_signal_handlers()
+        if not self._acquire_instance_lock():
+            raise SupervisorInstanceLockError(f"Supervisor already running for {self._instance_lock_path()}")
         log.info(
             "Supervisor starting: config=%s markets=%s poll_sec=%s dashboard_control=%s; press Ctrl+C to stop",
             self.config_path,
@@ -5383,6 +5464,7 @@ class Supervisor:
             bool(self._dashboard_control_enabled()),
         )
         try:
+            self._setup_signal_handlers()
             self._start_dashboard_control_service()
             log.info(
                 "Supervisor loop started: config=%s markets=%s poll_sec=%s dashboard_control=%s url=%s; press Ctrl+C to stop",
@@ -5401,15 +5483,19 @@ class Supervisor:
         finally:
             self._stop_dashboard_control_service()
             self.trade_proc.stop()
+            self._release_instance_lock()
 
 
 def main(argv: Optional[List[str]] = None) -> None:
     args = parse_args(argv)
     supervisor = Supervisor(args.config)
-    if bool(args.once):
-        supervisor.run_once()
-        return
-    supervisor.run_forever()
+    try:
+        if bool(args.once):
+            supervisor.run_once()
+            return
+        supervisor.run_forever()
+    except SupervisorInstanceLockError:
+        raise SystemExit(2) from None
 
 
 if __name__ == "__main__":
