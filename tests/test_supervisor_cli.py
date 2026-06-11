@@ -2877,6 +2877,63 @@ class SupervisorCliTests(unittest.TestCase):
             mock_weekly.assert_called_once()
             self.assertTrue(bool(mock_weekly.call_args.kwargs.get("force", False)))
 
+    def test_supervisor_recovery_suppresses_labeling_but_keeps_weekly_review(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = Path(tmp) / "supervisor.yaml"
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        "run_investment_labeling: true",
+                        "run_investment_weekly_review: true",
+                        "poll_sec: 30",
+                        "markets: []",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(cfg_path))
+            recovery_context = {
+                "eligibility": {
+                    "active": True,
+                    "eligible": False,
+                    "reason": "gateway_budget_recovery_not_reached",
+                }
+            }
+            with patch.object(
+                supervisor,
+                "_auto_order_recovery_context",
+                return_value=recovery_context,
+            ), patch.object(
+                supervisor,
+                "_labeling_due",
+                return_value=(True, "due"),
+            ), patch.object(
+                supervisor,
+                "_run_investment_labeling",
+            ) as mock_labeling, patch.object(
+                supervisor,
+                "_run_investment_weekly_review",
+                return_value=False,
+            ) as mock_weekly, patch.object(
+                supervisor,
+                "_write_cycle_summary",
+                return_value=False,
+            ), patch.object(
+                supervisor,
+                "_write_auto_order_readiness_summary",
+                return_value=False,
+            ), patch.object(
+                supervisor,
+                "_write_dashboard_control_state",
+            ):
+                supervisor.run_cycle(datetime(2026, 6, 12, 8, 0, tzinfo=supervisor.tz))
+
+            mock_labeling.assert_not_called()
+            mock_weekly.assert_called_once()
+            self.assertFalse(bool(mock_weekly.call_args.kwargs.get("force", False)))
+            self.assertEqual(supervisor._last_labeling_recovery_skip_reason, "auto_order_recovery:due")
+
     def test_supervisor_reuses_broker_snapshot_for_same_market_account_cycle(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)

@@ -534,5 +534,6 @@
 - auto-order readiness 内容签名忽略连续变化的 age-hour 字段，避免 Supervisor 每 30 秒重写 readiness 并重复生成 dashboard；状态、blocker、依赖更新和 stale 门槛仍会触发刷新。
 - 运行态发现同一 scoped runtime 曾同时存在两个 Supervisor；现已增加 OS 级 `supervisor.lock`，重复实例会在启动任何 dashboard/Gateway/scheduler 工作前以非零状态退出。
 - 最新 broker snapshot 显示 US/HK 存在活动持仓，因此 risk guard 继续作为保护性路径运行；recovery gate 仅暂停 report、opportunity、execution 和 submit 等收益生成路径。
-- 验证结果：integration tier `115 passed`，恢复/锁定/watchlist 聚焦测试 `14 passed`，`pip check` 与 Python compile 均通过。
+- 运行态进一步发现 `label_investment_snapshots` 会在恢复期触发市场数据请求；现已随 active recovery 暂停，纯本地 weekly review 继续运行。
+- 验证结果：integration tier `115 passed`，恢复/锁定/watchlist 聚焦测试 `14 passed`，labeling recovery follow-up `5 passed`，`pip check` 与 Python compile 均通过。
 - 本轮不自动加入 symbol，不放宽 risk、edge、cost、liquidity、market-rule、Gateway budget 或 submit-quality gate。

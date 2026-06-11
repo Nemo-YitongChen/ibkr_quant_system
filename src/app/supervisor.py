@@ -322,6 +322,7 @@ class Supervisor:
         self._weekly_review_summary_cache_mtime_ns = -1
         self._weekly_review_summary_cache_size = -1
         self._weekly_review_summary_cache_payload: Dict[str, Any] = {}
+        self._last_labeling_recovery_skip_reason = ""
         self._cycle_running = False
         self._last_ibkr_gateway_task_start_monotonic = 0.0
         self._dashboard_control_lock = threading.Lock()
@@ -3024,6 +3025,11 @@ class Supervisor:
             "eligibility": evaluate_auto_order_recovery_eligibility(recovery_plan, now=now),
         }
 
+    @staticmethod
+    def _auto_order_recovery_suppresses_labeling(recovery_context: Dict[str, Any]) -> bool:
+        eligibility = dict((recovery_context or {}).get("eligibility") or {})
+        return bool(eligibility.get("active", False))
+
     def _auto_order_recovery_action_decision(
         self,
         item: Dict[str, Any],
@@ -5425,7 +5431,16 @@ class Supervisor:
             else:
                 self.trade_proc.stop()
                 self._active_market = None
-            labeling_ran = self._run_investment_labeling(now)
+            if self._auto_order_recovery_suppresses_labeling(recovery_context):
+                labeling_ran = False
+                labeling_due, labeling_reason = self._labeling_due(now)
+                skip_reason = f"auto_order_recovery:{labeling_reason}" if labeling_due else ""
+                if skip_reason and skip_reason != self._last_labeling_recovery_skip_reason:
+                    log.info("Skip investment labeling during auto-order recovery: reason=%s", skip_reason)
+                self._last_labeling_recovery_skip_reason = skip_reason
+            else:
+                self._last_labeling_recovery_skip_reason = ""
+                labeling_ran = self._run_investment_labeling(now)
             weekly_review_ran = self._run_investment_weekly_review(
                 now,
                 force=bool(labeling_ran and self._weekly_review_enabled()),

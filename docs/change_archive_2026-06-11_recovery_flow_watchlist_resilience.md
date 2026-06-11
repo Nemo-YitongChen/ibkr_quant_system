@@ -58,6 +58,9 @@ stable during network failures.
 - Broker snapshots show active US/HK positions, so risk guard remains exempt
   from recovery throttling. It is a protective request path, not a return
   generation path.
+- Snapshot outcome labeling is now paused while the recovery plan is active
+  because it can fan out into market-data requests. The local weekly review
+  remains enabled.
 - No risk, edge, cost, liquidity, market-rule, or submit-quality relaxation.
 - No automatic promotion of new stock or ETF symbols.
 - Existing local resolved HK watchlist edits remain outside this commit.
@@ -68,5 +71,6 @@ stable during network failures.
 - Integration tier: `115 passed, 558 deselected`.
 - Recovery, readiness, instance-lock, and watchlist focus tests:
   `14 passed, 107 deselected`.
+- Recovery labeling follow-up tests: `5 passed, 110 deselected`.
 - `python -m pip check`: no broken requirements.
 - Python compile and `git diff --check`: passed.
