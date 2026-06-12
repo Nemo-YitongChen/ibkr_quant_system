@@ -948,6 +948,45 @@ def test_auto_order_readiness_blocks_matching_gateway_budget_degraded() -> None:
     assert result["gateway_budget_projected_recovery_at"] == "2026-05-13T23:59:59.999999+00:00"
 
 
+def test_auto_order_readiness_allows_submit_when_only_research_budget_is_degraded() -> None:
+    result = evaluate_auto_order_readiness(
+        _portfolio(market="US", portfolio_id="US:watchlist"),
+        preflight_summary=_preflight(),
+        weekly_summary=_weekly(
+            ibkr_gateway_budget_rows=[
+                {
+                    "market": "US",
+                    "status": "degraded",
+                    "reason": "gateway_request_budget_exceeded",
+                    "weekly_gateway_request_budget": 2000,
+                    "gateway_request_count": 3062,
+                    "budget_usage_pct": 153.1,
+                    "submit_blocking": False,
+                    "execution_capacity_status": "ok",
+                    "execution_gateway_request_count": 4,
+                    "execution_reserve_weekly_requests": 300,
+                    "research_throttled": True,
+                    "research_recent_24h_request_count": 320,
+                    "research_daily_request_budget": 129,
+                    "short_window_gateway_request_count": 2,
+                    "short_window_request_limit": 50,
+                },
+            ],
+        ),
+        policy={"enabled": True},
+        now=NOW,
+    )
+
+    assert result["ready"] is True
+    assert result["status"] == WARNING_STATUS
+    assert "gateway_budget_degraded" not in result["hard_blocks"]
+    assert "gateway_budget_research_degraded" in result["warnings"]
+    assert result["gateway_budget_submit_blocking"] is False
+    assert result["gateway_execution_capacity_status"] == "ok"
+    assert result["gateway_research_throttled"] is True
+    assert result["offline_recovery_required"] is False
+
+
 def test_auto_order_readiness_summary_counts_rows() -> None:
     summary = build_auto_order_readiness_summary(
         [
@@ -1181,6 +1220,68 @@ def test_auto_order_recovery_eligibility_allows_only_targeted_no_submit_refresh(
         "run_investment_execution_no_submit",
     ]
     assert result["submit_orders"] is False
+
+
+def test_stale_frontier_uses_non_blocking_evidence_maintenance() -> None:
+    rows = [
+        {
+            "market": "US",
+            "portfolio_id": "US:watchlist",
+            "hard_blocks": ["market_readiness_not_ready"],
+        }
+    ]
+    submit_plan = {
+        "status": "BLOCKED",
+        "ready": False,
+        "frontier_candidates": [
+            {
+                "market": "US",
+                "portfolio_id": "US:watchlist",
+                "planned_order_symbols": "SPLG",
+                "submit_quality_status": "PASS",
+                "hard_blocks": ["market_readiness_not_ready"],
+            }
+        ],
+    }
+
+    plan = build_auto_order_recovery_plan(rows, submit_plan=submit_plan)
+    eligibility = evaluate_auto_order_recovery_eligibility(plan)
+
+    assert plan["status"] == "evidence_maintenance_required"
+    assert plan["primary_action"] == "refresh_frontier_evidence_no_submit"
+    assert plan["steps"][0]["phase"] == "evidence_maintenance"
+    assert eligibility["active"] is False
+    assert eligibility["eligible"] is False
+    assert eligibility["maintenance_active"] is True
+    assert eligibility["reason"] == "evidence_maintenance_scheduled"
+
+
+def test_unrelated_gateway_block_does_not_create_recovery_without_quality_target() -> None:
+    plan = build_auto_order_recovery_plan(
+        [
+            {
+                "market": "ASX",
+                "portfolio_id": "ASX:watchlist",
+                "hard_blocks": ["ibkr_gateway_unavailable"],
+            }
+        ],
+        submit_plan={
+            "status": "BLOCKED",
+            "ready": False,
+            "frontier_candidates": [
+                {
+                    "market": "US",
+                    "portfolio_id": "US:watchlist",
+                    "submit_quality_status": "BLOCKED",
+                    "hard_blocks": ["market_readiness_not_ready"],
+                }
+            ],
+        },
+    )
+
+    assert plan["status"] == "manual_review_required"
+    assert plan["target_portfolio_id"] == ""
+    assert plan["primary_action"] == "review_submit_frontier_and_candidate_evidence"
 
 
 def test_auto_order_recovery_eligibility_rejects_unsafe_contract() -> None:

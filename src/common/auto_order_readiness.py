@@ -30,6 +30,7 @@ _BLOCK_REASON_PRIORITY = {
 _WARNING_REASON_PRIORITY = {
     "preflight_warn": 100,
     "gateway_budget_warning": 110,
+    "gateway_budget_research_degraded": 115,
     "market_readiness_missing": 120,
     "market_readiness_artifact_health": 130,
     "strategy_suggestions_open": 140,
@@ -210,6 +211,15 @@ def _gateway_budget_status(weekly_summary: Mapping[str, Any] | None, portfolio: 
     return status
 
 
+def _gateway_budget_submit_blocking(row: Mapping[str, Any], status: str) -> bool:
+    normalized_status = _status(status)
+    if normalized_status not in {"fail", "failed", "error", "degraded"}:
+        return False
+    if "submit_blocking" not in row:
+        return True
+    return bool(row.get("submit_blocking", False))
+
+
 def _gateway_budget_detail(row: Mapping[str, Any], portfolio: Mapping[str, Any], status: str) -> str:
     reason = str(row.get("reason") or status).strip()
     budget = _int(row.get("weekly_gateway_request_budget"), 0)
@@ -219,6 +229,14 @@ def _gateway_budget_detail(row: Mapping[str, Any], portfolio: Mapping[str, Any],
     top_tool = str(row.get("top_tool") or "").strip()
     recovery_days = _int(row.get("projected_recovery_days"), 0)
     recovery_at = str(row.get("projected_recovery_at") or "").strip()
+    execution_count = _int(row.get("execution_gateway_request_count"), 0)
+    execution_reserve = _int(row.get("execution_reserve_weekly_requests"), 0)
+    research_recent = _int(row.get("research_recent_24h_request_count"), 0)
+    research_daily = _int(row.get("research_daily_request_budget"), 0)
+    short_count = _int(row.get("short_window_gateway_request_count"), 0)
+    short_execution_count = _int(row.get("short_window_execution_request_count"), 0)
+    short_limit = _int(row.get("short_window_request_limit"), 0)
+    short_execution_reserve = _int(row.get("short_window_execution_reserve"), 0)
     parts = [f"market={portfolio.get('market', '')}", f"reason={reason}"]
     if budget > 0 or gateway_count > 0:
         parts.append(f"requests={gateway_count}/{budget}")
@@ -231,6 +249,14 @@ def _gateway_budget_detail(row: Mapping[str, Any], portfolio: Mapping[str, Any],
         parts.append(f"projected_recovery_days={recovery_days}")
     if recovery_at:
         parts.append(f"projected_recovery_at={recovery_at}")
+    if execution_reserve > 0:
+        parts.append(f"execution={execution_count}/{execution_reserve}")
+    if research_daily > 0:
+        parts.append(f"research_24h={research_recent}/{research_daily}")
+    if short_limit > 0:
+        parts.append(f"short_window={short_count}/{short_limit}")
+    if short_execution_reserve > 0:
+        parts.append(f"short_execution={short_execution_count}/{short_execution_reserve}")
     return " ".join(parts)
 
 
@@ -238,15 +264,15 @@ def _gateway_budget_remediation(row: Mapping[str, Any], *, blocked: bool) -> str
     recovery_at = str(row.get("projected_recovery_at") or "").strip()
     top_tool = str(row.get("top_tool") or "").strip()
     top_kind = str(row.get("top_request_kind") or "").strip()
-    action = "Keep high-request scans disabled and avoid submit until the Gateway budget recovers."
+    action = "Keep high-request scans disabled and avoid submit until execution capacity recovers."
     if not blocked:
-        action = "Keep monitoring IBKR Gateway load before submit."
+        action = "Throttle research requests while preserving execution and protective request capacity."
     if top_tool or top_kind:
         action += f" Highest load: {top_tool or 'unknown_tool'} / {top_kind or 'unknown_kind'}."
     if recovery_at:
-        action += f" Re-run weekly review and auto-order readiness after {recovery_at}."
+        action += f" Re-check Gateway evidence after {recovery_at}."
     else:
-        action += " Re-run weekly review after the 7-day telemetry window rolls."
+        action += " Refresh the local Gateway budget artifact before the next scheduling cycle."
     return action
 
 
@@ -383,7 +409,7 @@ def _offline_recovery_state(
     gateway_reason = str(gateway_row.get("reason") or "").strip().lower()
     if gateway_reason == "stale_ibkr_request_telemetry":
         add("gateway_budget_stale_telemetry", "Refresh weekly review Gateway telemetry after reconnect.")
-    elif str(gateway_status or "").strip().lower() in {"fail", "failed", "error", "degraded"}:
+    elif _gateway_budget_submit_blocking(gateway_row, gateway_status):
         add("gateway_budget_degraded", "Let Gateway request budget recover before automated submit.")
 
     gap_values = [
@@ -800,9 +826,9 @@ def evaluate_auto_order_readiness(
 
     gateway_row = _gateway_budget_row(weekly, row)
     gateway_status = _gateway_budget_status(weekly, row)
-    if (
-        bool(normalized_policy.get("block_on_gateway_budget_degraded", True))
-        and gateway_status in {"fail", "failed", "error", "degraded"}
+    if bool(normalized_policy.get("block_on_gateway_budget_degraded", True)) and _gateway_budget_submit_blocking(
+        gateway_row,
+        gateway_status,
     ):
         hard_blocks.append("gateway_budget_degraded")
         hard_block_details.append(
@@ -811,6 +837,16 @@ def evaluate_auto_order_readiness(
                 "block",
                 _gateway_budget_detail(gateway_row, row, gateway_status),
                 _gateway_budget_remediation(gateway_row, blocked=True),
+            )
+        )
+    elif gateway_status in {"fail", "failed", "error", "degraded"}:
+        warnings.append("gateway_budget_research_degraded")
+        warning_details.append(
+            _block_detail(
+                "gateway_budget_research_degraded",
+                "warning",
+                _gateway_budget_detail(gateway_row, row, gateway_status),
+                _gateway_budget_remediation(gateway_row, blocked=False),
             )
         )
     elif gateway_status in {"warn", "warning"}:
@@ -967,6 +1003,26 @@ def evaluate_auto_order_readiness(
         "gateway_budget_request_count": _int(gateway_row.get("gateway_request_count"), 0),
         "gateway_budget_request_limit": _int(gateway_row.get("weekly_gateway_request_budget"), 0),
         "gateway_budget_usage_pct": _float(gateway_row.get("budget_usage_pct"), 0.0),
+        "gateway_budget_submit_blocking": _gateway_budget_submit_blocking(gateway_row, gateway_status),
+        "gateway_execution_capacity_status": str(gateway_row.get("execution_capacity_status") or ""),
+        "gateway_execution_request_count": _int(gateway_row.get("execution_gateway_request_count"), 0),
+        "gateway_execution_request_limit": _int(gateway_row.get("execution_reserve_weekly_requests"), 0),
+        "gateway_research_throttled": bool(gateway_row.get("research_throttled", False)),
+        "gateway_research_recent_24h_request_count": _int(
+            gateway_row.get("research_recent_24h_request_count"),
+            0,
+        ),
+        "gateway_research_daily_request_budget": _int(gateway_row.get("research_daily_request_budget"), 0),
+        "gateway_short_window_request_count": _int(gateway_row.get("short_window_gateway_request_count"), 0),
+        "gateway_short_window_request_limit": _int(gateway_row.get("short_window_request_limit"), 0),
+        "gateway_short_window_execution_request_count": _int(
+            gateway_row.get("short_window_execution_request_count"),
+            0,
+        ),
+        "gateway_short_window_execution_reserve": _int(
+            gateway_row.get("short_window_execution_reserve"),
+            0,
+        ),
         "gateway_budget_top_request_kind": str(gateway_row.get("top_request_kind") or ""),
         "gateway_budget_top_tool": str(gateway_row.get("top_tool") or ""),
         "gateway_budget_projected_recovery_at": str(gateway_row.get("projected_recovery_at") or ""),
@@ -1346,12 +1402,6 @@ def build_auto_order_recovery_plan(
             "does_not_submit_orders": True,
             "does_not_relax_submit_gates": True,
         }
-    all_hard_blocks = {
-        str(reason or "").strip()
-        for row in clean_rows
-        for reason in list(row.get("hard_blocks") or [])
-        if str(reason or "").strip()
-    }
     target_quality = str(top_frontier.get("submit_quality_status") or "").strip().upper()
     target_portfolio_id = str(top_frontier.get("portfolio_id") or "").strip()
     target_market = _market(top_frontier.get("market"))
@@ -1361,7 +1411,9 @@ def build_auto_order_recovery_plan(
         for reason in list(top_frontier.get("hard_blocks") or [])
         if str(reason or "").strip()
     }
-    operational_blocks = target_hard_blocks if actionable_target else all_hard_blocks
+    # Recovery is target-scoped. Aggregate blockers from unrelated portfolios must
+    # not create a global recovery mode when no quality-passing frontier exists.
+    operational_blocks = target_hard_blocks if actionable_target else set()
     recovery_rows = [
         row
         for row in clean_rows
@@ -1443,13 +1495,32 @@ def build_auto_order_recovery_plan(
             ),
         )
     if actionable_target:
+        recovering_operational_state = bool(
+            operational_blocks.intersection(
+                {
+                    "ibkr_gateway_unavailable",
+                    "gateway_budget_degraded",
+                    "preflight_missing",
+                    "preflight_failed",
+                    "preflight_stale",
+                }
+            )
+        )
         add_step(
-            "refresh_frontier_report_and_execution_no_submit",
-            phase="targeted_gateway_refresh",
+            (
+                "refresh_frontier_report_and_execution_no_submit"
+                if recovering_operational_state
+                else "refresh_frontier_evidence_no_submit"
+            ),
+            phase="targeted_gateway_refresh" if recovering_operational_state else "evidence_maintenance",
             requires_gateway=True,
             portfolio_id=target_portfolio_id,
             market=target_market,
-            condition="only after Gateway availability and request budget gates pass",
+            condition=(
+                "only after Gateway availability and request budget gates pass"
+                if recovering_operational_state
+                else "run target-scoped maintenance when execution capacity is available"
+            ),
         )
         add_step(
             "rebuild_market_readiness_auto_order_readiness_and_dashboard",
@@ -1477,8 +1548,8 @@ def build_auto_order_recovery_plan(
         status = "local_preflight_refresh_required"
         primary_action = "refresh_supervisor_preflight"
     elif actionable_target:
-        status = "targeted_frontier_refresh_required"
-        primary_action = "refresh_frontier_report_and_execution_no_submit"
+        status = "evidence_maintenance_required"
+        primary_action = "refresh_frontier_evidence_no_submit"
     else:
         status = "manual_review_required"
         primary_action = "review_submit_frontier_and_candidate_evidence"
@@ -1492,7 +1563,11 @@ def build_auto_order_recovery_plan(
         "target_submit_quality_status": target_quality,
         "target_net_edge_bps": _float(top_frontier.get("submit_quality_min_net_edge_bps"), 0.0),
         "target_edge_margin_bps": _float(top_frontier.get("submit_quality_min_edge_margin_bps"), 0.0),
-        "gateway_budget_projected_recovery_at": sorted_recovery_times[-1] if sorted_recovery_times else "",
+        "gateway_budget_projected_recovery_at": (
+            sorted_recovery_times[-1]
+            if "gateway_budget_degraded" in operational_blocks and sorted_recovery_times
+            else ""
+        ),
         "gateway_refresh_portfolio_limit": 1 if actionable_target else 0,
         "estimated_gateway_refresh_count": 1 if actionable_target else 0,
         "request_policy": "single_highest_quality_frontier_only",
@@ -1532,11 +1607,25 @@ def evaluate_auto_order_recovery_eligibility(
         "local_preflight_refresh_required",
         "targeted_frontier_refresh_required",
     }
+    maintenance_status = status == "evidence_maintenance_required"
+    maintenance_eligible = bool(
+        maintenance_status
+        and target_market
+        and target_portfolio_id
+        and contract_safe
+        and target_quality == "PASS"
+    )
     active = status in active_statuses and bool(target_market and target_portfolio_id)
     eligible = False
     reason = "recovery_plan_not_active"
     if status == "submit_review_ready":
         reason = "submit_plan_ready_no_refresh"
+    elif maintenance_status:
+        reason = (
+            "evidence_maintenance_scheduled"
+            if maintenance_eligible
+            else "unsafe_evidence_maintenance_contract"
+        )
     elif not active:
         reason = "recovery_target_missing" if status in active_statuses else "recovery_plan_not_active"
     elif not contract_safe:
@@ -1560,6 +1649,7 @@ def evaluate_auto_order_recovery_eligibility(
     return {
         "active": bool(active),
         "eligible": bool(eligible),
+        "maintenance_active": bool(maintenance_eligible),
         "reason": reason,
         "status": status,
         "target_market": target_market,
@@ -1572,7 +1662,7 @@ def evaluate_auto_order_recovery_eligibility(
         "request_policy": str(plan.get("request_policy") or ""),
         "allowed_actions": (
             ["generate_investment_report", "run_investment_execution_no_submit"]
-            if eligible
+            if eligible or maintenance_eligible
             else []
         ),
         "paper_only": True,

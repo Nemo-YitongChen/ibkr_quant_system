@@ -49,6 +49,11 @@ from ..common.ibkr_client_id import (
     DEFAULT_CONNECT_MAX_ROUNDS,
     ibkr_task_client_id_offset,
 )
+from ..common.ibkr_gateway_budget import (
+    build_ibkr_gateway_budget_rows,
+    normalize_ibkr_gateway_budget_config,
+)
+from ..common.ibkr_telemetry import infer_ibkr_request_lane, summarize_ibkr_request_events
 from ..common.freshness import parse_utc_datetime
 from ..common.market_readiness import build_market_readiness_payload
 from ..common.markets import market_config_path, market_timezone_name, resolve_market_code
@@ -2552,6 +2557,96 @@ class Supervisor:
         market = str(parts[1] or "").upper().strip()
         return market if market not in {"DUE", "FORCED"} else ""
 
+    @staticmethod
+    def _ibkr_gateway_task_lane(name: str) -> str:
+        return infer_ibkr_request_lane(str(name or ""))
+
+    def _ibkr_gateway_live_budget_rows(self) -> List[Dict[str, Any]]:
+        now_ts = time.time()
+        interval_sec = max(
+            0.0,
+            float(self.cfg.get("ibkr_budget_live_refresh_interval_sec", 1.0) or 0.0),
+        )
+        cached_at = float(getattr(self, "_ibkr_live_budget_cache_ts", 0.0) or 0.0)
+        cached_rows = list(getattr(self, "_ibkr_live_budget_cache_rows", []) or [])
+        if cached_rows and interval_sec > 0 and (now_ts - cached_at) < interval_sec:
+            return [dict(row) for row in cached_rows]
+        now_utc = datetime.now(timezone.utc)
+        budget_cfg = normalize_ibkr_gateway_budget_config(
+            dict(self.cfg.get("ibkr_gateway_budgets") or {})
+        )
+        telemetry_directory = str(self.cfg.get("ibkr_telemetry_dir", "") or "").strip() or None
+        weekly_rows = summarize_ibkr_request_events(
+            window_start=now_utc - timedelta(days=7),
+            window_end=now_utc,
+            market_filter="ALL",
+            directory=telemetry_directory,
+        )
+        recent_24h_rows = summarize_ibkr_request_events(
+            window_start=now_utc - timedelta(hours=24),
+            window_end=now_utc,
+            market_filter="ALL",
+            directory=telemetry_directory,
+        )
+        recent_short_rows = summarize_ibkr_request_events(
+            window_start=now_utc
+            - timedelta(minutes=max(1, int(budget_cfg.get("short_window_minutes", 10) or 10))),
+            window_end=now_utc,
+            market_filter="ALL",
+            directory=telemetry_directory,
+        )
+        rows = build_ibkr_gateway_budget_rows(
+            weekly_rows,
+            config=budget_cfg,
+            generated_at=now_utc,
+            window_start=now_utc - timedelta(days=7),
+            window_end=now_utc,
+            recent_24h_rows=recent_24h_rows,
+            recent_short_rows=recent_short_rows,
+        )
+        self._ibkr_live_budget_cache_ts = now_ts
+        self._ibkr_live_budget_cache_rows = [dict(row) for row in rows]
+        return rows
+
+    def _ibkr_gateway_task_budget_decision(self, name: str) -> tuple[bool, str, Dict[str, Any]]:
+        if not self._is_ibkr_gateway_task(name):
+            return True, "", {}
+        budget_cfg = dict(self.cfg.get("ibkr_gateway_budgets") or {})
+        if not budget_cfg:
+            return True, "", {}
+        if not bool(budget_cfg.get("enabled", True)):
+            return True, "", {}
+        market = resolve_market_code(self._ibkr_gateway_task_market(name))
+        if not market:
+            return True, "", {}
+        try:
+            budget_rows = self._ibkr_gateway_live_budget_rows()
+        except Exception as exc:
+            log.warning(
+                "Live IBKR Gateway budget calculation failed; using latest artifact: %s: %s",
+                type(exc).__name__,
+                exc,
+            )
+            weekly = self._auto_order_weekly_summary_payload()
+            budget_rows = list(weekly.get("ibkr_gateway_budget_rows") or [])
+        row = next(
+            (
+                dict(raw or {})
+                for raw in budget_rows
+                if resolve_market_code(str(dict(raw or {}).get("market") or "")) == market
+            ),
+            {},
+        )
+        if not row:
+            return True, "", {}
+        lane = self._ibkr_gateway_task_lane(name)
+        if lane == "research" and bool(budget_cfg.get("suppress_research_when_throttled", True)):
+            if bool(row.get("research_throttled", False)):
+                return False, "gateway_research_throttled", row
+        if lane == "execution" and bool(row.get("submit_blocking", False)):
+            return False, str(row.get("execution_capacity_reason") or "gateway_execution_capacity_blocked"), row
+        return True, "", row
+
     def _space_ibkr_gateway_task(self, name: str) -> None:
         if not self._is_ibkr_gateway_task(name):
             return
@@ -2568,6 +2663,22 @@ class Supervisor:
         self._last_ibkr_gateway_task_start_monotonic = now_mono
 
     def _run_cmd(self, name: str, cmd: List[str], *, timeout_sec: float | int | None = None) -> bool:
+        allowed, budget_reason, budget_row = self._ibkr_gateway_task_budget_decision(name)
+        if not allowed:
+            log.warning(
+                "Skip IBKR Gateway task before launch: task=%s lane=%s reason=%s "
+                "research_24h=%s/%s execution=%s/%s short_execution=%s/%s",
+                name,
+                self._ibkr_gateway_task_lane(name),
+                budget_reason,
+                budget_row.get("research_recent_24h_request_count", 0),
+                budget_row.get("research_daily_request_budget", 0),
+                budget_row.get("execution_gateway_request_count", 0),
+                budget_row.get("execution_reserve_weekly_requests", 0),
+                budget_row.get("short_window_execution_request_count", 0),
+                budget_row.get("short_window_execution_reserve", 0),
+            )
+            return False
         self._space_ibkr_gateway_task(name)
         log.info(f"Running task {name}: {' '.join(cmd)}")
         timeout = None
@@ -2577,6 +2688,7 @@ class Supervisor:
         if self._is_ibkr_gateway_task(name):
             env = os.environ.copy()
             env["IBKR_TELEMETRY_TOOL"] = str(name)
+            env["IBKR_REQUEST_LANE"] = self._ibkr_gateway_task_lane(name)
             env[IBKR_CLIENT_ID_OFFSET_ENV] = str(ibkr_task_client_id_offset(name))
             try:
                 retry_span = int(self.cfg.get("ibkr_client_id_retry_span", DEFAULT_CLIENT_ID_RETRY_SPAN) or 1)
@@ -3101,10 +3213,16 @@ class Supervisor:
             execution_refreshed=execution_refreshed,
         )
 
-    def _refresh_auto_order_gateway_budget_evidence(self, now: datetime) -> bool:
+    def _refresh_ibkr_gateway_budget_evidence(self, now: datetime) -> bool:
         interval_min = max(
             1,
-            int(self.cfg.get("auto_order_recovery_budget_refresh_interval_min", 30) or 30),
+            int(
+                self.cfg.get(
+                    "ibkr_gateway_budget_artifact_refresh_interval_min",
+                    self.cfg.get("auto_order_recovery_budget_refresh_interval_min", 30),
+                )
+                or 30
+            ),
         )
         now_ts = now.timestamp()
         if (
@@ -3132,6 +3250,9 @@ class Supervisor:
             self._weekly_review_summary_cache_mtime_ns = -1
             self._weekly_review_summary_cache_size = -1
         return ok
+
+    def _refresh_auto_order_gateway_budget_evidence(self, now: datetime) -> bool:
+        return self._refresh_ibkr_gateway_budget_evidence(now)
 
     def _prepare_auto_order_recovery_context(
         self,
@@ -3217,6 +3338,38 @@ class Supervisor:
         context = dict(recovery_context or {})
         eligibility = dict(context.get("eligibility") or {})
         checkpoint = dict(context.get("checkpoint") or {})
+        if bool(eligibility.get("maintenance_active", False)):
+            target_market = resolve_market_code(str(eligibility.get("target_market") or ""))
+            target_portfolio_id = str(eligibility.get("target_portfolio_id") or "").strip()
+            current_portfolio_id = self._portfolio_id_for_item(item, report_market)
+            is_target = bool(
+                resolve_market_code(report_market) == target_market
+                and current_portfolio_id == target_portfolio_id
+            )
+            if not is_target:
+                return {
+                    "allowed": True,
+                    "reason": "evidence_maintenance_non_target_normal_flow",
+                    "force_no_submit": False,
+                    "force_run": False,
+                }
+            if action == "opportunity":
+                return {
+                    "allowed": False,
+                    "reason": "evidence_maintenance:target_opportunity_suppressed",
+                    "force_no_submit": False,
+                    "force_run": False,
+                    "target_market": target_market,
+                    "target_portfolio_id": target_portfolio_id,
+                }
+            return {
+                "allowed": action in {"report", "execution"},
+                "reason": "evidence_maintenance:targeted_refresh",
+                "force_no_submit": action == "execution",
+                "force_run": action in {"report", "execution"},
+                "target_market": target_market,
+                "target_portfolio_id": target_portfolio_id,
+            }
         if not bool(eligibility.get("active", False)):
             return {
                 "allowed": True,
@@ -3403,12 +3556,16 @@ class Supervisor:
             for value in list(raw_statuses or [])
             if str(value or "").strip()
         } or {"degraded"}
-        weekly = self._weekly_review_summary_payload()
+        weekly = self._auto_order_weekly_summary_payload()
         market_code = resolve_market_code(report_market)
         for raw in list(weekly.get("ibkr_gateway_budget_rows") or []):
             row = dict(raw or {})
             if resolve_market_code(str(row.get("market") or "")) != market_code:
                 continue
+            if "research_throttled" in row:
+                if bool(row.get("research_throttled", False)):
+                    return True, "gateway_research_throttled", row
+                return False, "", row
             status = str(row.get("status") or "ok").strip().lower()
             if status in suppress_statuses:
                 return True, f"gateway_budget_{status}", row
@@ -5180,6 +5337,9 @@ class Supervisor:
         try:
             now = now or datetime.now(self.tz)
             cycle_summary: List[Dict[str, Any]] = []
+            budget_cfg = dict(self.cfg.get("ibkr_gateway_budgets") or {})
+            if budget_cfg and bool(budget_cfg.get("enabled", True)):
+                self._refresh_ibkr_gateway_budget_evidence(now)
             try:
                 recovery_context = self._auto_order_recovery_context(now)
                 recovery_context = self._prepare_auto_order_recovery_context(now, recovery_context)

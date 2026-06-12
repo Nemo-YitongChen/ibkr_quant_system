@@ -12,6 +12,8 @@ execution_timeout_sec: 300
 guard_timeout_sec: 240
 short_safety_timeout_sec: 300
 ibkr_task_min_gap_sec: 2.0
+ibkr_budget_live_refresh_interval_sec: 1.0
+ibkr_gateway_budget_artifact_refresh_interval_min: 5
 ibkr_client_id_retry_span: 1
 ibkr_connect_max_rounds: 3
 ibkr_gateway_budgets:
@@ -20,6 +22,14 @@ ibkr_gateway_budgets:
   stale_telemetry_warning_hours: 72
   over_budget_degraded_ratio: 1.5
   missing_telemetry_status: "warning"
+  execution_reserve_ratio: 0.15
+  protective_reserve_ratio: 0.40
+  minimum_execution_reserve_requests: 50
+  research_daily_burst_ratio: 1.0
+  short_window_minutes: 10
+  short_window_request_limit: 50
+  short_window_execution_reserve: 10
+  suppress_research_when_throttled: true
   suppress_opportunity_when_degraded: true
   suppress_opportunity_statuses: ["degraded"]
   markets:

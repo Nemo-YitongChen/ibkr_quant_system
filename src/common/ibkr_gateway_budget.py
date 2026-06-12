@@ -8,6 +8,7 @@ from typing import Any, Dict, Iterable, List
 import yaml
 
 from .freshness import age_hours_from_timestamp, parse_utc_datetime
+from .ibkr_telemetry import infer_ibkr_request_lane
 
 
 DEFAULT_IBKR_GATEWAY_BUDGET_CONFIG: Dict[str, Any] = {
@@ -16,13 +17,22 @@ DEFAULT_IBKR_GATEWAY_BUDGET_CONFIG: Dict[str, Any] = {
     "stale_telemetry_warning_hours": 72,
     "over_budget_degraded_ratio": 1.5,
     "missing_telemetry_status": "warning",
+    "execution_reserve_ratio": 0.15,
+    "protective_reserve_ratio": 0.40,
+    "minimum_execution_reserve_requests": 50,
+    "research_daily_burst_ratio": 1.0,
+    "short_window_minutes": 10,
+    "short_window_request_limit": 50,
+    "short_window_execution_reserve": 10,
     "markets": {},
 }
 
 
 def _safe_int(value: Any, default: int = 0) -> int:
+    if value is None or str(value).strip() == "":
+        return int(default)
     try:
-        return int(float(value or 0))
+        return int(float(value))
     except Exception:
         return int(default)
 
@@ -94,6 +104,28 @@ def normalize_ibkr_gateway_budget_config(raw: Dict[str, Any] | None) -> Dict[str
         1.0,
         _safe_float(cfg.get("over_budget_degraded_ratio"), 1.5),
     )
+    cfg["execution_reserve_ratio"] = min(
+        0.5,
+        max(0.0, _safe_float(cfg.get("execution_reserve_ratio"), 0.15)),
+    )
+    cfg["protective_reserve_ratio"] = min(
+        0.8,
+        max(0.0, _safe_float(cfg.get("protective_reserve_ratio"), 0.40)),
+    )
+    cfg["minimum_execution_reserve_requests"] = max(
+        1,
+        _safe_int(cfg.get("minimum_execution_reserve_requests"), 50),
+    )
+    cfg["research_daily_burst_ratio"] = max(
+        0.1,
+        _safe_float(cfg.get("research_daily_burst_ratio"), 1.0),
+    )
+    cfg["short_window_minutes"] = max(1, _safe_int(cfg.get("short_window_minutes"), 10))
+    cfg["short_window_request_limit"] = max(1, _safe_int(cfg.get("short_window_request_limit"), 50))
+    cfg["short_window_execution_reserve"] = max(
+        1,
+        _safe_int(cfg.get("short_window_execution_reserve"), 10),
+    )
     missing_status = str(cfg.get("missing_telemetry_status") or "warning").strip().lower()
     cfg["missing_telemetry_status"] = missing_status if missing_status in {"ok", "warning", "degraded"} else "warning"
     return cfg
@@ -124,6 +156,48 @@ def _market_budget(config: Dict[str, Any], market: str) -> int:
     )
 
 
+def _market_lane_budgets(config: Dict[str, Any], market: str, total_budget: int) -> Dict[str, int]:
+    market_cfg = dict(dict(config.get("markets") or {}).get(str(market or "").upper(), {}) or {})
+    execution_budget = min(
+        max(1, total_budget),
+        max(
+            1,
+            _safe_int(
+                market_cfg.get("execution_reserve_weekly_requests"),
+                max(
+                    _safe_int(config.get("minimum_execution_reserve_requests"), 50),
+                    int(round(total_budget * _safe_float(config.get("execution_reserve_ratio"), 0.15))),
+                ),
+            ),
+        ),
+    )
+    protective_budget = max(
+        0,
+        _safe_int(
+            market_cfg.get("protective_reserve_weekly_requests"),
+            int(round(total_budget * _safe_float(config.get("protective_reserve_ratio"), 0.40))),
+        ),
+    )
+    if execution_budget + protective_budget > total_budget:
+        protective_budget = max(0, total_budget - execution_budget)
+    research_budget = max(0, total_budget - execution_budget - protective_budget)
+    research_daily_budget = max(
+        1,
+        int(
+            ceil(
+                (research_budget / 7.0)
+                * _safe_float(config.get("research_daily_burst_ratio"), 1.0)
+            )
+        ),
+    )
+    return {
+        "execution": execution_budget,
+        "protective": protective_budget,
+        "research": research_budget,
+        "research_daily": research_daily_budget,
+    }
+
+
 def _group_request_rows(rows: Iterable[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     grouped: Dict[str, Dict[str, Any]] = {}
     for raw in rows:
@@ -138,6 +212,7 @@ def _group_request_rows(rows: Iterable[Dict[str, Any]]) -> Dict[str, Dict[str, A
                 "cache_hit_count": 0,
                 "by_request_kind": {},
                 "by_tool": {},
+                "by_request_lane": {},
                 "by_date_gateway": {},
                 "latest_event_ts": "",
             },
@@ -150,8 +225,14 @@ def _group_request_rows(rows: Iterable[Dict[str, Any]]) -> Dict[str, Dict[str, A
         bucket["cache_hit_count"] += cache_count
         kind = str(row.get("request_kind") or "unknown").lower().strip() or "unknown"
         tool = str(row.get("tool") or "unknown").strip() or "unknown"
+        lane = str(
+            row.get("request_lane")
+            or infer_ibkr_request_lane(tool, kind)
+            or "unknown"
+        ).lower().strip() or "unknown"
         bucket["by_request_kind"][kind] = int(bucket["by_request_kind"].get(kind, 0)) + gateway_count
         bucket["by_tool"][tool] = int(bucket["by_tool"].get(tool, 0)) + gateway_count
+        bucket["by_request_lane"][lane] = int(bucket["by_request_lane"].get(lane, 0)) + gateway_count
         request_date = _parse_date(row.get("date") or row.get("latest_event_ts"))
         if request_date is not None:
             date_key = request_date.isoformat()
@@ -222,6 +303,8 @@ def build_ibkr_gateway_budget_rows(
     generated_at: str | datetime,
     window_start: str | datetime = "",
     window_end: str | datetime = "",
+    recent_24h_rows: Iterable[Dict[str, Any]] | None = None,
+    recent_short_rows: Iterable[Dict[str, Any]] | None = None,
 ) -> List[Dict[str, Any]]:
     cfg = normalize_ibkr_gateway_budget_config(config)
     if not bool(cfg.get("enabled", True)):
@@ -243,6 +326,9 @@ def build_ibkr_gateway_budget_rows(
                 "telemetry_age_hours": 0.0,
                 "top_request_kind": "",
                 "top_tool": "",
+                "submit_blocking": False,
+                "execution_capacity_status": "disabled",
+                "research_throttled": False,
                 "generated_at": str(generated_at or ""),
                 "window_start": str(window_start or ""),
                 "window_end": str(window_end or ""),
@@ -251,6 +337,8 @@ def build_ibkr_gateway_budget_rows(
 
     generated_dt = _parse_ts(generated_at) or datetime.now(timezone.utc)
     grouped = _group_request_rows(request_summary_rows)
+    recent_24h_grouped = _group_request_rows(recent_24h_rows or [])
+    recent_short_grouped = _group_request_rows(recent_short_rows or [])
     markets = sorted(grouped.keys())
     if not markets:
         return [
@@ -274,6 +362,9 @@ def build_ibkr_gateway_budget_rows(
                 "telemetry_age_hours": 0.0,
                 "top_request_kind": "",
                 "top_tool": "",
+                "submit_blocking": False,
+                "execution_capacity_status": "warning",
+                "research_throttled": False,
                 "latest_event_ts": "",
                 "generated_at": generated_dt.isoformat(),
                 "window_start": str(window_start or ""),
@@ -290,6 +381,42 @@ def build_ibkr_gateway_budget_rows(
         cache_count = _safe_int(bucket.get("cache_hit_count"))
         event_count = _safe_int(bucket.get("event_count"))
         budget = _market_budget(cfg, market)
+        lane_budgets = _market_lane_budgets(cfg, market, budget)
+        lane_counts = dict(bucket.get("by_request_lane") or {})
+        recent_24h_counts = dict(
+            dict(recent_24h_grouped.get(market) or {}).get("by_request_lane") or {}
+        )
+        recent_short_bucket = dict(recent_short_grouped.get(market) or {})
+        recent_short_counts = dict(recent_short_bucket.get("by_request_lane") or {})
+        execution_count = _safe_int(lane_counts.get("execution"))
+        protective_count = _safe_int(lane_counts.get("protective"))
+        research_count = _safe_int(lane_counts.get("research"))
+        unknown_count = _safe_int(lane_counts.get("unknown"))
+        execution_capacity_used = execution_count + unknown_count
+        recent_research_count = _safe_int(recent_24h_counts.get("research"))
+        recent_short_total = _safe_int(recent_short_bucket.get("gateway_request_count"))
+        recent_short_research = _safe_int(recent_short_counts.get("research"))
+        recent_short_execution = _safe_int(recent_short_counts.get("execution")) + _safe_int(
+            recent_short_counts.get("unknown")
+        )
+        short_limit = _safe_int(cfg.get("short_window_request_limit"), 50)
+        short_execution_reserve = min(
+            short_limit,
+            _safe_int(cfg.get("short_window_execution_reserve"), 10),
+        )
+        short_research_limit = max(1, short_limit - short_execution_reserve)
+        execution_capacity_status = "ok"
+        execution_capacity_reason = "execution_reserve_available"
+        if execution_capacity_used >= lane_budgets["execution"]:
+            execution_capacity_status = "degraded"
+            execution_capacity_reason = "execution_weekly_reserve_exhausted"
+        elif recent_short_execution >= short_execution_reserve:
+            execution_capacity_status = "degraded"
+            execution_capacity_reason = "short_window_execution_reserve_exhausted"
+        research_throttled = bool(
+            recent_research_count >= lane_budgets["research_daily"]
+            or recent_short_research >= short_research_limit
+        )
         recovery = _gateway_budget_recovery_projection(
             gateway_count=gateway_count,
             budget=budget,
@@ -331,6 +458,24 @@ def build_ibkr_gateway_budget_rows(
                 "telemetry_age_hours": age_hours,
                 "top_request_kind": _top_key(dict(bucket.get("by_request_kind") or {})),
                 "top_tool": _top_key(dict(bucket.get("by_tool") or {})),
+                "research_gateway_request_count": int(research_count),
+                "protective_gateway_request_count": int(protective_count),
+                "execution_gateway_request_count": int(execution_count),
+                "unknown_gateway_request_count": int(unknown_count),
+                "execution_reserve_weekly_requests": int(lane_budgets["execution"]),
+                "protective_reserve_weekly_requests": int(lane_budgets["protective"]),
+                "research_weekly_request_budget": int(lane_budgets["research"]),
+                "research_recent_24h_request_count": int(recent_research_count),
+                "research_daily_request_budget": int(lane_budgets["research_daily"]),
+                "short_window_minutes": int(_safe_int(cfg.get("short_window_minutes"), 10)),
+                "short_window_gateway_request_count": int(recent_short_total),
+                "short_window_execution_request_count": int(recent_short_execution),
+                "short_window_request_limit": int(short_limit),
+                "short_window_execution_reserve": int(short_execution_reserve),
+                "execution_capacity_status": execution_capacity_status,
+                "execution_capacity_reason": execution_capacity_reason,
+                "submit_blocking": execution_capacity_status == "degraded",
+                "research_throttled": research_throttled,
                 "latest_event_ts": str(bucket.get("latest_event_ts") or ""),
                 "generated_at": generated_dt.isoformat(),
                 "window_start": str(window_start or ""),
@@ -356,11 +501,14 @@ def build_ibkr_gateway_budget_payload(
     over_budget_count = sum(1 for row in rows if str(row.get("reason") or "") == "gateway_request_budget_exceeded")
     stale_count = sum(1 for row in rows if str(row.get("reason") or "") == "stale_ibkr_request_telemetry")
     missing_count = sum(1 for row in rows if str(row.get("reason") or "").startswith("missing"))
+    submit_blocking_count = sum(1 for row in rows if bool(row.get("submit_blocking", False)))
+    research_throttled_count = sum(1 for row in rows if bool(row.get("research_throttled", False)))
     cache_hit_ratio = round(cache_count / event_count, 4) if event_count > 0 else 0.0
     max_usage = max((_safe_float(row.get("budget_usage_pct")) for row in rows), default=0.0)
     summary_text = (
         f"gateway_requests={gateway_count} cache_hits={cache_count} "
         f"cache_hit_ratio={cache_hit_ratio:.2f} over_budget={over_budget_count} "
+        f"submit_blocking={submit_blocking_count} research_throttled={research_throttled_count} "
         f"stale={stale_count} missing={missing_count}"
     )
     return {
@@ -378,6 +526,8 @@ def build_ibkr_gateway_budget_payload(
             "cache_hit_ratio": cache_hit_ratio,
             "max_budget_usage_pct": round(max_usage, 2),
             "over_budget_market_count": int(over_budget_count),
+            "submit_blocking_market_count": int(submit_blocking_count),
+            "research_throttled_market_count": int(research_throttled_count),
             "stale_telemetry_market_count": int(stale_count),
             "missing_telemetry_market_count": int(missing_count),
         },

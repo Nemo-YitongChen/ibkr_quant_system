@@ -78,6 +78,23 @@ def refresh_gateway_budget_artifacts(
         market_filter="ALL",
         directory=telemetry_directory,
     )
+    budget_config = load_ibkr_gateway_budget_config(
+        BASE_DIR,
+        supervisor_config_path=supervisor_config,
+    )
+    recent_24h_rows = summarize_ibkr_request_events(
+        window_start=window_end - timedelta(hours=24),
+        window_end=window_end,
+        market_filter="ALL",
+        directory=telemetry_directory,
+    )
+    recent_short_rows = summarize_ibkr_request_events(
+        window_start=window_end
+        - timedelta(minutes=max(1, int(budget_config.get("short_window_minutes", 10) or 10))),
+        window_end=window_end,
+        market_filter="ALL",
+        directory=telemetry_directory,
+    )
     request_payload = build_ibkr_request_summary_payload(
         generated_at=generated_at,
         week_label=week_label,
@@ -85,16 +102,14 @@ def refresh_gateway_budget_artifacts(
         window_end=window_end_text,
         rows=request_rows,
     )
-    budget_config = load_ibkr_gateway_budget_config(
-        BASE_DIR,
-        supervisor_config_path=supervisor_config,
-    )
     budget_rows = build_ibkr_gateway_budget_rows(
         request_rows,
         config=budget_config,
         generated_at=generated_at,
         window_start=window_start_text,
         window_end=window_end_text,
+        recent_24h_rows=recent_24h_rows,
+        recent_short_rows=recent_short_rows,
     )
     budget_payload = build_ibkr_gateway_budget_payload(
         generated_at=generated_at,

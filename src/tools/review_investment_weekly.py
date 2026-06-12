@@ -10,6 +10,7 @@ from typing import Any, Dict, List
 from ..analysis.investment_portfolio import InvestmentPaperConfig
 from ..common.cli import build_cli_parser, emit_cli_summary
 from ..common.dashboard_control_audit import read_dashboard_control_action_audit
+from ..common.freshness import parse_utc_datetime
 from ..common.ibkr_telemetry import (
     build_ibkr_request_summary_payload,
     summarize_ibkr_request_events,
@@ -1537,12 +1538,31 @@ def main(argv: List[str] | None = None) -> None:
         rows=ibkr_request_summary_rows,
     )
     ibkr_gateway_budget_config = load_ibkr_gateway_budget_config(BASE_DIR)
+    gateway_window_end = parse_utc_datetime(generated_at) or datetime.now(timezone.utc)
+    ibkr_request_recent_24h_rows = summarize_ibkr_request_events(
+        window_start=gateway_window_end - timedelta(hours=24),
+        window_end=gateway_window_end,
+        market_filter=market_filter or "ALL",
+    )
+    ibkr_request_recent_short_rows = summarize_ibkr_request_events(
+        window_start=gateway_window_end
+        - timedelta(
+            minutes=max(
+                1,
+                int(ibkr_gateway_budget_config.get("short_window_minutes", 10) or 10),
+            )
+        ),
+        window_end=gateway_window_end,
+        market_filter=market_filter or "ALL",
+    )
     ibkr_gateway_budget_rows = build_ibkr_gateway_budget_rows(
         ibkr_request_summary_rows,
         config=ibkr_gateway_budget_config,
         generated_at=generated_at,
         window_start=since_ts,
         window_end=window_end_ts,
+        recent_24h_rows=ibkr_request_recent_24h_rows,
+        recent_short_rows=ibkr_request_recent_short_rows,
     )
     ibkr_gateway_budget_payload = build_ibkr_gateway_budget_payload(
         generated_at=generated_at,

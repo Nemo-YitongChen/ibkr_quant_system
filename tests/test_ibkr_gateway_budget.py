@@ -128,6 +128,9 @@ def test_ibkr_gateway_budget_missing_telemetry_warns():
             "telemetry_age_hours": 0.0,
             "top_request_kind": "",
             "top_tool": "",
+            "submit_blocking": False,
+            "execution_capacity_status": "warning",
+            "research_throttled": False,
             "latest_event_ts": "",
             "generated_at": "2026-05-09T11:00:00+00:00",
             "window_start": "",
@@ -196,3 +199,130 @@ def test_ibkr_gateway_budget_projects_recovery_from_daily_distribution():
     assert us["projected_recovery_days"] == 2
     assert us["projected_recovery_at"] == "2026-05-10T23:59:59.999999+00:00"
     assert us["top_tool"] == "run_investment_opportunity:us:watchlist"
+
+
+def test_research_overage_does_not_consume_execution_reserve():
+    config = normalize_ibkr_gateway_budget_config(
+        {
+            "default_weekly_gateway_request_budget": 100,
+            "execution_reserve_ratio": 0.20,
+            "protective_reserve_ratio": 0.20,
+            "minimum_execution_reserve_requests": 10,
+            "short_window_request_limit": 50,
+            "short_window_execution_reserve": 10,
+        }
+    )
+    rows = build_ibkr_gateway_budget_rows(
+        [
+            {
+                "market": "US",
+                "tool": "run_investment_opportunity:us:watchlist",
+                "request_kind": "historical_daily",
+                "request_lane": "research",
+                "event_count": 160,
+                "gateway_request_count": 160,
+                "latest_event_ts": "2026-06-12T09:00:00+00:00",
+            },
+            {
+                "market": "US",
+                "tool": "run_investment_execution:us:watchlist",
+                "request_kind": "positions",
+                "request_lane": "execution",
+                "event_count": 2,
+                "gateway_request_count": 2,
+                "latest_event_ts": "2026-06-12T09:00:00+00:00",
+            },
+        ],
+        recent_24h_rows=[],
+        recent_short_rows=[],
+        config=config,
+        generated_at="2026-06-12T10:00:00+00:00",
+    )
+
+    us = rows[0]
+    assert us["status"] == "degraded"
+    assert us["execution_gateway_request_count"] == 2
+    assert us["execution_reserve_weekly_requests"] == 20
+    assert us["submit_blocking"] is False
+    assert us["research_throttled"] is False
+
+
+def test_short_window_research_usage_does_not_consume_execution_reserve():
+    config = normalize_ibkr_gateway_budget_config(
+        {
+            "default_weekly_gateway_request_budget": 100,
+            "short_window_request_limit": 10,
+            "short_window_execution_reserve": 2,
+        }
+    )
+    rows = build_ibkr_gateway_budget_rows(
+        [
+            {
+                "market": "US",
+                "tool": "run_investment_execution:us:watchlist",
+                "request_kind": "positions",
+                "request_lane": "execution",
+                "event_count": 1,
+                "gateway_request_count": 1,
+                "latest_event_ts": "2026-06-12T09:59:00+00:00",
+            }
+        ],
+        recent_short_rows=[
+            {
+                "market": "US",
+                "tool": "generate_investment_report:us:watchlist",
+                "request_kind": "historical_daily",
+                "request_lane": "research",
+                "event_count": 10,
+                "gateway_request_count": 10,
+                "latest_event_ts": "2026-06-12T09:59:00+00:00",
+            }
+        ],
+        config=config,
+        generated_at="2026-06-12T10:00:00+00:00",
+    )
+
+    us = rows[0]
+    assert us["submit_blocking"] is False
+    assert us["execution_capacity_reason"] == "execution_reserve_available"
+    assert us["research_throttled"] is True
+
+
+def test_short_window_execution_usage_blocks_when_its_own_reserve_is_exhausted():
+    config = normalize_ibkr_gateway_budget_config(
+        {
+            "default_weekly_gateway_request_budget": 100,
+            "short_window_request_limit": 10,
+            "short_window_execution_reserve": 2,
+        }
+    )
+    rows = build_ibkr_gateway_budget_rows(
+        [
+            {
+                "market": "US",
+                "tool": "run_investment_execution:us:watchlist",
+                "request_kind": "positions",
+                "request_lane": "execution",
+                "event_count": 1,
+                "gateway_request_count": 1,
+                "latest_event_ts": "2026-06-12T09:59:00+00:00",
+            }
+        ],
+        recent_short_rows=[
+            {
+                "market": "US",
+                "tool": "run_investment_execution:us:watchlist",
+                "request_kind": "positions",
+                "request_lane": "execution",
+                "event_count": 2,
+                "gateway_request_count": 2,
+                "latest_event_ts": "2026-06-12T09:59:00+00:00",
+            }
+        ],
+        config=config,
+        generated_at="2026-06-12T10:00:00+00:00",
+    )
+
+    us = rows[0]
+    assert us["submit_blocking"] is True
+    assert us["execution_capacity_reason"] == "short_window_execution_reserve_exhausted"

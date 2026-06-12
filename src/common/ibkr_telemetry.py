@@ -10,6 +10,38 @@ from typing import Any, Dict, Iterable, List
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_TELEMETRY_DIR = BASE_DIR / ".cache" / "ibkr_request_telemetry"
+REQUEST_LANE_EXECUTION = "execution"
+REQUEST_LANE_PROTECTIVE = "protective"
+REQUEST_LANE_RESEARCH = "research"
+REQUEST_LANE_UNKNOWN = "unknown"
+
+
+def infer_ibkr_request_lane(tool: str, request_kind: str = "") -> str:
+    tool_name = str(tool or "").strip().lower()
+    kind = str(request_kind or "").strip().lower()
+    if tool_name.startswith("run_investment_execution:"):
+        return REQUEST_LANE_EXECUTION
+    if tool_name.startswith(
+        (
+            "sync_investment_broker_snapshot:",
+            "run_investment_guard:",
+            "short_safety_sync:",
+        )
+    ):
+        return REQUEST_LANE_PROTECTIVE
+    if tool_name.startswith(
+        (
+            "generate_investment_report:",
+            "generate_trade_report:",
+            "run_investment_opportunity:",
+            "label_investment_snapshots:",
+            "probe_ibkr_history_access:",
+        )
+    ):
+        return REQUEST_LANE_RESEARCH
+    if kind in {"scanner", "historical_daily", "historical_5m", "market_data_snapshot"}:
+        return REQUEST_LANE_RESEARCH
+    return REQUEST_LANE_UNKNOWN
 
 
 def _truthy(value: str) -> bool:
@@ -46,6 +78,7 @@ def record_ibkr_request(
     status: str = "success",
     market: str = "",
     tool: str = "",
+    request_lane: str = "",
     symbol: str = "",
     actual_gateway_request: bool = True,
     quantity: int = 1,
@@ -57,12 +90,19 @@ def record_ibkr_request(
         return
     event_ts = (ts or datetime.now(timezone.utc)).astimezone(timezone.utc)
     out_dir = telemetry_dir(directory)
+    effective_tool = str(tool or os.environ.get("IBKR_TELEMETRY_TOOL", "") or "")
+    effective_lane = str(
+        request_lane
+        or os.environ.get("IBKR_REQUEST_LANE", "")
+        or infer_ibkr_request_lane(effective_tool, request_kind)
+    ).strip().lower()
     event = {
         "ts": event_ts.isoformat(),
         "request_kind": str(request_kind or "").strip().lower(),
         "status": str(status or "").strip().lower(),
         "market": str(market or os.environ.get("IBKR_TELEMETRY_MARKET", "") or "").upper(),
-        "tool": str(tool or os.environ.get("IBKR_TELEMETRY_TOOL", "") or ""),
+        "tool": effective_tool,
+        "request_lane": effective_lane,
         "symbol": str(symbol or "").upper(),
         "actual_gateway_request": bool(actual_gateway_request),
         "quantity": max(1, int(quantity or 1)),
@@ -123,8 +163,8 @@ def summarize_ibkr_request_events(
     directory: str | Path | None = None,
 ) -> List[Dict[str, Any]]:
     market_filter = str(market_filter or "").upper().strip()
-    buckets: Dict[tuple[str, str, str, str, str], Dict[str, Any]] = {}
-    symbols_by_key: Dict[tuple[str, str, str, str, str], set[str]] = defaultdict(set)
+    buckets: Dict[tuple[str, str, str, str, str, str], Dict[str, Any]] = {}
+    symbols_by_key: Dict[tuple[str, str, str, str, str, str], set[str]] = defaultdict(set)
     for event in load_ibkr_request_events(window_start=window_start, window_end=window_end, directory=directory):
         market = str(event.get("market") or "").upper().strip()
         if market_filter and market_filter != "ALL" and market != market_filter:
@@ -133,8 +173,12 @@ def summarize_ibkr_request_events(
         day = event_ts.date().isoformat() if event_ts is not None else ""
         tool = str(event.get("tool") or "")
         request_kind = str(event.get("request_kind") or "").lower().strip()
+        request_lane = str(
+            event.get("request_lane")
+            or infer_ibkr_request_lane(tool, request_kind)
+        ).lower().strip()
         status = str(event.get("status") or "").lower().strip()
-        key = (day, market, tool, request_kind, status)
+        key = (day, market, tool, request_kind, request_lane, status)
         row = buckets.setdefault(
             key,
             {
@@ -142,6 +186,7 @@ def summarize_ibkr_request_events(
                 "market": market,
                 "tool": tool,
                 "request_kind": request_kind,
+                "request_lane": request_lane,
                 "status": status,
                 "event_count": 0,
                 "gateway_request_count": 0,
@@ -172,6 +217,7 @@ def summarize_ibkr_request_events(
             str(row.get("market") or ""),
             str(row.get("tool") or ""),
             str(row.get("request_kind") or ""),
+            str(row.get("request_lane") or ""),
             str(row.get("status") or ""),
         )
         symbols = sorted(symbols_by_key.get(key, set()))
@@ -182,6 +228,7 @@ def summarize_ibkr_request_events(
         str(row.get("market") or ""),
         str(row.get("tool") or ""),
         str(row.get("request_kind") or ""),
+        str(row.get("request_lane") or ""),
         str(row.get("status") or ""),
     ))
     return rows
@@ -199,12 +246,21 @@ def build_ibkr_request_summary_payload(
     cache_total = sum(int(row.get("cache_hit_count") or 0) for row in rows)
     event_total = sum(int(row.get("event_count") or 0) for row in rows)
     by_kind: Dict[str, Dict[str, int]] = {}
+    by_lane: Dict[str, Dict[str, int]] = {}
     for row in rows:
         kind = str(row.get("request_kind") or "unknown")
         bucket = by_kind.setdefault(kind, {"event_count": 0, "gateway_request_count": 0, "cache_hit_count": 0})
         bucket["event_count"] += int(row.get("event_count") or 0)
         bucket["gateway_request_count"] += int(row.get("gateway_request_count") or 0)
         bucket["cache_hit_count"] += int(row.get("cache_hit_count") or 0)
+        lane = str(row.get("request_lane") or REQUEST_LANE_UNKNOWN)
+        lane_bucket = by_lane.setdefault(
+            lane,
+            {"event_count": 0, "gateway_request_count": 0, "cache_hit_count": 0},
+        )
+        lane_bucket["event_count"] += int(row.get("event_count") or 0)
+        lane_bucket["gateway_request_count"] += int(row.get("gateway_request_count") or 0)
+        lane_bucket["cache_hit_count"] += int(row.get("cache_hit_count") or 0)
     return {
         "generated_at": str(generated_at or ""),
         "week_label": str(week_label or ""),
@@ -216,6 +272,7 @@ def build_ibkr_request_summary_payload(
             "gateway_request_count": int(gateway_total),
             "cache_hit_count": int(cache_total),
             "by_request_kind": by_kind,
+            "by_request_lane": by_lane,
         },
         "rows": list(rows or []),
     }

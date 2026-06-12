@@ -807,6 +807,169 @@ class SupervisorCliTests(unittest.TestCase):
             self.assertEqual(reason, "")
             self.assertEqual(row, {})
 
+    def test_gateway_task_budget_decision_throttles_research_but_preserves_execution_and_protection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            weekly_dir = base / "reports_investment_weekly"
+            weekly_dir.mkdir(parents=True, exist_ok=True)
+            (weekly_dir / "weekly_ibkr_gateway_budget_status.json").write_text(
+                json.dumps(
+                    {
+                        "summary": {"status": "degraded"},
+                        "rows": [
+                            {
+                                "market": "US",
+                                "status": "degraded",
+                                "research_throttled": True,
+                                "submit_blocking": False,
+                                "execution_capacity_status": "ok",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            cfg_path = base / "supervisor.yaml"
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        f'dashboard_weekly_review_dir: "{weekly_dir}"',
+                        "ibkr_gateway_budgets:",
+                        "  enabled: true",
+                        "  suppress_research_when_throttled: true",
+                        "markets:",
+                        '  - name: "us"',
+                        '    market: "US"',
+                        "    enabled: true",
+                        "    reports: []",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(cfg_path))
+            live_rows = [
+                {
+                    "market": "US",
+                    "status": "degraded",
+                    "research_throttled": True,
+                    "submit_blocking": False,
+                    "execution_capacity_status": "ok",
+                }
+            ]
+            with patch.object(
+                supervisor,
+                "_ibkr_gateway_live_budget_rows",
+                return_value=live_rows,
+            ):
+                research = supervisor._ibkr_gateway_task_budget_decision(
+                    "run_investment_opportunity:US:watchlist"
+                )
+                execution = supervisor._ibkr_gateway_task_budget_decision(
+                    "run_investment_execution:US:watchlist"
+                )
+                protective = supervisor._ibkr_gateway_task_budget_decision(
+                    "run_investment_guard:US:watchlist"
+                )
+
+            self.assertFalse(research[0])
+            self.assertEqual(research[1], "gateway_research_throttled")
+            self.assertTrue(execution[0])
+            self.assertTrue(protective[0])
+
+    def test_gateway_task_lane_is_exported_to_subprocess(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = Path(tmp) / "supervisor.yaml"
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        "markets:",
+                        '  - name: "us"',
+                        '    market: "US"',
+                        "    enabled: true",
+                        "    reports: []",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(cfg_path))
+            completed = unittest.mock.Mock(returncode=0)
+            with (
+                patch.object(
+                    supervisor,
+                    "_ibkr_gateway_task_budget_decision",
+                    return_value=(True, "", {}),
+                ),
+                patch("src.app.supervisor.subprocess.run", return_value=completed) as run_mock,
+            ):
+                self.assertTrue(
+                    supervisor._run_cmd(
+                        "run_investment_execution:US:watchlist",
+                        ["python", "-c", "pass"],
+                    )
+                )
+
+            self.assertEqual(run_mock.call_args.kwargs["env"]["IBKR_REQUEST_LANE"], "execution")
+
+    def test_evidence_maintenance_forces_only_target_and_does_not_suppress_other_portfolios(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = Path(tmp) / "supervisor.yaml"
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        "markets:",
+                        '  - name: "us"',
+                        '    market: "US"',
+                        "    enabled: true",
+                        "    reports:",
+                        '      - kind: "investment"',
+                        '        watchlist_yaml: "config/watchlist.yaml"',
+                        '  - name: "hk"',
+                        '    market: "HK"',
+                        "    enabled: true",
+                        "    reports:",
+                        '      - kind: "investment"',
+                        '        watchlist_yaml: "config/hk_watchlist.yaml"',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(cfg_path))
+            us_item = supervisor.markets[0].reports[0]
+            hk_item = supervisor.markets[1].reports[0]
+            context = {
+                "eligibility": {
+                    "active": False,
+                    "eligible": False,
+                    "maintenance_active": True,
+                    "reason": "evidence_maintenance_scheduled",
+                    "target_market": "US",
+                    "target_portfolio_id": "US:watchlist",
+                }
+            }
+
+            target_execution = supervisor._auto_order_recovery_action_decision(
+                us_item,
+                "US",
+                action="execution",
+                recovery_context=context,
+            )
+            non_target_execution = supervisor._auto_order_recovery_action_decision(
+                hk_item,
+                "HK",
+                action="execution",
+                recovery_context=context,
+            )
+
+            self.assertTrue(target_execution["allowed"])
+            self.assertTrue(target_execution["force_run"])
+            self.assertTrue(target_execution["force_no_submit"])
+            self.assertTrue(non_target_execution["allowed"])
+            self.assertFalse(non_target_execution["force_run"])
+            self.assertFalse(non_target_execution["force_no_submit"])
+
     def test_managed_process_stop_clears_handle_after_graceful_shutdown(self):
         proc = unittest.mock.Mock()
         proc.poll.side_effect = [None]
