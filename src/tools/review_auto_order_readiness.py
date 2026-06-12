@@ -70,6 +70,27 @@ def _resolve(raw_path: str) -> Path:
     return resolve_repo_path(BASE_DIR, str(raw_path or ""))
 
 
+def _overlay_gateway_budget_evidence(
+    weekly_summary: Dict[str, Any],
+    gateway_budget_payload: Dict[str, Any],
+) -> Dict[str, Any]:
+    merged = dict(weekly_summary or {})
+    summary = dict((gateway_budget_payload or {}).get("summary") or {})
+    rows = [
+        dict(row)
+        for row in list((gateway_budget_payload or {}).get("rows") or [])
+        if isinstance(row, dict)
+    ]
+    if summary:
+        merged["ibkr_gateway_budget"] = summary
+    if rows:
+        merged["ibkr_gateway_budget_rows"] = rows
+    generated_at = str((gateway_budget_payload or {}).get("generated_at") or "").strip()
+    if generated_at:
+        merged["ibkr_gateway_budget_generated_at"] = generated_at
+    return merged
+
+
 def _report_portfolios(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     for market_cfg_raw in list(cfg.get("markets", []) or []):
@@ -332,6 +353,11 @@ def build_auto_order_readiness_payload(
     )
     preflight_summary = _load_json(preflight_path)
     weekly_summary = _load_json(weekly_path)
+    gateway_budget_path = weekly_path.parent / "weekly_ibkr_gateway_budget_status.json"
+    weekly_summary = _overlay_gateway_budget_evidence(
+        weekly_summary,
+        _load_json(gateway_budget_path),
+    )
     market_readiness_summary = _load_json(market_readiness_json_path)
     watchlist_expansion_summary = _load_json(watchlist_expansion_json_path)
     if not market_readiness_summary:
@@ -368,6 +394,7 @@ def build_auto_order_readiness_payload(
         "config_path": str(cfg_path),
         "preflight_summary_path": str(preflight_path),
         "weekly_summary_path": str(weekly_path),
+        "gateway_budget_path": str(gateway_budget_path),
         "market_readiness_path": str(market_readiness_json_path),
         "watchlist_expansion_path": str(watchlist_expansion_json_path),
         "policy": policy,

@@ -38,6 +38,9 @@ def test_remaining_cli_parse_args_accepts_explicit_argv() -> None:
     execution_args = run_investment_execution.parse_args(["--market", "HK", "--submit", "--account_profile_config", "config/account_profiles.yaml"])
     assert execution_args.submit is True
     assert execution_args.account_profile_config == "config/account_profiles.yaml"
+    assert run_investment_execution.parse_args(
+        ["--market", "US", "--recovery_evidence_only"]
+    ).recovery_evidence_only is True
     guard_args = run_investment_guard.parse_args(
         [
             "--market",

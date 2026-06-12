@@ -65,6 +65,10 @@ auto_order_readiness:
   block_on_strategy_auto_apply_violation: true
   block_on_degraded_strategy_followup: true
   warn_on_open_strategy_suggestions: true
+auto_order_recovery_budget_refresh_interval_min: 30
+auto_order_recovery_budget_refresh_timeout_sec: 60
+auto_order_recovery_budget_window_days: 7
+auto_order_recovery_target_retry_interval_min: 60
 dashboard_enabled: true
 dashboard_auto_open: true
 dashboard_timeout_sec: 120

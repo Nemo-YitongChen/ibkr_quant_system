@@ -24,6 +24,8 @@ from ..portfolio.investment_allocator import InvestmentExecutionConfig
 
 log = get_logger("tools.run_investment_execution")
 BASE_DIR = Path(__file__).resolve().parents[2]
+EXECUTION_PURPOSE_SCHEDULED = "SCHEDULED"
+EXECUTION_PURPOSE_RECOVERY_EVIDENCE = "RECOVERY_EVIDENCE"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -50,6 +52,12 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--watchlist_yaml", default="", help="Use the same watchlist stem as the report generator.")
     ap.add_argument("--portfolio_id", default="", help="Stable identifier for one investment execution portfolio.")
     ap.add_argument("--submit", action="store_true", default=False, help="Actually submit paper/live orders instead of only planning.")
+    ap.add_argument(
+        "--recovery_evidence_only",
+        action="store_true",
+        default=False,
+        help="Run a no-submit recovery evidence refresh that does not consume the normal scheduled execution slot.",
+    )
     ap.add_argument("--request_timeout_sec", type=float, default=10.0, help="IBKR request timeout in seconds.")
     return ap
 
@@ -125,6 +133,33 @@ def _load_json_dict(path: Path) -> Dict[str, Any]:
         return dict(data) if isinstance(data, dict) else {}
     except Exception:
         return {}
+
+
+def _stamp_execution_artifact_context(
+    report_dir: Path,
+    *,
+    recovery_evidence_only: bool,
+) -> None:
+    purpose = (
+        EXECUTION_PURPOSE_RECOVERY_EVIDENCE
+        if recovery_evidence_only
+        else EXECUTION_PURPOSE_SCHEDULED
+    )
+    context = {
+        "execution_purpose": purpose,
+        "recovery_evidence_only": bool(recovery_evidence_only),
+        "consumes_submit_slot": not bool(recovery_evidence_only),
+    }
+    for filename in (
+        "investment_execution_summary.json",
+        "investment_no_order_diagnostics.json",
+    ):
+        path = report_dir / filename
+        payload = _load_json_dict(path)
+        if not payload:
+            continue
+        payload.update(context)
+        write_json(str(path), payload)
 
 
 def _broker_context_from_existing_artifacts(report_dir: Path) -> Dict[str, float]:
@@ -344,7 +379,10 @@ def main(argv: list[str] | None = None) -> None:
     ibkr_cfg_path = str(market_config_path(BASE_DIR, market, args.ibkr_config or None))
     ibkr_cfg = _load_yaml(ibkr_cfg_path)
     ibkr_mode = str(ibkr_cfg.get("mode", "paper")).strip().lower()
-    if ibkr_mode != "paper" and not bool(args.submit):
+    submit_requested = bool(args.submit) and not bool(args.recovery_evidence_only)
+    if bool(args.submit) and bool(args.recovery_evidence_only):
+        log.warning("Ignoring --submit because --recovery_evidence_only is strictly no-submit.")
+    if ibkr_mode != "paper" and not submit_requested:
         log.warning("IBKR config mode=%s; running in plan-only mode", ibkr_cfg.get("mode"))
 
     paper_cfg_path = str(
@@ -400,8 +438,12 @@ def main(argv: list[str] | None = None) -> None:
             market=market,
             portfolio_id=portfolio_id,
             account_id=str(ibkr_cfg.get("account_id", "")),
-            submit_requested=bool(args.submit),
+            submit_requested=submit_requested,
             error=exc,
+        )
+        _stamp_execution_artifact_context(
+            report_dir,
+            recovery_evidence_only=bool(args.recovery_evidence_only),
         )
         summary_fields, artifact_fields = _cli_summary_payload(result, report_dir)
         emit_cli_summary(
@@ -424,9 +466,13 @@ def main(argv: list[str] | None = None) -> None:
             account_profiles=account_profiles,
         )
         try:
-            result = engine.run(report_dir=str(report_dir), submit=bool(args.submit))
+            result = engine.run(report_dir=str(report_dir), submit=submit_requested)
         except ValueError as e:
             raise SystemExit(str(e))
+        _stamp_execution_artifact_context(
+            report_dir,
+            recovery_evidence_only=bool(args.recovery_evidence_only),
+        )
         summary_fields, artifact_fields = _cli_summary_payload(result, report_dir)
         emit_cli_summary(
             command="ibkr-quant-execution",

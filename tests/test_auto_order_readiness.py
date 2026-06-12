@@ -16,10 +16,32 @@ from src.common.auto_order_readiness import (
     evaluate_auto_order_readiness,
     evaluate_auto_order_recovery_eligibility,
 )
-from src.tools.review_auto_order_readiness import build_auto_order_readiness_payload
+from src.tools.review_auto_order_readiness import (
+    _overlay_gateway_budget_evidence,
+    build_auto_order_readiness_payload,
+)
 
 
 NOW = datetime(2026, 5, 10, 12, 0, tzinfo=timezone.utc)
+
+
+def test_gateway_budget_artifact_overrides_stale_weekly_embedded_budget() -> None:
+    result = _overlay_gateway_budget_evidence(
+        {
+            "generated_at": "2026-06-10T00:00:00+00:00",
+            "ibkr_gateway_budget": {"status": "degraded"},
+            "ibkr_gateway_budget_rows": [{"market": "US", "status": "degraded"}],
+        },
+        {
+            "generated_at": "2026-06-12T00:00:00+00:00",
+            "summary": {"status": "ok"},
+            "rows": [{"market": "US", "status": "ok"}],
+        },
+    )
+
+    assert result["ibkr_gateway_budget"]["status"] == "ok"
+    assert result["ibkr_gateway_budget_rows"][0]["status"] == "ok"
+    assert result["ibkr_gateway_budget_generated_at"] == "2026-06-12T00:00:00+00:00"
 
 
 def _portfolio(**overrides):

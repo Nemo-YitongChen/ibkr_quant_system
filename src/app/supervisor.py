@@ -33,6 +33,14 @@ from ..common.auto_order_readiness import (
     evaluate_auto_order_readiness,
     evaluate_auto_order_recovery_eligibility,
 )
+from ..common.auto_order_recovery_state import (
+    build_pending_recovery_checkpoint,
+    load_recovery_checkpoint,
+    mark_recovery_checkpoint_attempt,
+    mark_recovery_checkpoint_complete,
+    recovery_checkpoint_context,
+    write_recovery_checkpoint,
+)
 from ..common.ibkr_client_id import (
     IBKR_CLIENT_ID_OFFSET_ENV,
     IBKR_CLIENT_ID_RETRY_SPAN_ENV,
@@ -323,6 +331,7 @@ class Supervisor:
         self._weekly_review_summary_cache_size = -1
         self._weekly_review_summary_cache_payload: Dict[str, Any] = {}
         self._last_labeling_recovery_skip_reason = ""
+        self._last_recovery_budget_refresh_attempt_ts = 0.0
         self._cycle_running = False
         self._last_ibkr_gateway_task_start_monotonic = 0.0
         self._dashboard_control_lock = threading.Lock()
@@ -3025,6 +3034,173 @@ class Supervisor:
             "eligibility": evaluate_auto_order_recovery_eligibility(recovery_plan, now=now),
         }
 
+    def _auto_order_recovery_checkpoint_path(self) -> Path:
+        return self._summary_output_dir() / "auto_order_recovery_checkpoint.json"
+
+    def _auto_order_recovery_target(
+        self,
+        *,
+        target_market: str,
+        target_portfolio_id: str,
+    ) -> tuple[MarketRuntime | None, Dict[str, Any] | None, str]:
+        expected_market = resolve_market_code(target_market)
+        expected_portfolio = str(target_portfolio_id or "").strip()
+        for market in self.markets:
+            for item in list(market.reports or []):
+                if str(item.get("kind", "investment") or "investment").strip().lower() != "investment":
+                    continue
+                report_market = resolve_market_code(str(item.get("market", market.market_code)))
+                if report_market != expected_market:
+                    continue
+                if self._portfolio_id_for_item(item, report_market) == expected_portfolio:
+                    return market, item, report_market
+        return None, None, expected_market
+
+    def _auto_order_recovery_checkpoint_context(
+        self,
+        checkpoint: Dict[str, Any],
+        *,
+        now: datetime,
+    ) -> Dict[str, Any]:
+        market, item, report_market = self._auto_order_recovery_target(
+            target_market=str(checkpoint.get("target_market") or ""),
+            target_portfolio_id=str(checkpoint.get("target_portfolio_id") or ""),
+        )
+        if market is None or item is None:
+            return recovery_checkpoint_context(
+                checkpoint,
+                now=now,
+                report_refreshed=False,
+                execution_refreshed=False,
+            )
+        started_at = parse_utc_datetime(checkpoint.get("started_at"))
+        report_mtime = _file_mtime_utc(self._report_marker_path(item, report_market))
+        execution_mtime = _file_mtime_utc(self._execution_marker_path(item, report_market))
+        report_refreshed = bool(started_at and report_mtime and report_mtime >= started_at)
+        execution_refreshed = bool(
+            report_refreshed
+            and started_at
+            and execution_mtime
+            and execution_mtime >= started_at
+            and execution_mtime >= report_mtime
+            and self._recovery_execution_evidence_valid(item, report_market)
+        )
+        if execution_refreshed:
+            completed = mark_recovery_checkpoint_complete(checkpoint, now=now)
+            write_recovery_checkpoint(self._auto_order_recovery_checkpoint_path(), completed)
+            log.info(
+                "Auto-order recovery checkpoint complete: market=%s portfolio=%s",
+                report_market,
+                str(checkpoint.get("target_portfolio_id") or ""),
+            )
+            return {}
+        return recovery_checkpoint_context(
+            checkpoint,
+            now=now,
+            report_refreshed=report_refreshed,
+            execution_refreshed=execution_refreshed,
+        )
+
+    def _refresh_auto_order_gateway_budget_evidence(self, now: datetime) -> bool:
+        interval_min = max(
+            1,
+            int(self.cfg.get("auto_order_recovery_budget_refresh_interval_min", 30) or 30),
+        )
+        now_ts = now.timestamp()
+        if (
+            self._last_recovery_budget_refresh_attempt_ts > 0
+            and (now_ts - self._last_recovery_budget_refresh_attempt_ts) < interval_min * 60
+        ):
+            return False
+        self._last_recovery_budget_refresh_attempt_ts = now_ts
+        ok = self._run_cmd(
+            "refresh_ibkr_gateway_budget:auto_recovery",
+            [
+                sys.executable,
+                "-m",
+                "src.tools.refresh_ibkr_gateway_budget",
+                "--out_dir",
+                str(self._weekly_review_output_dir()),
+                "--supervisor_config",
+                str(_resolve_path(self.config_path)),
+                "--days",
+                str(max(1, int(self.cfg.get("auto_order_recovery_budget_window_days", 7) or 7))),
+            ],
+            timeout_sec=float(self.cfg.get("auto_order_recovery_budget_refresh_timeout_sec", 60)),
+        )
+        if ok:
+            self._weekly_review_summary_cache_mtime_ns = -1
+            self._weekly_review_summary_cache_size = -1
+        return ok
+
+    def _prepare_auto_order_recovery_context(
+        self,
+        now: datetime,
+        recovery_context: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        checkpoint_path = self._auto_order_recovery_checkpoint_path()
+        checkpoint = load_recovery_checkpoint(checkpoint_path)
+        checkpoint_context = self._auto_order_recovery_checkpoint_context(checkpoint, now=now)
+        if checkpoint_context:
+            return checkpoint_context
+
+        eligibility = dict((recovery_context or {}).get("eligibility") or {})
+        if str(eligibility.get("reason") or "") != "gateway_budget_evidence_refresh_required":
+            return recovery_context
+        if not self._refresh_auto_order_gateway_budget_evidence(now):
+            return recovery_context
+
+        refreshed_context = self._auto_order_recovery_context(now)
+        refreshed_plan = dict(refreshed_context.get("plan") or {})
+        if str(refreshed_plan.get("status") or "") == "wait_gateway_budget":
+            return refreshed_context
+
+        source_plan = dict((recovery_context or {}).get("plan") or {})
+        checkpoint = build_pending_recovery_checkpoint(
+            source_plan,
+            now=now,
+            retry_interval_min=max(
+                1,
+                int(self.cfg.get("auto_order_recovery_target_retry_interval_min", 60) or 60),
+            ),
+        )
+        write_recovery_checkpoint(checkpoint_path, checkpoint)
+        log.info(
+            "Auto-order recovery checkpoint started: market=%s portfolio=%s",
+            str(checkpoint.get("target_market") or ""),
+            str(checkpoint.get("target_portfolio_id") or ""),
+        )
+        return self._auto_order_recovery_checkpoint_context(checkpoint, now=now)
+
+    def _mark_auto_order_recovery_attempt(
+        self,
+        recovery_context: Dict[str, Any],
+        *,
+        now: datetime,
+    ) -> None:
+        checkpoint = dict((recovery_context or {}).get("checkpoint") or {})
+        if not checkpoint:
+            return
+        attempted = mark_recovery_checkpoint_attempt(checkpoint, now=now)
+        write_recovery_checkpoint(self._auto_order_recovery_checkpoint_path(), attempted)
+
+    def _complete_auto_order_recovery_checkpoint(
+        self,
+        recovery_context: Dict[str, Any],
+        *,
+        now: datetime,
+    ) -> None:
+        checkpoint = dict((recovery_context or {}).get("checkpoint") or {})
+        if not checkpoint:
+            return
+        completed = mark_recovery_checkpoint_complete(checkpoint, now=now)
+        write_recovery_checkpoint(self._auto_order_recovery_checkpoint_path(), completed)
+        log.info(
+            "Auto-order recovery checkpoint complete after execution dry-run: market=%s portfolio=%s",
+            str(checkpoint.get("target_market") or ""),
+            str(checkpoint.get("target_portfolio_id") or ""),
+        )
+
     @staticmethod
     def _auto_order_recovery_suppresses_labeling(recovery_context: Dict[str, Any]) -> bool:
         eligibility = dict((recovery_context or {}).get("eligibility") or {})
@@ -3040,11 +3216,13 @@ class Supervisor:
     ) -> Dict[str, Any]:
         context = dict(recovery_context or {})
         eligibility = dict(context.get("eligibility") or {})
+        checkpoint = dict(context.get("checkpoint") or {})
         if not bool(eligibility.get("active", False)):
             return {
                 "allowed": True,
                 "reason": "recovery_plan_not_active",
                 "force_no_submit": False,
+                "force_run": False,
             }
         target_market = resolve_market_code(str(eligibility.get("target_market") or ""))
         target_portfolio_id = str(eligibility.get("target_portfolio_id") or "").strip()
@@ -3054,6 +3232,7 @@ class Supervisor:
                 "allowed": False,
                 "reason": f"auto_order_recovery:{eligibility.get('reason') or 'not_eligible'}",
                 "force_no_submit": False,
+                "force_run": False,
                 "target_market": target_market,
                 "target_portfolio_id": target_portfolio_id,
             }
@@ -3062,6 +3241,16 @@ class Supervisor:
                 "allowed": False,
                 "reason": "auto_order_recovery:not_selected_frontier",
                 "force_no_submit": False,
+                "force_run": False,
+                "target_market": target_market,
+                "target_portfolio_id": target_portfolio_id,
+            }
+        if action == "report" and bool(checkpoint.get("report_refreshed", False)):
+            return {
+                "allowed": False,
+                "reason": "auto_order_recovery:report_already_refreshed",
+                "force_no_submit": False,
+                "force_run": False,
                 "target_market": target_market,
                 "target_portfolio_id": target_portfolio_id,
             }
@@ -3070,6 +3259,7 @@ class Supervisor:
                 "allowed": False,
                 "reason": "auto_order_recovery:opportunity_suppressed",
                 "force_no_submit": False,
+                "force_run": False,
                 "target_market": target_market,
                 "target_portfolio_id": target_portfolio_id,
             }
@@ -3077,6 +3267,9 @@ class Supervisor:
             "allowed": action in {"report", "execution"},
             "reason": "auto_order_recovery:targeted_no_submit_refresh",
             "force_no_submit": action == "execution",
+            "force_run": bool(eligibility.get("force_target_refresh", False)) or str(
+                eligibility.get("status") or ""
+            ) == "targeted_frontier_refresh_required",
             "target_market": target_market,
             "target_portfolio_id": target_portfolio_id,
         }
@@ -4090,6 +4283,39 @@ class Supervisor:
         ts = datetime.fromtimestamp(path.stat().st_mtime, tz=ZoneInfo(str(timezone_name or self.tz.key)))
         return ts.strftime("%Y-%m-%d")
 
+    def _execution_summary_payload(
+        self,
+        item: Dict[str, Any],
+        report_market: str,
+    ) -> Dict[str, Any]:
+        path = self._execution_marker_path(item, report_market)
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        return dict(payload) if isinstance(payload, dict) else {}
+
+    def _execution_consumes_submit_slot(
+        self,
+        item: Dict[str, Any],
+        report_market: str,
+    ) -> bool:
+        payload = self._execution_summary_payload(item, report_market)
+        return payload.get("consumes_submit_slot") is not False
+
+    def _recovery_execution_evidence_valid(
+        self,
+        item: Dict[str, Any],
+        report_market: str,
+    ) -> bool:
+        payload = self._execution_summary_payload(item, report_market)
+        return bool(
+            payload
+            and str(payload.get("execution_purpose") or "").strip().upper() == "RECOVERY_EVIDENCE"
+            and payload.get("consumes_submit_slot") is False
+            and str(payload.get("ibkr_connection_status") or "").strip().upper() != "FAILED"
+        )
+
     def _restore_report_state(self, item: Dict[str, Any], report_market: str) -> None:
         if str(item.get("_last_successful_report_day", "") or "").strip():
             return
@@ -4122,7 +4348,11 @@ class Supervisor:
         if report_signature:
             item["_last_macro_signature"] = report_signature
         exec_marker = self._execution_marker_path(item, report_market)
-        if exec_marker.exists() and exec_marker.stat().st_mtime >= marker.stat().st_mtime:
+        if (
+            exec_marker.exists()
+            and exec_marker.stat().st_mtime >= marker.stat().st_mtime
+            and self._execution_consumes_submit_slot(item, report_market)
+        ):
             item["_last_execution_for_report_day"] = report_day
         guard_marker = self._guard_marker_path(item, report_market)
         if guard_marker.exists():
@@ -4426,7 +4656,7 @@ class Supervisor:
             )
             if not bool(recovery_decision.get("allowed", False)):
                 continue
-            if not self._should_rerun_report_for_macro_change(
+            if not bool(recovery_decision.get("force_run", False)) and not self._should_rerun_report_for_macro_change(
                 market,
                 item,
                 report_market=report_market,
@@ -4605,6 +4835,8 @@ class Supervisor:
             cmd.extend(["--ibkr_config", str(item["ibkr_config"])])
         if bool(item.get("submit_investment_execution", False)):
             cmd.append("--submit")
+        if bool(item.get("_recovery_evidence_only", False)):
+            cmd.append("--recovery_evidence_only")
         return self._run_cmd(
             f"run_investment_execution:{market.name}:{Path(str(item['watchlist_yaml'])).stem}",
             cmd,
@@ -4950,6 +5182,7 @@ class Supervisor:
             cycle_summary: List[Dict[str, Any]] = []
             try:
                 recovery_context = self._auto_order_recovery_context(now)
+                recovery_context = self._prepare_auto_order_recovery_context(now, recovery_context)
             except Exception as exc:
                 log.warning(
                     "Auto-order recovery context unavailable; continuing with normal non-submit safeguards: %s: %s",
@@ -4993,16 +5226,18 @@ class Supervisor:
                         day_key=day_key,
                         market_now=market_now,
                     )
-                    if should_run:
-                        recovery_decision = self._auto_order_recovery_action_decision(
-                            item,
-                            report_market,
-                            action="report",
-                            recovery_context=recovery_context,
-                        )
-                        if not bool(recovery_decision.get("allowed", False)):
-                            should_run = False
-                            reason = str(recovery_decision.get("reason") or "auto_order_recovery:not_eligible")
+                    recovery_decision = self._auto_order_recovery_action_decision(
+                        item,
+                        report_market,
+                        action="report",
+                        recovery_context=recovery_context,
+                    )
+                    if bool(recovery_decision.get("force_run", False)):
+                        should_run = True
+                        reason = "auto_order_recovery_target_refresh"
+                    elif should_run and not bool(recovery_decision.get("allowed", False)):
+                        should_run = False
+                        reason = str(recovery_decision.get("reason") or "auto_order_recovery:not_eligible")
                     slug = Path(str(item.get("watchlist_yaml", "") or report_market)).stem
                     if should_run:
                         has_due_reports = True
@@ -5043,6 +5278,8 @@ class Supervisor:
                         market.market_code,
                         ",".join(due_report_slugs),
                     )
+                    if recovery_context.get("checkpoint"):
+                        self._mark_auto_order_recovery_attempt(recovery_context, now=now)
                     report_days_before = {
                         id(item): str(item.get("_last_successful_report_day", "") or "")
                         for item in market.reports
@@ -5127,23 +5364,43 @@ class Supervisor:
                             str(recovery_decision.get("reason") or "auto_order_recovery:not_eligible"),
                         )
                         continue
+                    force_recovery_run = bool(recovery_decision.get("force_run", False))
                     report_day = str(item.get("_last_successful_report_day", "") or "").strip()
                     if not report_day:
                         continue
                     execution_time = str(item.get("execution_time", "") or "").strip()
-                    if not execution_time or not _past_time(market_now, execution_time):
+                    if not force_recovery_run and (
+                        not execution_time or not _past_time(market_now, execution_time)
+                    ):
                         continue
                     execution_day_offset = int(item.get("execution_day_offset", 0) or 0)
                     try:
                         report_date = datetime.strptime(report_day, "%Y-%m-%d").date()
                     except ValueError:
                         continue
-                    if market_now.date() < (report_date + timedelta(days=execution_day_offset)):
+                    if not force_recovery_run and market_now.date() < (
+                        report_date + timedelta(days=execution_day_offset)
+                    ):
                         self._add_reason(market_summary["execution_skip_reasons"], "before_execution_day")
                         continue
-                    if str(item.get("_last_execution_for_report_day", "")) == report_day:
+                    if (
+                        not force_recovery_run
+                        and str(item.get("_last_execution_for_report_day", "")) == report_day
+                    ):
                         self._add_reason(market_summary["execution_skip_reasons"], "already_executed_for_report_day")
                         continue
+                    if force_recovery_run and recovery_context.get("checkpoint"):
+                        checkpoint = dict(recovery_context.get("checkpoint") or {})
+                        started_at = parse_utc_datetime(checkpoint.get("started_at"))
+                        report_mtime = _file_mtime_utc(self._report_marker_path(item, report_market))
+                        if not started_at or not report_mtime or report_mtime < started_at:
+                            self._add_reason(
+                                market_summary["execution_skip_reasons"],
+                                "auto_order_recovery:report_refresh_not_complete",
+                            )
+                            continue
+                        if bool(checkpoint.get("report_refreshed", False)):
+                            self._mark_auto_order_recovery_attempt(recovery_context, now=now)
                     report_ready, report_reason = self._report_files_ready(
                         item,
                         report_market,
@@ -5260,13 +5517,30 @@ class Supervisor:
                     if recovery_force_no_submit:
                         execution_item = dict(item)
                         execution_item["submit_investment_execution"] = False
+                        execution_item["_recovery_evidence_only"] = True
                     if self._run_investment_execution(market, execution_item):
-                        item["_last_execution_for_report_day"] = report_day
+                        if recovery_force_no_submit:
+                            item["_last_execution_for_report_day"] = ""
+                        elif self._execution_consumes_submit_slot(item, report_market):
+                            item["_last_execution_for_report_day"] = report_day
                         market_summary["execution_run"] = int(market_summary["execution_run"]) + 1
                         market_summary["notable_actions"].append(
                             f"execution:{Path(str(item['watchlist_yaml'])).stem}:"
                             f"{'submit' if bool(execution_item.get('submit_investment_execution', False)) else 'dry_run'}"
                         )
+                        if force_recovery_run and self._recovery_execution_evidence_valid(
+                            item,
+                            report_market,
+                        ):
+                            self._complete_auto_order_recovery_checkpoint(
+                                recovery_context,
+                                now=now,
+                            )
+                        elif force_recovery_run:
+                            self._add_reason(
+                                market_summary["execution_skip_reasons"],
+                                "auto_order_recovery:evidence_invalid_or_gateway_unavailable",
+                            )
 
                     # Continue to guard checks in the same cycle if configured; no early continue.
 

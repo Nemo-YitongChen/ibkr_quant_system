@@ -232,6 +232,175 @@ class SupervisorCliTests(unittest.TestCase):
             self.assertFalse(waiting["allowed"])
             self.assertEqual(waiting["reason"], "auto_order_recovery:gateway_budget_recovery_not_reached")
 
+    def test_prepare_auto_order_recovery_refreshes_budget_and_creates_checkpoint(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = Path(tmp) / "supervisor.yaml"
+            summary_dir = Path(tmp) / "reports_supervisor"
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        f'summary_out_dir: "{summary_dir}"',
+                        "markets:",
+                        '  - name: "us"',
+                        '    market: "US"',
+                        "    enabled: true",
+                        "    reports:",
+                        '      - kind: "investment"',
+                        '        watchlist_yaml: "config/watchlist.yaml"',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(cfg_path))
+            waiting_context = {
+                "plan": {
+                    "status": "wait_gateway_budget",
+                    "target_market": "US",
+                    "target_portfolio_id": "US:watchlist",
+                    "target_symbols": "SPLG",
+                    "target_submit_quality_status": "PASS",
+                },
+                "eligibility": {
+                    "active": True,
+                    "eligible": False,
+                    "reason": "gateway_budget_evidence_refresh_required",
+                },
+            }
+            refreshed_context = {
+                "plan": {"status": "submit_review_ready"},
+                "eligibility": {
+                    "active": False,
+                    "eligible": False,
+                    "reason": "submit_plan_ready_no_refresh",
+                },
+            }
+            now = datetime(2026, 6, 14, 10, 0, tzinfo=supervisor.tz)
+
+            with patch.object(
+                supervisor,
+                "_refresh_auto_order_gateway_budget_evidence",
+                return_value=True,
+            ) as mock_refresh, patch.object(
+                supervisor,
+                "_auto_order_recovery_context",
+                return_value=refreshed_context,
+            ):
+                prepared = supervisor._prepare_auto_order_recovery_context(
+                    now,
+                    waiting_context,
+                )
+
+            mock_refresh.assert_called_once_with(now)
+            self.assertTrue(prepared["eligibility"]["eligible"])
+            self.assertTrue(prepared["eligibility"]["force_target_refresh"])
+            checkpoint = json.loads(
+                (summary_dir / "auto_order_recovery_checkpoint.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(checkpoint["status"], "PENDING")
+            self.assertEqual(checkpoint["target_portfolio_id"], "US:watchlist")
+            self.assertFalse(checkpoint["submit_orders"])
+
+    def test_targeted_recovery_force_run_bypasses_schedule_and_previous_dry_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = Path(tmp) / "supervisor.yaml"
+            summary_dir = Path(tmp) / "reports_supervisor"
+            reports_root = Path(tmp) / "reports_investment"
+            report_dir = reports_root / "watchlist"
+            report_dir.mkdir(parents=True, exist_ok=True)
+            for name, body in (
+                ("investment_candidates.csv", "symbol,action\nSPLG,BUY\n"),
+                ("investment_plan.csv", "symbol,action\nSPLG,BUY\n"),
+                ("investment_report.md", "# report\n"),
+            ):
+                (report_dir / name).write_text(body, encoding="utf-8")
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        f'summary_out_dir: "{summary_dir}"',
+                        "auto_order_readiness:",
+                        "  enabled: true",
+                        "markets:",
+                        '  - name: "us"',
+                        '    market: "US"',
+                        '    local_timezone: "Australia/Sydney"',
+                        "    enabled: true",
+                        "    watchlists: []",
+                        "    reports:",
+                        '      - kind: "investment"',
+                        f'        out_dir: "{reports_root}"',
+                        '        watchlist_yaml: "config/watchlist.yaml"',
+                        "        run_broker_snapshot_sync: false",
+                        "        run_investment_execution: true",
+                        '        execution_time: "12:00"',
+                        "        submit_investment_execution: true",
+                        "    short_safety_sync:",
+                        "      enabled: false",
+                        "    trading:",
+                        "      enabled: false",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(cfg_path))
+            item = supervisor.markets[0].reports[0]
+            item["_last_successful_report_day"] = "2026-06-14"
+            item["_last_execution_for_report_day"] = "2026-06-14"
+            now = datetime(2026, 6, 14, 10, 0, tzinfo=supervisor.tz)
+            recovery_context = {
+                "eligibility": {
+                    "active": True,
+                    "eligible": True,
+                    "reason": "eligible_targeted_no_submit_refresh",
+                    "status": "targeted_frontier_refresh_required",
+                    "force_target_refresh": True,
+                    "target_market": "US",
+                    "target_portfolio_id": "US:watchlist",
+                }
+            }
+
+            with patch.object(
+                supervisor,
+                "_auto_order_recovery_context",
+                return_value=recovery_context,
+            ), patch.object(
+                supervisor,
+                "_report_action_reason",
+                return_value=(False, "already_generated"),
+            ), patch.object(
+                supervisor,
+                "_generate_reports",
+            ) as mock_reports, patch.object(
+                supervisor,
+                "_run_investment_execution",
+                return_value=True,
+            ) as mock_exec, patch.object(
+                supervisor,
+                "_run_investment_labeling",
+                return_value=False,
+            ), patch.object(
+                supervisor,
+                "_run_investment_weekly_review",
+                return_value=False,
+            ), patch.object(
+                supervisor,
+                "_write_cycle_summary",
+                return_value=False,
+            ), patch.object(
+                supervisor,
+                "_write_auto_order_readiness_summary",
+                return_value=False,
+            ), patch.object(
+                supervisor,
+                "_write_dashboard_control_state",
+            ):
+                supervisor.run_cycle(now)
+
+            mock_reports.assert_called_once()
+            execution_item = mock_exec.call_args.args[1]
+            self.assertFalse(execution_item["submit_investment_execution"])
+
     def test_write_auto_order_readiness_summary_uses_summary_out_dir(self):
         with tempfile.TemporaryDirectory() as tmp:
             cfg_path = Path(tmp) / "supervisor.yaml"
@@ -7870,8 +8039,9 @@ class SupervisorCliTests(unittest.TestCase):
             execution_item = mock_exec.call_args.args[1]
             self.assertIsNot(execution_item, item)
             self.assertFalse(execution_item["submit_investment_execution"])
+            self.assertTrue(execution_item["_recovery_evidence_only"])
             self.assertTrue(item["submit_investment_execution"])
-            self.assertEqual(item["_last_execution_for_report_day"], "2026-06-10")
+            self.assertEqual(item["_last_execution_for_report_day"], "")
 
     def test_restore_report_state_from_report_and_execution_files(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -7921,6 +8091,87 @@ class SupervisorCliTests(unittest.TestCase):
             ).strftime("%Y-%m-%d")
             self.assertEqual(item["_last_successful_report_day"], expected_day)
             self.assertEqual(item["_last_execution_for_report_day"], item["_last_successful_report_day"])
+
+    def test_restore_report_state_does_not_consume_slot_for_recovery_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = Path(tmp) / "supervisor.yaml"
+            summary_dir = Path(tmp) / "reports_supervisor"
+            reports_root = Path(tmp) / "reports_investment"
+            report_dir = reports_root / "watchlist"
+            report_dir.mkdir(parents=True, exist_ok=True)
+            report_file = report_dir / "investment_report.md"
+            exec_file = report_dir / "investment_execution_summary.json"
+            report_file.write_text("report", encoding="utf-8")
+            exec_file.write_text(
+                json.dumps(
+                    {
+                        "execution_purpose": "RECOVERY_EVIDENCE",
+                        "recovery_evidence_only": True,
+                        "consumes_submit_slot": False,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        f'summary_out_dir: "{summary_dir}"',
+                        "markets:",
+                        '  - name: "us"',
+                        '    market: "US"',
+                        "    enabled: true",
+                        "    reports:",
+                        '      - kind: "investment"',
+                        f'        out_dir: "{reports_root}"',
+                        '        watchlist_yaml: "config/watchlist.yaml"',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(cfg_path))
+            item = supervisor.markets[0].reports[0]
+
+            supervisor._restore_report_state(item, "US")
+
+            self.assertNotIn("_last_execution_for_report_day", item)
+
+    def test_recovery_execution_evidence_rejects_gateway_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = Path(tmp) / "supervisor.yaml"
+            reports_root = Path(tmp) / "reports_investment"
+            report_dir = reports_root / "watchlist"
+            report_dir.mkdir(parents=True, exist_ok=True)
+            (report_dir / "investment_execution_summary.json").write_text(
+                json.dumps(
+                    {
+                        "execution_purpose": "RECOVERY_EVIDENCE",
+                        "consumes_submit_slot": False,
+                        "ibkr_connection_status": "FAILED",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        "markets:",
+                        '  - name: "us"',
+                        '    market: "US"',
+                        "    enabled: true",
+                        "    reports:",
+                        '      - kind: "investment"',
+                        f'        out_dir: "{reports_root}"',
+                        '        watchlist_yaml: "config/watchlist.yaml"',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(cfg_path))
+            item = supervisor.markets[0].reports[0]
+
+            self.assertFalse(supervisor._recovery_execution_evidence_valid(item, "US"))
 
     def test_generate_reports_skips_local_paper_ledger_when_ibkr_paper_submit_is_primary(self):
         with tempfile.TemporaryDirectory() as tmp:

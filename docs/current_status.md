@@ -537,3 +537,15 @@
 - 运行态进一步发现 `label_investment_snapshots` 会在恢复期触发市场数据请求；现已随 active recovery 暂停，纯本地 weekly review 继续运行。
 - 验证结果：integration tier `115 passed`，恢复/锁定/watchlist 聚焦测试 `14 passed`，labeling recovery follow-up `5 passed`，`pip check` 与 Python compile 均通过。
 - 本轮不自动加入 symbol，不放宽 risk、edge、cost、liquidity、market-rule、Gateway budget 或 submit-quality gate。
+
+## 36. 2026-06-12 Automatic recovery evidence and submit-slot isolation
+
+- 新增本地轻量 `refresh_ibkr_gateway_budget`：只读取 `.cache/ibkr_request_telemetry`，原子刷新 weekly request/budget JSON 与 CSV，不连接 IBKR，也不增加 Gateway 请求。
+- Supervisor 在 projected recovery 到点后自动刷新 budget evidence；只有新证据显示目标市场不再超预算，才创建持久化 `auto_order_recovery_checkpoint.json`。
+- checkpoint 跨重启保留目标 market/portfolio、attempt count、next attempt 和完成状态；失败后按 cooldown 自动重试，不再需要用户回复“继续”。
+- target recovery 仍只允许一个 report 和一个 no-submit execution evidence dry-run；execution artifact 新增 `execution_purpose=RECOVERY_EVIDENCE`、`recovery_evidence_only=true`、`consumes_submit_slot=false`。
+- Supervisor 状态恢复会忽略 recovery evidence marker，因此恢复流程不会占用下一次正常 paper submit 的 execution slot。
+- Gateway unavailable 虽然仍会生成 degraded diagnostics，但不能完成 recovery checkpoint；只有 purpose 正确、slot 隔离且 broker connection 未失败的 artifact 才算恢复证据有效。
+- CLI readiness 现在优先消费轻量 Gateway budget artifact，避免 weekly summary 内嵌旧 budget 与 Supervisor 判断不一致。
+- 最新本地 evidence：Gateway requests `9753`，4 个市场超预算；US 为 `3216/2000`、`160.8%`，projected recovery 为 UTC `2026-06-13T23:59:59.999999+00:00`。当前仍不允许 submit。
+- 本轮没有放宽 risk、edge、cost、liquidity、market-rule、preflight、Gateway budget 或 submit-quality gate。
