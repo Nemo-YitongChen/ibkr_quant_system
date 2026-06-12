@@ -33,7 +33,7 @@ Remove the manual reply requirement from Gateway-budget recovery without bypassi
 
 ## Evidence Revalidation
 
-The local-only refresh generated:
+The initial local-only refresh generated:
 
 - Window generated at: `2026-06-11T22:50:59.282410+00:00`
 - Total Gateway requests: `9753`
@@ -43,6 +43,8 @@ The local-only refresh generated:
 - US projected recovery: `2026-06-13T23:59:59.999999+00:00`
 
 The target remains blocked until a new local telemetry refresh proves the budget is within policy. Time passage alone does not authorize submit.
+
+After the latest Supervisor started and completed one protective broker snapshot per active market, a second local-only refresh at `2026-06-12T00:13:02.619921+00:00` reported `9596` total Gateway requests and US `3062 / 2000` (`153.1%`). The projected US recovery timestamp remained unchanged.
 
 ## Safety Contract
 

@@ -547,5 +547,5 @@
 - Supervisor 状态恢复会忽略 recovery evidence marker，因此恢复流程不会占用下一次正常 paper submit 的 execution slot。
 - Gateway unavailable 虽然仍会生成 degraded diagnostics，但不能完成 recovery checkpoint；只有 purpose 正确、slot 隔离且 broker connection 未失败的 artifact 才算恢复证据有效。
 - CLI readiness 现在优先消费轻量 Gateway budget artifact，避免 weekly summary 内嵌旧 budget 与 Supervisor 判断不一致。
-- 最新本地 evidence：Gateway requests `9753`，4 个市场超预算；US 为 `3216/2000`、`160.8%`，projected recovery 为 UTC `2026-06-13T23:59:59.999999+00:00`。当前仍不允许 submit。
+- 最新本地 evidence（UTC `2026-06-12T00:13:02.619921+00:00`）：Gateway requests `9596`，4 个市场超预算；US 为 `3062/2000`、`153.1%`，projected recovery 为 UTC `2026-06-13T23:59:59.999999+00:00`。当前仍不允许 submit。
 - 本轮没有放宽 risk、edge、cost、liquidity、market-rule、preflight、Gateway budget 或 submit-quality gate。
