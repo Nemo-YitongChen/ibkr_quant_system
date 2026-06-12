@@ -3232,7 +3232,7 @@ class Supervisor:
             return False
         self._last_recovery_budget_refresh_attempt_ts = now_ts
         ok = self._run_cmd(
-            "refresh_ibkr_gateway_budget:auto_recovery",
+            "refresh_ibkr_gateway_budget:local_evidence",
             [
                 sys.executable,
                 "-m",
