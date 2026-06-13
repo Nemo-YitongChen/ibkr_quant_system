@@ -362,18 +362,20 @@ def test_submit_capacity_stays_at_small_account_baseline_without_fill_evidence()
     assert capacity["effective_max_submit_total_gross_order_value"] == 100.0
 
 
-def test_submit_capacity_scales_only_after_fill_slippage_and_realized_edge_pass() -> None:
+def test_submit_capacity_reaches_full_scale_when_all_configured_evidence_passes() -> None:
     weekly = {
         "execution_session_summary": [
             {
+                "market": "US",
                 "submitted_order_rows": 6,
                 "fill_count": 6,
                 "avg_actual_slippage_bps": 4.0,
             }
         ],
-        "execution_feedback_summary": [{"error_order_rows": 0}],
+        "execution_feedback_summary": [{"market": "US", "error_order_rows": 0}],
         "edge_realization_summary": [
             {
+                "market": "US",
                 "matured_5d_sample_count": 6,
                 "matured_5d_avg_realized_edge_bps": 12.0,
             }
@@ -395,10 +397,151 @@ def test_submit_capacity_scales_only_after_fill_slippage_and_realized_edge_pass(
 
     capacity = build_auto_order_submit_capacity_plan(weekly, policy=policy)
 
-    assert capacity["status"] == "SCALE_ALLOWED"
+    assert capacity["status"] == "FULL_SCALE_ALLOWED"
     assert capacity["scale_allowed"] is True
+    assert capacity["scale_stage"] == "full"
     assert capacity["effective_max_submit_portfolios_per_run"] == 4
     assert capacity["effective_max_submit_total_gross_order_value"] == 400.0
+
+
+def test_submit_capacity_uses_trial_stage_before_stricter_full_scale_thresholds() -> None:
+    capacity = build_auto_order_submit_capacity_plan(
+        {
+            "execution_session_summary": [
+                {
+                    "market": "US",
+                    "submitted_order_rows": 6,
+                    "fill_count": 6,
+                    "fill_notional": 480.0,
+                    "avg_actual_slippage_bps": 4.0,
+                }
+            ],
+            "execution_feedback_summary": [{"market": "US", "error_order_rows": 0}],
+            "edge_realization_summary": [
+                {
+                    "market": "US",
+                    "matured_5d_sample_count": 6,
+                    "matured_5d_avg_realized_edge_bps": 12.0,
+                }
+            ],
+        },
+        policy={
+            "enabled": True,
+            "evidence_scaled_submit_enabled": True,
+            "max_submit_portfolios_per_run": 4,
+            "max_submit_total_gross_order_value": 400.0,
+            "baseline_submit_portfolios_per_run": 1,
+            "baseline_submit_total_gross_order_value": 100.0,
+            "trial_submit_portfolios_per_run": 2,
+            "trial_submit_total_gross_order_value": 200.0,
+            "scale_min_filled_orders": 5,
+            "scale_min_matured_edge_samples": 5,
+            "full_scale_min_filled_orders": 20,
+            "full_scale_min_matured_edge_samples": 15,
+            "full_scale_min_evidence_markets": 2,
+        },
+    )
+
+    assert capacity["status"] == "TRIAL_SCALE_ALLOWED"
+    assert capacity["scale_stage"] == "trial"
+    assert capacity["effective_max_submit_portfolios_per_run"] == 2
+    assert capacity["effective_max_submit_total_gross_order_value"] == 200.0
+    assert capacity["evidence_market_count"] == 1
+
+
+def test_submit_capacity_weights_slippage_by_fill_notional() -> None:
+    capacity = build_auto_order_submit_capacity_plan(
+        {
+            "execution_session_summary": [
+                {
+                    "market": "US",
+                    "submitted_order_rows": 1,
+                    "fill_count": 1,
+                    "fill_notional": 900.0,
+                    "avg_actual_slippage_bps": 2.0,
+                },
+                {
+                    "market": "US",
+                    "submitted_order_rows": 1,
+                    "fill_count": 1,
+                    "fill_notional": 100.0,
+                    "avg_actual_slippage_bps": 30.0,
+                },
+            ],
+            "edge_realization_summary": [],
+        },
+        policy={
+            "enabled": True,
+            "evidence_scaled_submit_enabled": True,
+            "scale_min_filled_orders": 5,
+            "scale_min_matured_edge_samples": 5,
+        },
+    )
+
+    assert capacity["avg_realized_slippage_bps"] == 4.8
+
+
+def test_submit_capacity_rejects_missing_or_non_finite_quality_evidence() -> None:
+    capacity = build_auto_order_submit_capacity_plan(
+        {
+            "execution_session_summary": [
+                {
+                    "market": "US",
+                    "submitted_order_rows": 6,
+                    "fill_count": 6,
+                    "avg_actual_slippage_bps": float("nan"),
+                }
+            ],
+            "execution_feedback_summary": [{"market": "US", "error_order_rows": 0}],
+            "edge_realization_summary": [
+                {
+                    "market": "US",
+                    "matured_5d_sample_count": 6,
+                    "matured_5d_avg_realized_edge_bps": 12.0,
+                }
+            ],
+        },
+        policy={
+            "enabled": True,
+            "evidence_scaled_submit_enabled": True,
+            "scale_min_filled_orders": 5,
+            "scale_min_matured_edge_samples": 5,
+        },
+    )
+
+    assert capacity["status"] == "HOLD_QUALITY_DEGRADED"
+    assert capacity["scale_stage"] == "baseline"
+    assert capacity["reason"] == "realized_slippage_missing"
+    assert capacity["matured_5d_sample_count"] == 6
+    assert capacity["avg_realized_slippage_bps"] is None
+
+    missing_edge_capacity = build_auto_order_submit_capacity_plan(
+        {
+            "execution_session_summary": [
+                {
+                    "market": "US",
+                    "submitted_order_rows": 6,
+                    "fill_count": 6,
+                    "avg_actual_slippage_bps": 4.0,
+                }
+            ],
+            "edge_realization_summary": [
+                {
+                    "market": "US",
+                    "matured_5d_sample_count": 6,
+                    "matured_5d_avg_realized_edge_bps": float("nan"),
+                }
+            ],
+        },
+        policy={
+            "enabled": True,
+            "evidence_scaled_submit_enabled": True,
+            "scale_min_filled_orders": 5,
+            "scale_min_matured_edge_samples": 5,
+        },
+    )
+    assert missing_edge_capacity["status"] == "BASELINE_INSUFFICIENT_EVIDENCE"
+    assert missing_edge_capacity["matured_5d_sample_count"] == 0
 
 
 def test_submit_capacity_holds_baseline_when_realized_quality_degrades() -> None:
@@ -480,6 +623,72 @@ def test_submit_plan_applies_evidence_capacity_to_multiple_ready_markets() -> No
     assert plan["policy"]["max_submit_portfolios_per_run"] == 1
     assert plan["policy"]["configured_max_submit_portfolios_per_run"] == 4
     assert plan["submit_capacity_plan"]["status"] == "BASELINE_INSUFFICIENT_EVIDENCE"
+
+
+def test_trial_submit_plan_allows_only_one_market_without_realized_evidence() -> None:
+    rows = [
+        {
+            "ready": True,
+            "account_mode": "paper",
+            "market": market,
+            "portfolio_id": f"{market}:portfolio",
+            "market_readiness_status": "READY_FOR_PAPER_REVIEW",
+            "market_readiness_order_count": 1,
+            "market_readiness_planned_gross_order_value": gross,
+            "market_readiness_planned_buy_order_value": gross,
+        }
+        for market, gross in (("US", 60.0), ("ASX", 70.0), ("HK", 80.0))
+    ]
+    plan = build_auto_order_submit_plan(
+        rows,
+        policy={
+            "enabled": True,
+            "evidence_scaled_submit_enabled": True,
+            "max_submit_portfolios_per_run": 4,
+            "max_submit_portfolios_per_market": 1,
+            "max_submit_orders_per_portfolio": 1,
+            "max_submit_gross_order_value": 100.0,
+            "max_submit_total_gross_order_value": 400.0,
+            "baseline_submit_portfolios_per_run": 1,
+            "baseline_submit_total_gross_order_value": 100.0,
+            "trial_submit_portfolios_per_run": 2,
+            "trial_submit_total_gross_order_value": 200.0,
+            "scale_min_filled_orders": 5,
+            "scale_min_matured_edge_samples": 5,
+            "full_scale_min_filled_orders": 20,
+            "full_scale_min_matured_edge_samples": 15,
+            "full_scale_min_evidence_markets": 2,
+            "max_submit_unevidenced_markets_per_run": 1,
+            "require_buy_order_for_submit": True,
+        },
+        weekly_summary={
+            "execution_session_summary": [
+                {
+                    "market": "US",
+                    "submitted_order_rows": 6,
+                    "fill_count": 6,
+                    "fill_notional": 480.0,
+                    "avg_actual_slippage_bps": 4.0,
+                }
+            ],
+            "execution_feedback_summary": [{"market": "US", "error_order_rows": 0}],
+            "edge_realization_summary": [
+                {
+                    "market": "US",
+                    "matured_5d_sample_count": 6,
+                    "matured_5d_avg_realized_edge_bps": 12.0,
+                }
+            ],
+        },
+    )
+
+    assert plan["status"] == "READY_MULTI_CANDIDATE"
+    assert plan["selected_markets"] == ["US", "ASX"]
+    assert plan["submit_capacity_plan"]["scale_stage"] == "trial"
+    assert plan["rejected_candidates"][0]["market"] == "HK"
+    assert plan["rejected_candidates"][0]["reject_reasons"] == [
+        "unevidenced_market_count_exceeds_policy"
+    ]
 
 
 def test_auto_order_submit_plan_allows_multi_market_candidates_with_market_cap() -> None:
@@ -814,6 +1023,50 @@ def test_auto_order_readiness_payload_builds_market_readiness_when_missing(tmp_p
     assert row["market_readiness_status"] == "READY_FOR_PAPER_REVIEW"
     assert payload["summary"]["recovery_eligibility"]["reason"] == "submit_plan_ready_no_refresh"
     assert payload["summary"]["recovery_eligibility"]["eligible"] is False
+
+
+def test_auto_order_readiness_uses_scoped_watchlist_expansion_artifact(tmp_path: Path) -> None:
+    runtime_root = tmp_path / "runtime"
+    expansion_path = (
+        runtime_root
+        / "reports_supervisor"
+        / "watchlist_expansion"
+        / "watchlist_expansion_summary.json"
+    )
+    expansion_path.parent.mkdir(parents=True)
+    expansion_path.write_text(
+        json.dumps(
+            {
+                "seed_promotion_review_count": 8,
+                "seed_promotion_ready_count": 0,
+                "seed_promotion_candidate_report_required_count": 2,
+            }
+        ),
+        encoding="utf-8",
+    )
+    cfg_path = tmp_path / "supervisor.yaml"
+    cfg_path.write_text(
+        "\n".join(
+            [
+                'summary_out_dir: "reports_supervisor"',
+                "scope_summary_out_dir: true",
+                "auto_order_readiness:",
+                "  enabled: true",
+                "markets: []",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    payload = build_auto_order_readiness_payload(
+        config_path=str(cfg_path),
+        runtime_root=str(runtime_root),
+    )
+
+    assert payload["watchlist_expansion_path"] == str(expansion_path)
+    frequency = payload["summary"]["frequency_plan"]
+    assert frequency["seed_promotion_review_count"] == 8
+    assert frequency["seed_promotion_candidate_report_required_count"] == 2
 
 
 def test_auto_order_readiness_blocks_live_without_explicit_policy() -> None:

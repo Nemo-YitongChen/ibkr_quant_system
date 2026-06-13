@@ -62,6 +62,17 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
                     "candidate_count": 0,
                     "frontier_candidate_count": 1,
                     "selected_portfolio_id": "",
+                    "submit_capacity_plan": {
+                        "status": "TRIAL_SCALE_ALLOWED",
+                        "reason": "trial_quality_pass_full_scale_pending",
+                        "scale_allowed": True,
+                        "scale_stage": "trial",
+                        "fill_count": 6,
+                        "matured_5d_sample_count": 6,
+                        "evidence_market_count": 1,
+                        "effective_max_submit_portfolios_per_run": 2,
+                        "effective_max_submit_total_gross_order_value": 200.0,
+                    },
                     "frontier_candidates": [
                         {
                             "market": "US",
@@ -468,6 +479,9 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
     assert by_id["auto_order_readiness"]["metrics"]["frontier_high_quality_count"] == 1
     assert by_id["auto_order_readiness"]["metrics"]["frontier_top_submit_quality_tier"] == "HIGH"
     assert by_id["auto_order_readiness"]["metrics"]["rejected_candidate_count"] == 1
+    assert by_id["auto_order_readiness"]["metrics"]["submit_capacity_scale_stage"] == "trial"
+    assert by_id["auto_order_readiness"]["metrics"]["submit_capacity_evidence_market_count"] == 1
+    assert by_id["auto_order_readiness"]["metrics"]["submit_capacity_effective_max_portfolios"] == 2
     assert by_id["auto_order_readiness"]["metrics"]["candidate_supply_status"] == "candidate_supply_gap"
     assert (
         by_id["auto_order_readiness"]["metrics"]["candidate_supply_primary_action"]

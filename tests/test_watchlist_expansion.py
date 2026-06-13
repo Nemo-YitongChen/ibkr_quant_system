@@ -546,3 +546,35 @@ def test_watchlist_seed_promotion_review_marks_quality_pass_as_review_ready() ->
     assert review[0]["promotion_status"] == "PROMOTION_REVIEW_READY"
     assert review[0]["next_action"] == "manual_review_before_symbol_master_promotion"
     assert review[0]["does_not_change_symbol_master"] is True
+
+
+def test_watchlist_seed_promotion_review_normalizes_non_finite_score() -> None:
+    review = build_watchlist_seed_promotion_review(
+        [
+            {
+                "market": "HK",
+                "source_candidates": [
+                    {
+                        "symbol": "2800.HK",
+                        "asset_class": "etf",
+                        "source_verified_at": "2026-06-11",
+                        "broker_mapping_status": "TO_VERIFY",
+                    }
+                ],
+            }
+        ],
+        [
+            {
+                "market": "HK",
+                "symbol": "2800.HK",
+                "review_seed_original_action": "WATCH",
+                "review_seed_original_execution_ready": 0,
+                "asset_class": "etf",
+                "score": float("nan"),
+            }
+        ],
+        now=datetime(2026, 6, 14, tzinfo=timezone.utc),
+    )
+
+    assert review[0]["score"] == 0.0
+    assert review[0]["promotion_status"] == "QUALITY_REJECTED"

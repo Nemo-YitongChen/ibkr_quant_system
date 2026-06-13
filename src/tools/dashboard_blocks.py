@@ -387,9 +387,13 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "submit_capacity_status": str(submit_capacity_plan.get("status") or ""),
             "submit_capacity_reason": str(submit_capacity_plan.get("reason") or ""),
             "submit_capacity_scale_allowed": int(bool(submit_capacity_plan.get("scale_allowed", False))),
+            "submit_capacity_scale_stage": str(submit_capacity_plan.get("scale_stage") or ""),
             "submit_capacity_fill_count": _int(submit_capacity_plan.get("fill_count")),
             "submit_capacity_matured_5d_sample_count": _int(
                 submit_capacity_plan.get("matured_5d_sample_count")
+            ),
+            "submit_capacity_evidence_market_count": _int(
+                submit_capacity_plan.get("evidence_market_count")
             ),
             "submit_capacity_effective_max_portfolios": _int(
                 submit_capacity_plan.get("effective_max_submit_portfolios_per_run")

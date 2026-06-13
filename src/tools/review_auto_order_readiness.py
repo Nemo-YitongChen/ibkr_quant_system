@@ -70,6 +70,15 @@ def _resolve(raw_path: str) -> Path:
     return resolve_repo_path(BASE_DIR, str(raw_path or ""))
 
 
+def _summary_dir(cfg: Dict[str, Any], runtime_root: str) -> Path:
+    raw_path = Path(str(cfg.get("summary_out_dir", "reports_supervisor") or "reports_supervisor"))
+    if raw_path.is_absolute():
+        return raw_path.resolve()
+    if bool(cfg.get("scope_summary_out_dir", False)):
+        return (_resolve(runtime_root) / raw_path).resolve()
+    return _resolve(str(raw_path))
+
+
 def _overlay_gateway_budget_evidence(
     weekly_summary: Dict[str, Any],
     gateway_budget_payload: Dict[str, Any],
@@ -326,6 +335,7 @@ def build_auto_order_readiness_payload(
     cfg_path = _resolve(config_path)
     cfg = _load_yaml(cfg_path)
     policy = normalize_auto_order_readiness_policy(dict(cfg.get("auto_order_readiness") or {}))
+    summary_dir = _summary_dir(cfg, runtime_root)
     preflight_path = (
         _resolve(preflight_summary_path)
         if str(preflight_summary_path or "").strip()
@@ -341,15 +351,12 @@ def build_auto_order_readiness_payload(
     market_readiness_json_path = (
         _resolve(market_readiness_path)
         if str(market_readiness_path or "").strip()
-        else _resolve(str(cfg.get("summary_out_dir", "reports_supervisor") or "reports_supervisor"))
-        / "market_readiness.json"
+        else summary_dir / "market_readiness.json"
     )
     watchlist_expansion_json_path = (
         _resolve(watchlist_expansion_path)
         if str(watchlist_expansion_path or "").strip()
-        else _resolve(str(cfg.get("summary_out_dir", "reports_supervisor") or "reports_supervisor"))
-        / "watchlist_expansion"
-        / "watchlist_expansion_summary.json"
+        else summary_dir / "watchlist_expansion" / "watchlist_expansion_summary.json"
     )
     preflight_summary = _load_json(preflight_path)
     weekly_summary = _load_json(weekly_path)
@@ -407,7 +414,11 @@ def build_auto_order_readiness_payload(
 def main(argv: List[str] | None = None) -> None:
     args = parse_args(argv)
     cfg = _load_yaml(_resolve(str(args.config)))
-    out_dir = _resolve(str(args.out_dir or cfg.get("summary_out_dir", "reports_supervisor") or "reports_supervisor"))
+    out_dir = (
+        _resolve(str(args.out_dir))
+        if str(args.out_dir or "").strip()
+        else _summary_dir(cfg, str(args.runtime_root or "runtime_data/paper_investment_only_duq152001"))
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
     payload = build_auto_order_readiness_payload(
         config_path=str(args.config),

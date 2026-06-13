@@ -65,11 +65,22 @@ auto_order_readiness:
   evidence_scaled_submit_enabled: true
   baseline_submit_portfolios_per_run: 1
   baseline_submit_total_gross_order_value: 100.0
+  trial_submit_portfolios_per_run: 2
+  trial_submit_total_gross_order_value: 200.0
   scale_min_filled_orders: 5
   scale_min_matured_edge_samples: 5
   scale_min_realized_edge_bps: 0.0
   scale_max_abs_slippage_bps: 15.0
   scale_max_error_rate: 0.05
+  full_scale_min_filled_orders: 20
+  full_scale_min_matured_edge_samples: 15
+  full_scale_min_realized_edge_bps: 5.0
+  full_scale_max_abs_slippage_bps: 10.0
+  full_scale_max_error_rate: 0.02
+  full_scale_min_evidence_markets: 2
+  market_evidence_min_filled_orders: 1
+  market_evidence_min_matured_edge_samples: 1
+  max_submit_unevidenced_markets_per_run: 1
   require_buy_order_for_submit: true
   block_on_submit_quality_not_pass: true
   min_submit_net_edge_bps: 8.0
@@ -87,6 +98,12 @@ auto_order_recovery_budget_refresh_interval_min: 30
 auto_order_recovery_budget_refresh_timeout_sec: 60
 auto_order_recovery_budget_window_days: 7
 auto_order_recovery_target_retry_interval_min: 60
+run_watchlist_expansion_review: true
+watchlist_expansion_interval_min: 180
+watchlist_expansion_only_when_all_markets_closed: true
+watchlist_expansion_timeout_sec: 120
+watchlist_expansion_account_equity: 1000
+watchlist_expansion_account_profile: small
 dashboard_enabled: true
 dashboard_auto_open: true
 dashboard_timeout_sec: 120

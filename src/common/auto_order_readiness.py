@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Mapping
 
@@ -46,9 +47,18 @@ def _int(value: Any, default: int = 0) -> int:
 
 def _float(value: Any, default: float = 0.0) -> float:
     try:
-        return float(value)
+        parsed = float(value)
     except Exception:
         return float(default)
+    return parsed if math.isfinite(parsed) else float(default)
+
+
+def _optional_float(value: Any) -> float | None:
+    try:
+        parsed = float(value)
+    except Exception:
+        return None
+    return parsed if math.isfinite(parsed) else None
 
 
 def _status(value: Any) -> str:
@@ -105,6 +115,20 @@ def normalize_auto_order_readiness_policy(raw: Mapping[str, Any] | None) -> Dict
             0.0,
             _float(source.get("baseline_submit_total_gross_order_value"), 100.0),
         ),
+        "trial_submit_portfolios_per_run": max(
+            1,
+            _int(
+                source.get("trial_submit_portfolios_per_run"),
+                source.get("max_submit_portfolios_per_run", 1),
+            ),
+        ),
+        "trial_submit_total_gross_order_value": max(
+            0.0,
+            _float(
+                source.get("trial_submit_total_gross_order_value"),
+                source.get("max_submit_total_gross_order_value", 0.0),
+            ),
+        ),
         "scale_min_filled_orders": max(1, _int(source.get("scale_min_filled_orders"), 5)),
         "scale_min_matured_edge_samples": max(
             1,
@@ -118,6 +142,57 @@ def normalize_auto_order_readiness_policy(raw: Mapping[str, Any] | None) -> Dict
         "scale_max_error_rate": max(
             0.0,
             min(1.0, _float(source.get("scale_max_error_rate"), 0.05)),
+        ),
+        "full_scale_min_filled_orders": max(
+            1,
+            _int(
+                source.get("full_scale_min_filled_orders"),
+                source.get("scale_min_filled_orders", 5),
+            ),
+        ),
+        "full_scale_min_matured_edge_samples": max(
+            1,
+            _int(
+                source.get("full_scale_min_matured_edge_samples"),
+                source.get("scale_min_matured_edge_samples", 5),
+            ),
+        ),
+        "full_scale_min_realized_edge_bps": _float(
+            source.get("full_scale_min_realized_edge_bps"),
+            source.get("scale_min_realized_edge_bps", 0.0),
+        ),
+        "full_scale_max_abs_slippage_bps": max(
+            0.0,
+            _float(
+                source.get("full_scale_max_abs_slippage_bps"),
+                source.get("scale_max_abs_slippage_bps", 15.0),
+            ),
+        ),
+        "full_scale_max_error_rate": max(
+            0.0,
+            min(
+                1.0,
+                _float(
+                    source.get("full_scale_max_error_rate"),
+                    source.get("scale_max_error_rate", 0.05),
+                ),
+            ),
+        ),
+        "full_scale_min_evidence_markets": max(
+            1,
+            _int(source.get("full_scale_min_evidence_markets"), 1),
+        ),
+        "market_evidence_min_filled_orders": max(
+            1,
+            _int(source.get("market_evidence_min_filled_orders"), 1),
+        ),
+        "market_evidence_min_matured_edge_samples": max(
+            1,
+            _int(source.get("market_evidence_min_matured_edge_samples"), 1),
+        ),
+        "max_submit_unevidenced_markets_per_run": max(
+            0,
+            _int(source.get("max_submit_unevidenced_markets_per_run"), 1),
         ),
         "require_buy_order_for_submit": bool(source.get("require_buy_order_for_submit", False)),
         "block_on_submit_quality_not_pass": bool(source.get("block_on_submit_quality_not_pass", True)),
@@ -137,6 +212,141 @@ def normalize_auto_order_readiness_policy(raw: Mapping[str, Any] | None) -> Dict
     }
 
 
+def _execution_evidence_metrics(
+    session_rows: Iterable[Mapping[str, Any]],
+    feedback_rows: Iterable[Mapping[str, Any]],
+    edge_rows: Iterable[Mapping[str, Any]],
+) -> Dict[str, Any]:
+    sessions = [dict(row) for row in list(session_rows or []) if isinstance(row, Mapping)]
+    feedback = [dict(row) for row in list(feedback_rows or []) if isinstance(row, Mapping)]
+    edges = [dict(row) for row in list(edge_rows or []) if isinstance(row, Mapping)]
+    fill_count = sum(max(0, _int(row.get("fill_count"), 0)) for row in sessions)
+    submitted_count = sum(max(0, _int(row.get("submitted_order_rows"), 0)) for row in sessions)
+    error_count = sum(max(0, _int(row.get("error_order_rows"), 0)) for row in feedback)
+
+    slippage_numerator = 0.0
+    slippage_denominator = 0.0
+    for row in sessions:
+        slippage = _optional_float(row.get("avg_actual_slippage_bps"))
+        if slippage is None or _int(row.get("fill_count"), 0) <= 0:
+            continue
+        weight = abs(_float(row.get("fill_notional"), 0.0))
+        if weight <= 0.0:
+            weight = float(max(1, _int(row.get("fill_count"), 0)))
+        slippage_numerator += slippage * weight
+        slippage_denominator += weight
+    avg_slippage_bps = (
+        slippage_numerator / slippage_denominator
+        if slippage_denominator > 0.0
+        else None
+    )
+
+    reported_matured_sample_count = sum(
+        max(0, _int(row.get("matured_5d_sample_count"), 0))
+        for row in edges
+    )
+    realized_edge_total = 0.0
+    matured_sample_count = 0
+    for row in edges:
+        realized_edge = _optional_float(row.get("matured_5d_avg_realized_edge_bps"))
+        row_sample_count = max(0, _int(row.get("matured_5d_sample_count"), 0))
+        if realized_edge is None or row_sample_count <= 0:
+            continue
+        realized_edge_total += realized_edge * row_sample_count
+        matured_sample_count += row_sample_count
+    return {
+        "fill_count": int(fill_count),
+        "submitted_order_count": int(submitted_count),
+        "error_order_count": int(error_count),
+        "execution_error_rate": float(error_count / max(1, submitted_count)),
+        "avg_realized_slippage_bps": avg_slippage_bps,
+        "reported_matured_5d_sample_count": int(reported_matured_sample_count),
+        "matured_5d_sample_count": int(matured_sample_count),
+        "avg_matured_5d_realized_edge_bps": (
+            realized_edge_total / matured_sample_count
+            if matured_sample_count > 0
+            else None
+        ),
+    }
+
+
+def _evidence_quality_reasons(
+    metrics: Mapping[str, Any],
+    *,
+    min_realized_edge_bps: float,
+    max_abs_slippage_bps: float,
+    max_error_rate: float,
+) -> List[str]:
+    reasons: List[str] = []
+    realized_edge = metrics.get("avg_matured_5d_realized_edge_bps")
+    realized_slippage = metrics.get("avg_realized_slippage_bps")
+    if _int(metrics.get("fill_count"), 0) > 0 and realized_slippage is None:
+        reasons.append("realized_slippage_missing")
+    if (
+        _int(metrics.get("reported_matured_5d_sample_count"), 0) > 0
+        and realized_edge is None
+    ):
+        reasons.append("realized_edge_missing")
+    if realized_edge is not None and _float(realized_edge) < min_realized_edge_bps:
+        reasons.append("realized_edge_below_min")
+    if realized_slippage is not None and abs(_float(realized_slippage)) > max_abs_slippage_bps:
+        reasons.append("realized_slippage_above_max")
+    if (
+        _int(metrics.get("submitted_order_count"), 0) > 0
+        and _float(metrics.get("execution_error_rate"), 0.0) > max_error_rate
+    ):
+        reasons.append("execution_error_rate_above_max")
+    return reasons
+
+
+def _market_evidence_rows(
+    session_rows: Iterable[Mapping[str, Any]],
+    feedback_rows: Iterable[Mapping[str, Any]],
+    edge_rows: Iterable[Mapping[str, Any]],
+    *,
+    policy: Mapping[str, Any],
+) -> List[Dict[str, Any]]:
+    sessions = [dict(row) for row in list(session_rows or []) if isinstance(row, Mapping)]
+    feedback = [dict(row) for row in list(feedback_rows or []) if isinstance(row, Mapping)]
+    edges = [dict(row) for row in list(edge_rows or []) if isinstance(row, Mapping)]
+    markets = sorted(
+        {
+            _market(row.get("market"))
+            for row in sessions + feedback + edges
+            if _market(row.get("market"))
+        }
+    )
+    min_fills = max(1, _int(policy.get("market_evidence_min_filled_orders"), 1))
+    min_matured = max(1, _int(policy.get("market_evidence_min_matured_edge_samples"), 1))
+    rows: List[Dict[str, Any]] = []
+    for market in markets:
+        metrics = _execution_evidence_metrics(
+            [row for row in sessions if _market(row.get("market")) == market],
+            [row for row in feedback if _market(row.get("market")) == market],
+            [row for row in edges if _market(row.get("market")) == market],
+        )
+        quality_reasons = _evidence_quality_reasons(
+            metrics,
+            min_realized_edge_bps=_float(policy.get("scale_min_realized_edge_bps"), 0.0),
+            max_abs_slippage_bps=max(0.0, _float(policy.get("scale_max_abs_slippage_bps"), 15.0)),
+            max_error_rate=max(0.0, _float(policy.get("scale_max_error_rate"), 0.05)),
+        )
+        sample_ready = (
+            _int(metrics.get("fill_count"), 0) >= min_fills
+            and _int(metrics.get("matured_5d_sample_count"), 0) >= min_matured
+        )
+        rows.append(
+            {
+                "market": market,
+                **metrics,
+                "sample_ready": bool(sample_ready),
+                "quality_reasons": quality_reasons,
+                "evidence_ready": bool(sample_ready and not quality_reasons),
+            }
+        )
+    return rows
+
+
 def build_auto_order_submit_capacity_plan(
     weekly_summary: Mapping[str, Any] | None,
     *,
@@ -153,11 +363,25 @@ def build_auto_order_submit_capacity_plan(
     baseline_total = max(0.0, _float(normalized.get("baseline_submit_total_gross_order_value"), 100.0))
     if configured_total > 0.0:
         baseline_total = min(configured_total, baseline_total)
+    trial_portfolios = min(
+        configured_portfolios,
+        max(
+            baseline_portfolios,
+            _int(normalized.get("trial_submit_portfolios_per_run"), configured_portfolios),
+        ),
+    )
+    trial_total = max(
+        baseline_total,
+        _float(normalized.get("trial_submit_total_gross_order_value"), configured_total),
+    )
+    if configured_total > 0.0:
+        trial_total = min(configured_total, trial_total)
     if not bool(normalized.get("evidence_scaled_submit_enabled", False)):
         return {
             "status": "DISABLED",
             "reason": "evidence_scaled_submit_disabled",
             "scale_allowed": True,
+            "scale_stage": "configured",
             "effective_max_submit_portfolios_per_run": configured_portfolios,
             "effective_max_submit_total_gross_order_value": configured_total,
             "configured_max_submit_portfolios_per_run": configured_portfolios,
@@ -180,88 +404,142 @@ def build_auto_order_submit_capacity_plan(
         for row in list(weekly.get("edge_realization_summary") or [])
         if isinstance(row, Mapping)
     ]
-    fill_count = sum(max(0, _int(row.get("fill_count"), 0)) for row in session_rows)
-    submitted_count = sum(max(0, _int(row.get("submitted_order_rows"), 0)) for row in session_rows)
-    error_count = sum(max(0, _int(row.get("error_order_rows"), 0)) for row in feedback_rows)
-    slippage_values = [
-        _float(row.get("avg_actual_slippage_bps"), 0.0)
-        for row in session_rows
-        if row.get("avg_actual_slippage_bps") is not None and _int(row.get("fill_count"), 0) > 0
-    ]
-    avg_slippage_bps = (
-        sum(slippage_values) / len(slippage_values)
-        if slippage_values
-        else None
+    metrics = _execution_evidence_metrics(session_rows, feedback_rows, edge_rows)
+    market_rows = _market_evidence_rows(
+        session_rows,
+        feedback_rows,
+        edge_rows,
+        policy=normalized,
     )
-    matured_sample_count = sum(max(0, _int(row.get("matured_5d_sample_count"), 0)) for row in edge_rows)
-    realized_edge_total = sum(
-        _float(row.get("matured_5d_avg_realized_edge_bps"), 0.0)
-        * max(0, _int(row.get("matured_5d_sample_count"), 0))
-        for row in edge_rows
-        if row.get("matured_5d_avg_realized_edge_bps") is not None
-    )
-    avg_realized_edge_bps = (
-        realized_edge_total / matured_sample_count
-        if matured_sample_count > 0
-        else None
-    )
-    error_rate = error_count / max(1, submitted_count)
+    evidence_market_count = sum(1 for row in market_rows if bool(row.get("evidence_ready", False)))
     min_fills = max(1, _int(normalized.get("scale_min_filled_orders"), 5))
     min_matured = max(1, _int(normalized.get("scale_min_matured_edge_samples"), 5))
     min_realized_edge = _float(normalized.get("scale_min_realized_edge_bps"), 0.0)
     max_abs_slippage = max(0.0, _float(normalized.get("scale_max_abs_slippage_bps"), 15.0))
     max_error_rate = max(0.0, _float(normalized.get("scale_max_error_rate"), 0.05))
-    insufficient = fill_count < min_fills or matured_sample_count < min_matured
-    degraded_reasons: List[str] = []
-    if avg_realized_edge_bps is not None and avg_realized_edge_bps < min_realized_edge:
-        degraded_reasons.append("realized_edge_below_min")
-    if avg_slippage_bps is not None and abs(avg_slippage_bps) > max_abs_slippage:
-        degraded_reasons.append("realized_slippage_above_max")
-    if submitted_count > 0 and error_rate > max_error_rate:
-        degraded_reasons.append("execution_error_rate_above_max")
-    if insufficient:
+    trial_insufficient = (
+        _int(metrics.get("fill_count"), 0) < min_fills
+        or _int(metrics.get("matured_5d_sample_count"), 0) < min_matured
+    )
+    trial_degraded_reasons = _evidence_quality_reasons(
+        metrics,
+        min_realized_edge_bps=min_realized_edge,
+        max_abs_slippage_bps=max_abs_slippage,
+        max_error_rate=max_error_rate,
+    )
+
+    full_min_fills = max(1, _int(normalized.get("full_scale_min_filled_orders"), min_fills))
+    full_min_matured = max(
+        1,
+        _int(normalized.get("full_scale_min_matured_edge_samples"), min_matured),
+    )
+    full_min_markets = max(1, _int(normalized.get("full_scale_min_evidence_markets"), 1))
+    full_insufficient_reasons: List[str] = []
+    if _int(metrics.get("fill_count"), 0) < full_min_fills:
+        full_insufficient_reasons.append("full_scale_fill_samples_below_min")
+    if _int(metrics.get("matured_5d_sample_count"), 0) < full_min_matured:
+        full_insufficient_reasons.append("full_scale_matured_edge_samples_below_min")
+    if evidence_market_count < full_min_markets:
+        full_insufficient_reasons.append("full_scale_market_evidence_below_min")
+    full_degraded_reasons = _evidence_quality_reasons(
+        metrics,
+        min_realized_edge_bps=_float(
+            normalized.get("full_scale_min_realized_edge_bps"),
+            min_realized_edge,
+        ),
+        max_abs_slippage_bps=max(
+            0.0,
+            _float(normalized.get("full_scale_max_abs_slippage_bps"), max_abs_slippage),
+        ),
+        max_error_rate=max(
+            0.0,
+            _float(normalized.get("full_scale_max_error_rate"), max_error_rate),
+        ),
+    )
+    if trial_insufficient:
         status = "BASELINE_INSUFFICIENT_EVIDENCE"
         reason = "collect_fill_slippage_and_matured_edge_samples"
         scale_allowed = False
-    elif degraded_reasons:
+        scale_stage = "baseline"
+        effective_portfolios = baseline_portfolios
+        effective_total = baseline_total
+    elif trial_degraded_reasons:
         status = "HOLD_QUALITY_DEGRADED"
-        reason = ",".join(degraded_reasons)
+        reason = ",".join(trial_degraded_reasons)
         scale_allowed = False
-    else:
-        status = "SCALE_ALLOWED"
-        reason = "fill_slippage_and_post_cost_edge_pass"
+        scale_stage = "baseline"
+        effective_portfolios = baseline_portfolios
+        effective_total = baseline_total
+    elif not full_insufficient_reasons and not full_degraded_reasons:
+        status = "FULL_SCALE_ALLOWED"
+        reason = "full_scale_fill_slippage_post_cost_edge_and_market_coverage_pass"
         scale_allowed = True
+        scale_stage = "full"
+        effective_portfolios = configured_portfolios
+        effective_total = configured_total
+    else:
+        status = "TRIAL_SCALE_ALLOWED"
+        pending = full_insufficient_reasons + full_degraded_reasons
+        reason = "trial_quality_pass_full_scale_pending:" + ",".join(pending)
+        scale_allowed = True
+        scale_stage = "trial"
+        effective_portfolios = trial_portfolios
+        effective_total = trial_total
     return {
         "status": status,
         "reason": reason,
         "scale_allowed": bool(scale_allowed),
-        "effective_max_submit_portfolios_per_run": (
-            configured_portfolios if scale_allowed else baseline_portfolios
-        ),
-        "effective_max_submit_total_gross_order_value": (
-            configured_total if scale_allowed else baseline_total
-        ),
+        "scale_stage": scale_stage,
+        "effective_max_submit_portfolios_per_run": effective_portfolios,
+        "effective_max_submit_total_gross_order_value": effective_total,
         "configured_max_submit_portfolios_per_run": configured_portfolios,
         "configured_max_submit_total_gross_order_value": configured_total,
         "baseline_max_submit_portfolios_per_run": baseline_portfolios,
         "baseline_max_submit_total_gross_order_value": baseline_total,
-        "fill_count": int(fill_count),
-        "submitted_order_count": int(submitted_count),
-        "error_order_count": int(error_count),
-        "execution_error_rate": round(error_rate, 6),
+        "trial_max_submit_portfolios_per_run": trial_portfolios,
+        "trial_max_submit_total_gross_order_value": trial_total,
+        "fill_count": _int(metrics.get("fill_count"), 0),
+        "submitted_order_count": _int(metrics.get("submitted_order_count"), 0),
+        "error_order_count": _int(metrics.get("error_order_count"), 0),
+        "execution_error_rate": round(_float(metrics.get("execution_error_rate"), 0.0), 6),
         "avg_realized_slippage_bps": (
-            round(avg_slippage_bps, 6) if avg_slippage_bps is not None else None
+            round(_float(metrics.get("avg_realized_slippage_bps")), 6)
+            if metrics.get("avg_realized_slippage_bps") is not None
+            else None
         ),
-        "matured_5d_sample_count": int(matured_sample_count),
+        "matured_5d_sample_count": _int(metrics.get("matured_5d_sample_count"), 0),
         "avg_matured_5d_realized_edge_bps": (
-            round(avg_realized_edge_bps, 6) if avg_realized_edge_bps is not None else None
+            round(_float(metrics.get("avg_matured_5d_realized_edge_bps")), 6)
+            if metrics.get("avg_matured_5d_realized_edge_bps") is not None
+            else None
         ),
+        "evidence_market_count": int(evidence_market_count),
+        "market_evidence_rows": market_rows,
         "thresholds": {
-            "min_filled_orders": min_fills,
-            "min_matured_edge_samples": min_matured,
-            "min_realized_edge_bps": min_realized_edge,
-            "max_abs_slippage_bps": max_abs_slippage,
-            "max_error_rate": max_error_rate,
+            "trial": {
+                "min_filled_orders": min_fills,
+                "min_matured_edge_samples": min_matured,
+                "min_realized_edge_bps": min_realized_edge,
+                "max_abs_slippage_bps": max_abs_slippage,
+                "max_error_rate": max_error_rate,
+            },
+            "full": {
+                "min_filled_orders": full_min_fills,
+                "min_matured_edge_samples": full_min_matured,
+                "min_realized_edge_bps": _float(
+                    normalized.get("full_scale_min_realized_edge_bps"),
+                    min_realized_edge,
+                ),
+                "max_abs_slippage_bps": max(
+                    0.0,
+                    _float(normalized.get("full_scale_max_abs_slippage_bps"), max_abs_slippage),
+                ),
+                "max_error_rate": max(
+                    0.0,
+                    _float(normalized.get("full_scale_max_error_rate"), max_error_rate),
+                ),
+                "min_evidence_markets": full_min_markets,
+            },
         },
     }
 
@@ -297,6 +575,10 @@ def _submit_plan_policy_snapshot(
         ),
         "evidence_scaled_submit_enabled": bool(
             normalized_policy.get("evidence_scaled_submit_enabled", False)
+        ),
+        "max_submit_unevidenced_markets_per_run": max(
+            0,
+            _int(normalized_policy.get("max_submit_unevidenced_markets_per_run"), 1),
         ),
     }
 
@@ -1336,10 +1618,32 @@ def build_auto_order_submit_plan(
             str(row.get("portfolio_id") or ""),
         )
     )
+    evidence_ready_markets = {
+        _market(row.get("market"))
+        for row in list(capacity_plan.get("market_evidence_rows") or [])
+        if isinstance(row, Mapping) and bool(row.get("evidence_ready", False))
+    }
+    enforce_unevidenced_market_limit = str(capacity_plan.get("scale_stage") or "") in {"trial", "full"}
+    max_unevidenced_markets = (
+        max(0, _int(normalized_policy.get("max_submit_unevidenced_markets_per_run"), 1))
+        if enforce_unevidenced_market_limit
+        else len(candidate_rows)
+    )
+    unevidenced_markets: set[str] = set()
     market_counts: Dict[str, int] = {}
     market_limited_rows: List[Dict[str, Any]] = []
     for candidate in candidate_rows:
         market = _market(candidate.get("market"))
+        if market not in evidence_ready_markets and market not in unevidenced_markets:
+            if len(unevidenced_markets) >= max_unevidenced_markets:
+                rejection_rows.append(
+                    {
+                        **candidate,
+                        "reject_reasons": ["unevidenced_market_count_exceeds_policy"],
+                    }
+                )
+                continue
+            unevidenced_markets.add(market)
         current_count = int(market_counts.get(market, 0))
         if current_count >= max_per_market:
             rejection_rows.append({**candidate, "reject_reasons": ["market_portfolio_count_exceeds_policy"]})
@@ -1538,6 +1842,11 @@ def build_auto_order_frequency_plan(
         "submit_capacity_status": str(capacity_plan.get("status") or ""),
         "submit_capacity_reason": str(capacity_plan.get("reason") or ""),
         "submit_capacity_scale_allowed": bool(capacity_plan.get("scale_allowed", False)),
+        "submit_capacity_scale_stage": str(capacity_plan.get("scale_stage") or ""),
+        "submit_capacity_evidence_market_count": _int(
+            capacity_plan.get("evidence_market_count"),
+            0,
+        ),
         "effective_max_submit_portfolios_per_run": _int(
             capacity_plan.get("effective_max_submit_portfolios_per_run"),
             0,

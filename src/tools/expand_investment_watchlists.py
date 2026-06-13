@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping
@@ -256,9 +257,10 @@ def _reports_by_market(supervisor_config: Mapping[str, Any], *, include_cn: bool
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
     try:
-        return float(value)
+        parsed = float(value)
     except Exception:
         return float(default)
+    return parsed if math.isfinite(parsed) else float(default)
 
 
 def _resolve_profile(args: argparse.Namespace) -> AccountProfile | None:

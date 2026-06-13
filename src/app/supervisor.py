@@ -565,6 +565,124 @@ class Supervisor:
             self._refresh_weekly_feedback_threshold_overrides()
         return ok
 
+    def _watchlist_expansion_review_enabled(self) -> bool:
+        return bool(self.cfg.get("run_watchlist_expansion_review", False))
+
+    def _watchlist_expansion_review_output_dir(self) -> Path:
+        return self._summary_output_dir() / "watchlist_expansion"
+
+    def _watchlist_expansion_review_dependency_paths(self) -> List[Path]:
+        paths = [
+            _resolve_path(
+                str(
+                    self.cfg.get(
+                        "watchlist_expansion_seed_source_registry",
+                        "config/watchlist_seed_sources.yaml",
+                    )
+                )
+            ),
+            _resolve_path(
+                str(
+                    self.cfg.get(
+                        "watchlist_expansion_account_profile_config",
+                        "config/account_profiles.yaml",
+                    )
+                )
+            ),
+        ]
+        for market in self.markets:
+            for item in list(market.reports or []):
+                if str(item.get("kind", "investment") or "investment").strip().lower() != "investment":
+                    continue
+                report_market = resolve_market_code(str(item.get("market", market.market_code)))
+                report_dir = self._report_output_dir(item, report_market)
+                paths.extend(
+                    [
+                        report_dir / "investment_candidates.csv",
+                        report_dir / "investment_review_seed_candidates.csv",
+                    ]
+                )
+        return [path for path in paths if path.exists()]
+
+    def _watchlist_expansion_review_due(self, now: datetime) -> tuple[bool, str]:
+        if not self._watchlist_expansion_review_enabled():
+            return False, "disabled"
+        if bool(self.cfg.get("watchlist_expansion_only_when_all_markets_closed", True)):
+            open_markets = [
+                market.market_code
+                for market in self.markets
+                if market.enabled and self._market_exchange_open(market, now)
+            ]
+            if open_markets:
+                return False, f"markets_open:{','.join(open_markets)}"
+        marker = self._watchlist_expansion_review_output_dir() / "watchlist_expansion_summary.json"
+        if not marker.exists():
+            return True, "missing_artifact"
+        marker_mtime = marker.stat().st_mtime
+        if any(path.stat().st_mtime > marker_mtime for path in self._watchlist_expansion_review_dependency_paths()):
+            return True, "dependency_newer_than_artifact"
+        interval_min = max(1, int(self.cfg.get("watchlist_expansion_interval_min", 180) or 180))
+        age_sec = now.timestamp() - marker_mtime
+        if age_sec >= 0 and age_sec < interval_min * 60:
+            return False, "interval_not_elapsed"
+        return True, "interval_elapsed"
+
+    def _run_watchlist_expansion_review(self, now: datetime, *, force: bool = False) -> bool:
+        due, reason = self._watchlist_expansion_review_due(now)
+        if force:
+            due = True
+            reason = "forced"
+        if not due:
+            return False
+        scope = self._primary_runtime_scope()
+        runtime_root = scope.root(BASE_DIR) if scope is not None else (BASE_DIR / "runtime_data").resolve()
+        analysis_dir = self._watchlist_expansion_review_output_dir()
+        cmd = [
+            sys.executable,
+            "-m",
+            "src.tools.expand_investment_watchlists",
+            "--config",
+            str(_resolve_path(self.config_path)),
+            "--runtime_root",
+            str(runtime_root),
+            "--out_dir",
+            str(analysis_dir / "generated_watchlists"),
+            "--analysis_dir",
+            str(analysis_dir),
+            "--account_profile_config",
+            str(
+                _resolve_path(
+                    str(
+                        self.cfg.get(
+                            "watchlist_expansion_account_profile_config",
+                            "config/account_profiles.yaml",
+                        )
+                    )
+                )
+            ),
+            "--seed_source_registry",
+            str(
+                _resolve_path(
+                    str(
+                        self.cfg.get(
+                            "watchlist_expansion_seed_source_registry",
+                            "config/watchlist_seed_sources.yaml",
+                        )
+                    )
+                )
+            ),
+            "--account_equity",
+            str(_coerce_float(self.cfg.get("watchlist_expansion_account_equity"), 0.0)),
+        ]
+        account_profile = str(self.cfg.get("watchlist_expansion_account_profile", "") or "").strip()
+        if account_profile:
+            cmd.extend(["--account_profile", account_profile])
+        return self._run_cmd(
+            f"expand_investment_watchlists:{reason}",
+            cmd,
+            timeout_sec=float(self.cfg.get("watchlist_expansion_timeout_sec", 120)),
+        )
+
     def _dashboard_control_enabled(self) -> bool:
         return bool(self.cfg.get("dashboard_control_enabled", False))
 
@@ -5884,9 +6002,16 @@ class Supervisor:
                 now,
                 force=bool(labeling_ran and self._weekly_review_enabled()),
             )
+            watchlist_expansion_ran = self._run_watchlist_expansion_review(now)
             summary_changed = self._write_cycle_summary(now, cycle_summary)
             auto_order_readiness_changed = self._write_auto_order_readiness_summary(now)
-            if summary_changed or auto_order_readiness_changed or labeling_ran or weekly_review_ran:
+            if (
+                summary_changed
+                or auto_order_readiness_changed
+                or labeling_ran
+                or weekly_review_ran
+                or watchlist_expansion_ran
+            ):
                 self._refresh_dashboard()
             self._write_dashboard_control_state()
         finally:
