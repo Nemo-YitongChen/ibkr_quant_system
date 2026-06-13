@@ -292,6 +292,7 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
     health = _dict(payload.get("auto_order_readiness_health"))
     summary = _dict(auto_order.get("summary"))
     submit_plan = _dict(summary.get("submit_plan"))
+    submit_capacity_plan = _dict(submit_plan.get("submit_capacity_plan"))
     frequency_plan = _auto_order_frequency_plan_with_watchlist_fallback(
         _dict(summary.get("frequency_plan")),
         payload,
@@ -383,6 +384,19 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "frequency_plan_does_not_change_submit_decision": int(
                 bool(frequency_plan.get("does_not_change_submit_decision", False))
             ),
+            "submit_capacity_status": str(submit_capacity_plan.get("status") or ""),
+            "submit_capacity_reason": str(submit_capacity_plan.get("reason") or ""),
+            "submit_capacity_scale_allowed": int(bool(submit_capacity_plan.get("scale_allowed", False))),
+            "submit_capacity_fill_count": _int(submit_capacity_plan.get("fill_count")),
+            "submit_capacity_matured_5d_sample_count": _int(
+                submit_capacity_plan.get("matured_5d_sample_count")
+            ),
+            "submit_capacity_effective_max_portfolios": _int(
+                submit_capacity_plan.get("effective_max_submit_portfolios_per_run")
+            ),
+            "submit_capacity_effective_max_total_gross": float(
+                submit_capacity_plan.get("effective_max_submit_total_gross_order_value", 0.0) or 0.0
+            ),
             "recovery_plan_status": str(recovery_plan.get("status") or ""),
             "recovery_plan_primary_action": str(recovery_plan.get("primary_action") or ""),
             "recovery_plan_target_market": str(recovery_plan.get("target_market") or ""),
@@ -428,6 +442,7 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
         },
         "rows": {
             "submit_plan": submit_plan,
+            "submit_capacity_plan": submit_capacity_plan,
             "remediation_plan": remediation_plan,
             "frequency_plan": frequency_plan,
             "recovery_plan": recovery_plan,
@@ -693,6 +708,10 @@ def build_watchlist_expansion_block(payload: Dict[str, Any]) -> Dict[str, Any]:
         fallback_summary.get("seed_intake_plan"),
         limit=20,
     )
+    seed_promotion_review = _rows(summary.get("seed_promotion_review"), limit=50) or _rows(
+        fallback_summary.get("seed_promotion_review"),
+        limit=50,
+    )
     account_growth_tier_plan = _dict(summary.get("account_growth_tier_plan")) or _dict(
         fallback_summary.get("account_growth_tier_plan")
     )
@@ -770,6 +789,27 @@ def build_watchlist_expansion_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "seed_intake_manual_review_count": seed_intake_manual_review_count,
             "seed_source_candidate_count": seed_source_candidate_count,
             "seed_source_market_count": seed_source_market_count,
+            "seed_promotion_review_count": len(seed_promotion_review),
+            "seed_promotion_ready_count": sum(
+                1
+                for row in seed_promotion_review
+                if str(row.get("promotion_status") or "") == "PROMOTION_REVIEW_READY"
+            ),
+            "seed_promotion_mapping_required_count": sum(
+                1
+                for row in seed_promotion_review
+                if str(row.get("promotion_status") or "") == "BROKER_MAPPING_REQUIRED"
+            ),
+            "seed_promotion_candidate_report_required_count": sum(
+                1
+                for row in seed_promotion_review
+                if str(row.get("promotion_status") or "") == "CANDIDATE_REPORT_REQUIRED"
+            ),
+            "seed_promotion_quality_rejected_count": sum(
+                1
+                for row in seed_promotion_review
+                if str(row.get("promotion_status") or "") == "QUALITY_REJECTED"
+            ),
             "primary_seed_intake_status": str(seed_intake_plan[0].get("intake_status") if seed_intake_plan else ""),
             "primary_seed_intake_next_action": str(seed_intake_plan[0].get("next_action") if seed_intake_plan else ""),
             "account_growth_profile": str(account_growth_tier_plan.get("profile") or ""),
@@ -791,6 +831,7 @@ def build_watchlist_expansion_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "market_recommendations": market_recommendations,
             "seed_proposals": seed_proposals,
             "seed_intake_plan": seed_intake_plan,
+            "seed_promotion_review": seed_promotion_review,
             "account_growth_tier_plan": account_growth_tier_plan,
             "policy": _dict(summary.get("policy")),
         },

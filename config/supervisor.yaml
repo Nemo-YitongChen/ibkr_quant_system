@@ -62,6 +62,14 @@ auto_order_readiness:
   max_submit_orders_per_portfolio: 1
   max_submit_gross_order_value: 100.0
   max_submit_total_gross_order_value: 400.0
+  evidence_scaled_submit_enabled: true
+  baseline_submit_portfolios_per_run: 1
+  baseline_submit_total_gross_order_value: 100.0
+  scale_min_filled_orders: 5
+  scale_min_matured_edge_samples: 5
+  scale_min_realized_edge_bps: 0.0
+  scale_max_abs_slippage_bps: 15.0
+  scale_max_error_rate: 0.05
   require_buy_order_for_submit: true
   block_on_submit_quality_not_pass: true
   min_submit_net_edge_bps: 8.0

@@ -363,6 +363,20 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
                     "does_not_change_symbol_master": True,
                 }
                 ],
+                "seed_promotion_review": [
+                    {
+                        "market": "HK",
+                        "symbol": "2800.HK",
+                        "promotion_status": "BROKER_MAPPING_REQUIRED",
+                        "does_not_change_symbol_master": True,
+                    },
+                    {
+                        "market": "HK",
+                        "symbol": "2833.HK",
+                        "promotion_status": "QUALITY_REJECTED",
+                        "does_not_change_symbol_master": True,
+                    },
+                ],
                 "account_growth_tier_plan": {
                     "profile": "small",
                     "primary_action": "verify_seed_etfs_in_candidate_report_before_submit",
@@ -506,6 +520,10 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
     assert by_id["watchlist_expansion"]["metrics"]["seed_intake_manual_review_count"] == 1
     assert by_id["watchlist_expansion"]["metrics"]["seed_source_candidate_count"] == 2
     assert by_id["watchlist_expansion"]["metrics"]["seed_source_market_count"] == 1
+    assert by_id["watchlist_expansion"]["metrics"]["seed_promotion_review_count"] == 2
+    assert by_id["watchlist_expansion"]["metrics"]["seed_promotion_ready_count"] == 0
+    assert by_id["watchlist_expansion"]["metrics"]["seed_promotion_mapping_required_count"] == 1
+    assert by_id["watchlist_expansion"]["metrics"]["seed_promotion_quality_rejected_count"] == 1
     assert by_id["watchlist_expansion"]["metrics"]["primary_seed_intake_status"] == "MANUAL_REVIEW_REQUIRED"
     assert by_id["watchlist_expansion"]["metrics"]["account_growth_profile"] == "small"
     assert (
@@ -518,6 +536,7 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
     assert by_id["watchlist_expansion"]["rows"]["market_recommendations"][0]["market"] == "HK"
     assert by_id["watchlist_expansion"]["rows"]["seed_proposals"][0]["market"] == "HK"
     assert by_id["watchlist_expansion"]["rows"]["seed_intake_plan"][0]["does_not_change_symbol_master"] is True
+    assert by_id["watchlist_expansion"]["rows"]["seed_promotion_review"][0]["symbol"] == "2800.HK"
     assert by_id["watchlist_expansion"]["rows"]["account_growth_tier_plan"]["read_only"] is True
     assert by_id["evidence_focus_actions"]["status"] == "warn"
     assert by_id["evidence_focus_actions"]["metrics"]["focus_action_count"] == 3

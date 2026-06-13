@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Mapping, Sequence
 
 
@@ -357,10 +358,141 @@ def watchlist_seed_source_candidates(
                 "source_url": str(row.get("source_url") or "").strip(),
                 "source_verified_at": str(row.get("source_verified_at") or "").strip(),
                 "broker_mapping_status": str(row.get("broker_mapping_status") or "TO_VERIFY").strip().upper(),
+                "reference_price": _float(row.get("reference_price"), 0.0),
+                "reference_price_currency": str(row.get("reference_price_currency") or "").strip().upper(),
+                "reference_price_at": str(row.get("reference_price_at") or "").strip(),
                 "rationale": str(row.get("rationale") or "").strip(),
             }
         )
     return normalized
+
+
+def _source_age_days(value: Any, *, now: datetime) -> float | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return max(0.0, (now.astimezone(timezone.utc) - parsed.astimezone(timezone.utc)).total_seconds() / 86400.0)
+
+
+def _latest_candidate_rows_by_symbol(rows: Iterable[Mapping[str, Any]]) -> Dict[tuple[str, str], Dict[str, Any]]:
+    latest: Dict[tuple[str, str], Dict[str, Any]] = {}
+    for raw in list(rows or []):
+        row = dict(raw or {})
+        symbol = _symbol(row.get("symbol"))
+        market = str(row.get("market") or "").strip().upper()
+        if not symbol:
+            continue
+        key = (market, symbol)
+        current = latest.get(key)
+        if current is None or _float(row.get("score"), 0.0) > _float(current.get("score"), 0.0):
+            latest[key] = row
+    return latest
+
+
+def build_watchlist_seed_promotion_review(
+    seed_intake_plan: Iterable[Mapping[str, Any]],
+    candidate_rows: Iterable[Mapping[str, Any]],
+    *,
+    policy: WatchlistExpansionPolicy | Mapping[str, Any] | None = None,
+    now: datetime | None = None,
+    max_source_age_days: float = 90.0,
+) -> List[Dict[str, Any]]:
+    """Evaluate whether review seeds have enough evidence for manual promotion."""
+    effective_policy = (
+        policy
+        if isinstance(policy, WatchlistExpansionPolicy)
+        else WatchlistExpansionPolicy.from_mapping(policy if isinstance(policy, Mapping) else None)
+    )
+    now_dt = now or datetime.now(timezone.utc)
+    candidate_by_key = _latest_candidate_rows_by_symbol(candidate_rows)
+    mapping_ready = {"MAPPED", "PASS", "QUALIFIED", "RESOLVED", "VERIFIED"}
+    reviews: List[Dict[str, Any]] = []
+    for intake_raw in list(seed_intake_plan or []):
+        intake = dict(intake_raw or {})
+        market = str(intake.get("market") or "").strip().upper()
+        for source_raw in list(intake.get("source_candidates") or []):
+            if not isinstance(source_raw, Mapping):
+                continue
+            source = dict(source_raw)
+            symbol = _symbol(source.get("symbol"))
+            if not market or not symbol:
+                continue
+            source_age_days = _source_age_days(source.get("source_verified_at"), now=now_dt)
+            source_fresh = source_age_days is not None and source_age_days <= max(0.0, float(max_source_age_days))
+            broker_mapping_status = str(source.get("broker_mapping_status") or "TO_VERIFY").strip().upper()
+            candidate = dict(candidate_by_key.get((market, symbol)) or candidate_by_key.get(("", symbol)) or {})
+            evaluation = dict(candidate)
+            if candidate:
+                evaluation["action"] = str(
+                    candidate.get("review_seed_original_action") or candidate.get("action") or ""
+                ).strip().upper()
+                evaluation["execution_ready"] = candidate.get(
+                    "review_seed_original_execution_ready",
+                    candidate.get("execution_ready"),
+                )
+            quality_reasons = _selection_reasons(evaluation, effective_policy) if candidate else []
+            if not source_fresh:
+                status = "SOURCE_REFRESH_REQUIRED"
+                next_action = "refresh_official_source_evidence"
+            elif not candidate:
+                status = "CANDIDATE_REPORT_REQUIRED"
+                next_action = "run_candidate_report_for_seed"
+            elif quality_reasons:
+                status = "QUALITY_REJECTED"
+                next_action = "keep_review_only_and_recheck_after_new_evidence"
+            elif broker_mapping_status not in mapping_ready:
+                status = "BROKER_MAPPING_REQUIRED"
+                next_action = "verify_ibkr_contract_mapping_and_market_rules"
+            else:
+                status = "PROMOTION_REVIEW_READY"
+                next_action = "manual_review_before_symbol_master_promotion"
+            reviews.append(
+                {
+                    "market": market,
+                    "symbol": symbol,
+                    "asset_class": str(source.get("asset_class") or "").strip().lower(),
+                    "promotion_status": status,
+                    "next_action": next_action,
+                    "source_verified_at": str(source.get("source_verified_at") or ""),
+                    "source_age_days": round(source_age_days, 3) if source_age_days is not None else None,
+                    "source_fresh": bool(source_fresh),
+                    "broker_mapping_status": broker_mapping_status,
+                    "candidate_evidence_present": bool(candidate),
+                    "candidate_original_action": str(evaluation.get("action") or ""),
+                    "candidate_original_execution_ready": int(_boolish(evaluation.get("execution_ready"))),
+                    "quality_reasons": quality_reasons,
+                    "score": round(_float(candidate.get("score"), 0.0), 6),
+                    "expected_edge_bps": round(_expected_edge_bps(candidate), 6),
+                    "expected_cost_bps": round(_float(candidate.get("expected_cost_bps"), 0.0), 6),
+                    "whole_share_edge_margin_bps": round(
+                        _float(candidate.get("whole_share_edge_margin_bps"), 0.0),
+                        6,
+                    ),
+                    "whole_share_tradability_reason": str(
+                        candidate.get("whole_share_tradability_reason") or ""
+                    ).strip().upper(),
+                    "reference_price": round(_float(source.get("reference_price"), 0.0), 6),
+                    "reference_price_currency": str(source.get("reference_price_currency") or ""),
+                    "reference_price_at": str(source.get("reference_price_at") or ""),
+                    "auto_apply": False,
+                    "does_not_change_symbol_master": True,
+                    "submit_gate_policy": "do_not_relax_submit_gates",
+                }
+            )
+    reviews.sort(
+        key=lambda row: (
+            0 if str(row.get("promotion_status") or "") == "PROMOTION_REVIEW_READY" else 1,
+            str(row.get("market") or ""),
+            str(row.get("symbol") or ""),
+        )
+    )
+    return reviews
 
 
 def build_watchlist_seed_proposals(market_recommendations: Iterable[Mapping[str, Any]]) -> List[Dict[str, Any]]:
@@ -570,6 +702,8 @@ def summarize_watchlist_expansion(
     policy: WatchlistExpansionPolicy | Mapping[str, Any] | None = None,
     seed_source_registry: Mapping[str, Any] | None = None,
     account_profile: Mapping[str, Any] | None = None,
+    seed_candidate_rows: Iterable[Mapping[str, Any]] = (),
+    now: datetime | None = None,
 ) -> Dict[str, Any]:
     clean_rows = [dict(row or {}) for row in list(rows or [])]
     clean_market_rows = [dict(row or {}) for row in list(market_rows or [])]
@@ -630,6 +764,28 @@ def summarize_watchlist_expansion(
         market_recommendations,
         seed_source_registry=seed_source_registry,
     )
+    seed_promotion_review = build_watchlist_seed_promotion_review(
+        seed_intake_plan,
+        list(seed_candidate_rows or []) or clean_rows,
+        policy=policy,
+        now=now,
+    )
+    promotion_by_market: Dict[str, List[Dict[str, Any]]] = {}
+    for review in seed_promotion_review:
+        promotion_by_market.setdefault(str(review.get("market") or ""), []).append(review)
+    seed_intake_plan = [
+        {
+            **row,
+            "promotion_review": promotion_by_market.get(str(row.get("market") or ""), []),
+            "promotion_review_count": len(promotion_by_market.get(str(row.get("market") or ""), [])),
+            "promotion_ready_count": sum(
+                1
+                for review in promotion_by_market.get(str(row.get("market") or ""), [])
+                if str(review.get("promotion_status") or "") == "PROMOTION_REVIEW_READY"
+            ),
+        }
+        for row in seed_intake_plan
+    ]
     account_growth_tier_plan = build_account_growth_tier_plan(
         account_profile,
         market_recommendations=market_recommendations,
@@ -657,6 +813,33 @@ def summarize_watchlist_expansion(
         ),
         "seed_source_candidate_count": sum(int(row.get("source_candidate_count", 0) or 0) for row in seed_intake_plan),
         "seed_source_market_count": sum(1 for row in seed_intake_plan if int(row.get("source_candidate_count", 0) or 0) > 0),
+        "seed_promotion_review": seed_promotion_review,
+        "seed_promotion_review_count": len(seed_promotion_review),
+        "seed_promotion_ready_count": sum(
+            1
+            for row in seed_promotion_review
+            if str(row.get("promotion_status") or "") == "PROMOTION_REVIEW_READY"
+        ),
+        "seed_promotion_mapping_required_count": sum(
+            1
+            for row in seed_promotion_review
+            if str(row.get("promotion_status") or "") == "BROKER_MAPPING_REQUIRED"
+        ),
+        "seed_promotion_candidate_report_required_count": sum(
+            1
+            for row in seed_promotion_review
+            if str(row.get("promotion_status") or "") == "CANDIDATE_REPORT_REQUIRED"
+        ),
+        "seed_promotion_source_refresh_required_count": sum(
+            1
+            for row in seed_promotion_review
+            if str(row.get("promotion_status") or "") == "SOURCE_REFRESH_REQUIRED"
+        ),
+        "seed_promotion_quality_rejected_count": sum(
+            1
+            for row in seed_promotion_review
+            if str(row.get("promotion_status") or "") == "QUALITY_REJECTED"
+        ),
         "primary_recommendation_market": str(primary.get("market") or ""),
         "primary_recommendation_reason": str(primary.get("top_reject_reason") or ""),
         "primary_recommendation_action": str(primary.get("recommendation_action") or ""),

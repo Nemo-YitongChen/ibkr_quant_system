@@ -11,6 +11,7 @@ from src.common.auto_order_readiness import (
     WARNING_STATUS,
     build_auto_order_frequency_plan,
     build_auto_order_recovery_plan,
+    build_auto_order_submit_capacity_plan,
     build_auto_order_submit_plan,
     build_auto_order_readiness_summary,
     evaluate_auto_order_readiness,
@@ -324,6 +325,161 @@ def test_auto_order_submit_plan_requires_operator_selection_for_multiple_candida
     assert plan["status"] == "REVIEW_REQUIRED"
     assert plan["reason"] == "multiple_submit_candidates_require_operator_selection"
     assert plan["frontier_candidate_count"] == 2
+
+
+def test_submit_capacity_stays_at_small_account_baseline_without_fill_evidence() -> None:
+    capacity = build_auto_order_submit_capacity_plan(
+        {
+            "execution_session_summary": [
+                {
+                    "submitted_order_rows": 0,
+                    "fill_count": 0,
+                    "avg_actual_slippage_bps": None,
+                }
+            ],
+            "edge_realization_summary": [
+                {
+                    "matured_5d_sample_count": 0,
+                    "matured_5d_avg_realized_edge_bps": None,
+                }
+            ],
+        },
+        policy={
+            "enabled": True,
+            "evidence_scaled_submit_enabled": True,
+            "max_submit_portfolios_per_run": 4,
+            "max_submit_total_gross_order_value": 400.0,
+            "baseline_submit_portfolios_per_run": 1,
+            "baseline_submit_total_gross_order_value": 100.0,
+            "scale_min_filled_orders": 5,
+            "scale_min_matured_edge_samples": 5,
+        },
+    )
+
+    assert capacity["status"] == "BASELINE_INSUFFICIENT_EVIDENCE"
+    assert capacity["scale_allowed"] is False
+    assert capacity["effective_max_submit_portfolios_per_run"] == 1
+    assert capacity["effective_max_submit_total_gross_order_value"] == 100.0
+
+
+def test_submit_capacity_scales_only_after_fill_slippage_and_realized_edge_pass() -> None:
+    weekly = {
+        "execution_session_summary": [
+            {
+                "submitted_order_rows": 6,
+                "fill_count": 6,
+                "avg_actual_slippage_bps": 4.0,
+            }
+        ],
+        "execution_feedback_summary": [{"error_order_rows": 0}],
+        "edge_realization_summary": [
+            {
+                "matured_5d_sample_count": 6,
+                "matured_5d_avg_realized_edge_bps": 12.0,
+            }
+        ],
+    }
+    policy = {
+        "enabled": True,
+        "evidence_scaled_submit_enabled": True,
+        "max_submit_portfolios_per_run": 4,
+        "max_submit_total_gross_order_value": 400.0,
+        "baseline_submit_portfolios_per_run": 1,
+        "baseline_submit_total_gross_order_value": 100.0,
+        "scale_min_filled_orders": 5,
+        "scale_min_matured_edge_samples": 5,
+        "scale_min_realized_edge_bps": 0.0,
+        "scale_max_abs_slippage_bps": 15.0,
+        "scale_max_error_rate": 0.05,
+    }
+
+    capacity = build_auto_order_submit_capacity_plan(weekly, policy=policy)
+
+    assert capacity["status"] == "SCALE_ALLOWED"
+    assert capacity["scale_allowed"] is True
+    assert capacity["effective_max_submit_portfolios_per_run"] == 4
+    assert capacity["effective_max_submit_total_gross_order_value"] == 400.0
+
+
+def test_submit_capacity_holds_baseline_when_realized_quality_degrades() -> None:
+    capacity = build_auto_order_submit_capacity_plan(
+        {
+            "execution_session_summary": [
+                {
+                    "submitted_order_rows": 8,
+                    "fill_count": 8,
+                    "avg_actual_slippage_bps": 19.0,
+                }
+            ],
+            "execution_feedback_summary": [{"error_order_rows": 1}],
+            "edge_realization_summary": [
+                {
+                    "matured_5d_sample_count": 8,
+                    "matured_5d_avg_realized_edge_bps": -3.0,
+                }
+            ],
+        },
+        policy={
+            "enabled": True,
+            "evidence_scaled_submit_enabled": True,
+            "max_submit_portfolios_per_run": 4,
+            "max_submit_total_gross_order_value": 400.0,
+            "baseline_submit_portfolios_per_run": 1,
+            "baseline_submit_total_gross_order_value": 100.0,
+            "scale_min_filled_orders": 5,
+            "scale_min_matured_edge_samples": 5,
+            "scale_min_realized_edge_bps": 0.0,
+            "scale_max_abs_slippage_bps": 15.0,
+            "scale_max_error_rate": 0.05,
+        },
+    )
+
+    assert capacity["status"] == "HOLD_QUALITY_DEGRADED"
+    assert capacity["scale_allowed"] is False
+    assert capacity["reason"] == (
+        "realized_edge_below_min,realized_slippage_above_max,"
+        "execution_error_rate_above_max"
+    )
+    assert capacity["effective_max_submit_portfolios_per_run"] == 1
+    assert capacity["effective_max_submit_total_gross_order_value"] == 100.0
+
+
+def test_submit_plan_applies_evidence_capacity_to_multiple_ready_markets() -> None:
+    rows = [
+        {
+            "ready": True,
+            "account_mode": "paper",
+            "market": market,
+            "portfolio_id": f"{market}:portfolio",
+            "market_readiness_status": "READY_FOR_PAPER_REVIEW",
+            "market_readiness_order_count": 1,
+            "market_readiness_planned_gross_order_value": 80.0,
+            "market_readiness_planned_buy_order_value": 80.0,
+        }
+        for market in ("US", "ASX")
+    ]
+    plan = build_auto_order_submit_plan(
+        rows,
+        policy={
+            "enabled": True,
+            "evidence_scaled_submit_enabled": True,
+            "max_submit_portfolios_per_run": 4,
+            "max_submit_portfolios_per_market": 1,
+            "max_submit_orders_per_portfolio": 1,
+            "max_submit_gross_order_value": 100.0,
+            "max_submit_total_gross_order_value": 400.0,
+            "baseline_submit_portfolios_per_run": 1,
+            "baseline_submit_total_gross_order_value": 100.0,
+            "require_buy_order_for_submit": True,
+        },
+        weekly_summary={},
+    )
+
+    assert plan["status"] == "REVIEW_REQUIRED"
+    assert plan["reason"] == "multiple_submit_candidates_require_operator_selection"
+    assert plan["policy"]["max_submit_portfolios_per_run"] == 1
+    assert plan["policy"]["configured_max_submit_portfolios_per_run"] == 4
+    assert plan["submit_capacity_plan"]["status"] == "BASELINE_INSUFFICIENT_EVIDENCE"
 
 
 def test_auto_order_submit_plan_allows_multi_market_candidates_with_market_cap() -> None:

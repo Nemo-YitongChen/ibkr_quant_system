@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from src.common.watchlist_expansion import (
     WatchlistExpansionPolicy,
     build_account_growth_tier_plan,
     build_watchlist_seed_intake_plan,
+    build_watchlist_seed_promotion_review,
     build_watchlist_seed_proposals,
     build_watchlist_expansion_rows,
     selected_watchlist_symbols,
@@ -444,3 +447,102 @@ def test_watchlist_seed_intake_plan_uses_review_only_source_registry() -> None:
     assert plan[0]["next_action"] == "verify_seed_source_candidates_in_candidate_report"
     assert plan[0]["auto_apply"] is False
     assert plan[0]["does_not_change_symbol_master"] is True
+
+
+def test_watchlist_seed_promotion_review_requires_mapping_before_manual_promotion() -> None:
+    intake = [
+        {
+            "market": "ASX",
+            "source_candidates": [
+                {
+                    "symbol": "BGBL.AX",
+                    "asset_class": "etf",
+                    "source_verified_at": "2026-06-11",
+                    "broker_mapping_status": "TO_VERIFY",
+                    "reference_price": 83.42,
+                    "reference_price_currency": "AUD",
+                    "reference_price_at": "2026-06-11",
+                }
+            ],
+        }
+    ]
+    rows = [
+        {
+            "market": "ASX",
+            "symbol": "BGBL.AX",
+            "review_seed_original_action": "ACCUMULATE",
+            "review_seed_original_execution_ready": 1,
+            "asset_class": "etf",
+            "score": 0.7,
+            "data_quality_score": 0.9,
+            "liquidity_score": 0.85,
+            "expected_cost_bps": 20.0,
+            "expected_edge_bps": 40.0,
+            "whole_share_edge_margin_bps": 12.0,
+            "whole_share_tradability_reason": "PASS",
+            "last_close": 83.0,
+        }
+    ]
+
+    review = build_watchlist_seed_promotion_review(
+        intake,
+        rows,
+        policy=WatchlistExpansionPolicy(
+            min_score=0.55,
+            min_data_quality_score=0.75,
+            min_liquidity_score=0.65,
+            max_expected_cost_bps=35.0,
+            min_expected_edge_bps=20.0,
+            min_whole_share_edge_margin_bps=2.0,
+            max_last_close=100.0,
+            preferred_asset_classes=("etf",),
+        ),
+        now=datetime(2026, 6, 14, tzinfo=timezone.utc),
+    )
+
+    assert review[0]["promotion_status"] == "BROKER_MAPPING_REQUIRED"
+    assert review[0]["candidate_evidence_present"] is True
+    assert review[0]["quality_reasons"] == []
+    assert review[0]["reference_price"] == 83.42
+    assert review[0]["auto_apply"] is False
+
+
+def test_watchlist_seed_promotion_review_marks_quality_pass_as_review_ready() -> None:
+    review = build_watchlist_seed_promotion_review(
+        [
+            {
+                "market": "ASX",
+                "source_candidates": [
+                    {
+                        "symbol": "DHHF.AX",
+                        "asset_class": "etf",
+                        "source_verified_at": "2026-06-11",
+                        "broker_mapping_status": "VERIFIED",
+                    }
+                ],
+            }
+        ],
+        [
+            {
+                "market": "ASX",
+                "symbol": "DHHF.AX",
+                "review_seed_original_action": "HOLD",
+                "review_seed_original_execution_ready": 1,
+                "asset_class": "etf",
+                "score": 0.62,
+                "data_quality_score": 0.88,
+                "liquidity_score": 0.8,
+                "expected_cost_bps": 18.0,
+                "expected_edge_bps": 35.0,
+                "whole_share_edge_margin_bps": 9.0,
+                "whole_share_tradability_reason": "PASS",
+                "last_close": 41.0,
+            }
+        ],
+        policy=WatchlistExpansionPolicy(max_last_close=100.0, preferred_asset_classes=("etf",)),
+        now=datetime(2026, 6, 14, tzinfo=timezone.utc),
+    )
+
+    assert review[0]["promotion_status"] == "PROMOTION_REVIEW_READY"
+    assert review[0]["next_action"] == "manual_review_before_symbol_master_promotion"
+    assert review[0]["does_not_change_symbol_master"] is True

@@ -96,6 +96,29 @@ def normalize_auto_order_readiness_policy(raw: Mapping[str, Any] | None) -> Dict
             source.get("max_submit_total_gross_order_value"),
             0.0,
         ),
+        "evidence_scaled_submit_enabled": bool(source.get("evidence_scaled_submit_enabled", False)),
+        "baseline_submit_portfolios_per_run": max(
+            1,
+            _int(source.get("baseline_submit_portfolios_per_run"), 1),
+        ),
+        "baseline_submit_total_gross_order_value": max(
+            0.0,
+            _float(source.get("baseline_submit_total_gross_order_value"), 100.0),
+        ),
+        "scale_min_filled_orders": max(1, _int(source.get("scale_min_filled_orders"), 5)),
+        "scale_min_matured_edge_samples": max(
+            1,
+            _int(source.get("scale_min_matured_edge_samples"), 5),
+        ),
+        "scale_min_realized_edge_bps": _float(source.get("scale_min_realized_edge_bps"), 0.0),
+        "scale_max_abs_slippage_bps": max(
+            0.0,
+            _float(source.get("scale_max_abs_slippage_bps"), 15.0),
+        ),
+        "scale_max_error_rate": max(
+            0.0,
+            min(1.0, _float(source.get("scale_max_error_rate"), 0.05)),
+        ),
         "require_buy_order_for_submit": bool(source.get("require_buy_order_for_submit", False)),
         "block_on_submit_quality_not_pass": bool(source.get("block_on_submit_quality_not_pass", True)),
         "min_submit_net_edge_bps": _float(source.get("min_submit_net_edge_bps"), 8.0),
@@ -111,6 +134,170 @@ def normalize_auto_order_readiness_policy(raw: Mapping[str, Any] | None) -> Dict
         ),
         "block_on_degraded_strategy_followup": bool(source.get("block_on_degraded_strategy_followup", True)),
         "warn_on_open_strategy_suggestions": bool(source.get("warn_on_open_strategy_suggestions", True)),
+    }
+
+
+def build_auto_order_submit_capacity_plan(
+    weekly_summary: Mapping[str, Any] | None,
+    *,
+    policy: Mapping[str, Any] | None = None,
+) -> Dict[str, Any]:
+    """Derive current paper-submit capacity from realized execution evidence."""
+    normalized = normalize_auto_order_readiness_policy(policy)
+    configured_portfolios = max(1, _int(normalized.get("max_submit_portfolios_per_run"), 1))
+    configured_total = max(0.0, _float(normalized.get("max_submit_total_gross_order_value"), 0.0))
+    baseline_portfolios = min(
+        configured_portfolios,
+        max(1, _int(normalized.get("baseline_submit_portfolios_per_run"), 1)),
+    )
+    baseline_total = max(0.0, _float(normalized.get("baseline_submit_total_gross_order_value"), 100.0))
+    if configured_total > 0.0:
+        baseline_total = min(configured_total, baseline_total)
+    if not bool(normalized.get("evidence_scaled_submit_enabled", False)):
+        return {
+            "status": "DISABLED",
+            "reason": "evidence_scaled_submit_disabled",
+            "scale_allowed": True,
+            "effective_max_submit_portfolios_per_run": configured_portfolios,
+            "effective_max_submit_total_gross_order_value": configured_total,
+            "configured_max_submit_portfolios_per_run": configured_portfolios,
+            "configured_max_submit_total_gross_order_value": configured_total,
+        }
+
+    weekly = dict(weekly_summary or {})
+    session_rows = [
+        dict(row)
+        for row in list(weekly.get("execution_session_summary") or [])
+        if isinstance(row, Mapping)
+    ]
+    feedback_rows = [
+        dict(row)
+        for row in list(weekly.get("execution_feedback_summary") or [])
+        if isinstance(row, Mapping)
+    ]
+    edge_rows = [
+        dict(row)
+        for row in list(weekly.get("edge_realization_summary") or [])
+        if isinstance(row, Mapping)
+    ]
+    fill_count = sum(max(0, _int(row.get("fill_count"), 0)) for row in session_rows)
+    submitted_count = sum(max(0, _int(row.get("submitted_order_rows"), 0)) for row in session_rows)
+    error_count = sum(max(0, _int(row.get("error_order_rows"), 0)) for row in feedback_rows)
+    slippage_values = [
+        _float(row.get("avg_actual_slippage_bps"), 0.0)
+        for row in session_rows
+        if row.get("avg_actual_slippage_bps") is not None and _int(row.get("fill_count"), 0) > 0
+    ]
+    avg_slippage_bps = (
+        sum(slippage_values) / len(slippage_values)
+        if slippage_values
+        else None
+    )
+    matured_sample_count = sum(max(0, _int(row.get("matured_5d_sample_count"), 0)) for row in edge_rows)
+    realized_edge_total = sum(
+        _float(row.get("matured_5d_avg_realized_edge_bps"), 0.0)
+        * max(0, _int(row.get("matured_5d_sample_count"), 0))
+        for row in edge_rows
+        if row.get("matured_5d_avg_realized_edge_bps") is not None
+    )
+    avg_realized_edge_bps = (
+        realized_edge_total / matured_sample_count
+        if matured_sample_count > 0
+        else None
+    )
+    error_rate = error_count / max(1, submitted_count)
+    min_fills = max(1, _int(normalized.get("scale_min_filled_orders"), 5))
+    min_matured = max(1, _int(normalized.get("scale_min_matured_edge_samples"), 5))
+    min_realized_edge = _float(normalized.get("scale_min_realized_edge_bps"), 0.0)
+    max_abs_slippage = max(0.0, _float(normalized.get("scale_max_abs_slippage_bps"), 15.0))
+    max_error_rate = max(0.0, _float(normalized.get("scale_max_error_rate"), 0.05))
+    insufficient = fill_count < min_fills or matured_sample_count < min_matured
+    degraded_reasons: List[str] = []
+    if avg_realized_edge_bps is not None and avg_realized_edge_bps < min_realized_edge:
+        degraded_reasons.append("realized_edge_below_min")
+    if avg_slippage_bps is not None and abs(avg_slippage_bps) > max_abs_slippage:
+        degraded_reasons.append("realized_slippage_above_max")
+    if submitted_count > 0 and error_rate > max_error_rate:
+        degraded_reasons.append("execution_error_rate_above_max")
+    if insufficient:
+        status = "BASELINE_INSUFFICIENT_EVIDENCE"
+        reason = "collect_fill_slippage_and_matured_edge_samples"
+        scale_allowed = False
+    elif degraded_reasons:
+        status = "HOLD_QUALITY_DEGRADED"
+        reason = ",".join(degraded_reasons)
+        scale_allowed = False
+    else:
+        status = "SCALE_ALLOWED"
+        reason = "fill_slippage_and_post_cost_edge_pass"
+        scale_allowed = True
+    return {
+        "status": status,
+        "reason": reason,
+        "scale_allowed": bool(scale_allowed),
+        "effective_max_submit_portfolios_per_run": (
+            configured_portfolios if scale_allowed else baseline_portfolios
+        ),
+        "effective_max_submit_total_gross_order_value": (
+            configured_total if scale_allowed else baseline_total
+        ),
+        "configured_max_submit_portfolios_per_run": configured_portfolios,
+        "configured_max_submit_total_gross_order_value": configured_total,
+        "baseline_max_submit_portfolios_per_run": baseline_portfolios,
+        "baseline_max_submit_total_gross_order_value": baseline_total,
+        "fill_count": int(fill_count),
+        "submitted_order_count": int(submitted_count),
+        "error_order_count": int(error_count),
+        "execution_error_rate": round(error_rate, 6),
+        "avg_realized_slippage_bps": (
+            round(avg_slippage_bps, 6) if avg_slippage_bps is not None else None
+        ),
+        "matured_5d_sample_count": int(matured_sample_count),
+        "avg_matured_5d_realized_edge_bps": (
+            round(avg_realized_edge_bps, 6) if avg_realized_edge_bps is not None else None
+        ),
+        "thresholds": {
+            "min_filled_orders": min_fills,
+            "min_matured_edge_samples": min_matured,
+            "min_realized_edge_bps": min_realized_edge,
+            "max_abs_slippage_bps": max_abs_slippage,
+            "max_error_rate": max_error_rate,
+        },
+    }
+
+
+def _submit_plan_policy_snapshot(
+    normalized_policy: Mapping[str, Any],
+    *,
+    max_portfolios: int,
+    max_per_market: int,
+    max_orders: int,
+    max_value: float,
+    max_total_value: float,
+    require_buy: bool,
+) -> Dict[str, Any]:
+    return {
+        "max_submit_portfolios_per_run": int(max_portfolios),
+        "configured_max_submit_portfolios_per_run": max(
+            1,
+            _int(normalized_policy.get("max_submit_portfolios_per_run"), 1),
+        ),
+        "max_submit_portfolios_per_market": int(max_per_market),
+        "max_submit_orders_per_portfolio": int(max_orders),
+        "max_submit_gross_order_value": float(max_value),
+        "max_submit_total_gross_order_value": float(max_total_value),
+        "configured_max_submit_total_gross_order_value": max(
+            0.0,
+            _float(normalized_policy.get("max_submit_total_gross_order_value"), 0.0),
+        ),
+        "require_buy_order_for_submit": bool(require_buy),
+        "excluded_markets": list(normalized_policy.get("excluded_markets") or []),
+        "block_on_submit_quality_not_pass": bool(
+            normalized_policy.get("block_on_submit_quality_not_pass", True)
+        ),
+        "evidence_scaled_submit_enabled": bool(
+            normalized_policy.get("evidence_scaled_submit_enabled", False)
+        ),
     }
 
 
@@ -1057,8 +1244,13 @@ def build_auto_order_submit_plan(
     rows: Iterable[Mapping[str, Any]],
     *,
     policy: Mapping[str, Any] | None = None,
+    weekly_summary: Mapping[str, Any] | None = None,
 ) -> Dict[str, Any]:
     normalized_policy = normalize_auto_order_readiness_policy(policy)
+    capacity_plan = build_auto_order_submit_capacity_plan(
+        weekly_summary,
+        policy=normalized_policy,
+    )
     clean_rows = [dict(row) for row in list(rows or []) if isinstance(row, Mapping)]
     if not bool(normalized_policy.get("enabled", False)):
         return {
@@ -1071,6 +1263,7 @@ def build_auto_order_submit_plan(
             "frontier_candidates": [],
             "selected_portfolio_id": "",
             "submit_mode": "none",
+            "submit_capacity_plan": capacity_plan,
         }
 
     eligible_rows = [
@@ -1080,12 +1273,33 @@ def build_auto_order_submit_plan(
         and str(row.get("account_mode") or "paper").strip().lower() == "paper"
         and str(row.get("market_readiness_status") or "").strip().upper() == "READY_FOR_PAPER_REVIEW"
     ]
-    max_portfolios = max(1, _int(normalized_policy.get("max_submit_portfolios_per_run"), 1))
+    max_portfolios = max(
+        1,
+        _int(
+            capacity_plan.get("effective_max_submit_portfolios_per_run"),
+            _int(normalized_policy.get("max_submit_portfolios_per_run"), 1),
+        ),
+    )
     max_per_market = max(1, _int(normalized_policy.get("max_submit_portfolios_per_market"), 1))
     max_orders = max(1, _int(normalized_policy.get("max_submit_orders_per_portfolio"), 1))
     max_value = max(0.0, _float(normalized_policy.get("max_submit_gross_order_value"), 100.0))
-    max_total_value = max(0.0, _float(normalized_policy.get("max_submit_total_gross_order_value"), 0.0))
+    max_total_value = max(
+        0.0,
+        _float(
+            capacity_plan.get("effective_max_submit_total_gross_order_value"),
+            _float(normalized_policy.get("max_submit_total_gross_order_value"), 0.0),
+        ),
+    )
     require_buy = bool(normalized_policy.get("require_buy_order_for_submit", False))
+    policy_snapshot = _submit_plan_policy_snapshot(
+        normalized_policy,
+        max_portfolios=max_portfolios,
+        max_per_market=max_per_market,
+        max_orders=max_orders,
+        max_value=max_value,
+        max_total_value=max_total_value,
+        require_buy=require_buy,
+    )
     frontier_candidates = _build_submit_frontier_candidates(
         clean_rows,
         max_orders=max_orders,
@@ -1144,18 +1358,8 @@ def build_auto_order_submit_plan(
             "frontier_candidates": frontier_candidates,
             "selected_portfolio_id": "",
             "submit_mode": "none",
-            "policy": {
-                "max_submit_portfolios_per_run": int(max_portfolios),
-                "max_submit_portfolios_per_market": int(max_per_market),
-                "max_submit_orders_per_portfolio": int(max_orders),
-                "max_submit_gross_order_value": float(max_value),
-                "max_submit_total_gross_order_value": float(max_total_value),
-                "require_buy_order_for_submit": bool(require_buy),
-                "excluded_markets": list(normalized_policy.get("excluded_markets") or []),
-                "block_on_submit_quality_not_pass": bool(
-                    normalized_policy.get("block_on_submit_quality_not_pass", True)
-                ),
-            },
+            "policy": policy_snapshot,
+            "submit_capacity_plan": capacity_plan,
         }
     if len(market_limited_rows) > max_portfolios:
         return {
@@ -1169,18 +1373,8 @@ def build_auto_order_submit_plan(
             "frontier_candidates": frontier_candidates,
             "selected_portfolio_id": "",
             "submit_mode": "operator_select_one",
-            "policy": {
-                "max_submit_portfolios_per_run": int(max_portfolios),
-                "max_submit_portfolios_per_market": int(max_per_market),
-                "max_submit_orders_per_portfolio": int(max_orders),
-                "max_submit_gross_order_value": float(max_value),
-                "max_submit_total_gross_order_value": float(max_total_value),
-                "require_buy_order_for_submit": bool(require_buy),
-                "excluded_markets": list(normalized_policy.get("excluded_markets") or []),
-                "block_on_submit_quality_not_pass": bool(
-                    normalized_policy.get("block_on_submit_quality_not_pass", True)
-                ),
-            },
+            "policy": policy_snapshot,
+            "submit_capacity_plan": capacity_plan,
         }
     selected_rows = [dict(row) for row in market_limited_rows]
     selected_total_gross = round(
@@ -1201,18 +1395,8 @@ def build_auto_order_submit_plan(
             "selected_portfolio_ids": [],
             "submit_mode": "operator_reduce_total_exposure",
             "selected_total_planned_gross_order_value": float(selected_total_gross),
-            "policy": {
-                "max_submit_portfolios_per_run": int(max_portfolios),
-                "max_submit_portfolios_per_market": int(max_per_market),
-                "max_submit_orders_per_portfolio": int(max_orders),
-                "max_submit_gross_order_value": float(max_value),
-                "max_submit_total_gross_order_value": float(max_total_value),
-                "require_buy_order_for_submit": bool(require_buy),
-                "excluded_markets": list(normalized_policy.get("excluded_markets") or []),
-                "block_on_submit_quality_not_pass": bool(
-                    normalized_policy.get("block_on_submit_quality_not_pass", True)
-                ),
-            },
+            "policy": policy_snapshot,
+            "submit_capacity_plan": capacity_plan,
         }
     selected = dict(selected_rows[0])
     selected_portfolio_ids = [str(row.get("portfolio_id") or "") for row in selected_rows if str(row.get("portfolio_id") or "")]
@@ -1238,16 +1422,8 @@ def build_auto_order_submit_plan(
         "selected_total_planned_gross_order_value": float(selected_total_gross),
         "selected_planned_order_symbols": str(selected.get("planned_order_symbols") or ""),
         "submit_mode": "paper_multi_market_small_plan" if multi else "paper_one_portfolio_one_small_plan",
-        "policy": {
-            "max_submit_portfolios_per_run": int(max_portfolios),
-            "max_submit_portfolios_per_market": int(max_per_market),
-            "max_submit_orders_per_portfolio": int(max_orders),
-            "max_submit_gross_order_value": float(max_value),
-            "max_submit_total_gross_order_value": float(max_total_value),
-            "require_buy_order_for_submit": bool(require_buy),
-            "excluded_markets": list(normalized_policy.get("excluded_markets") or []),
-            "block_on_submit_quality_not_pass": bool(normalized_policy.get("block_on_submit_quality_not_pass", True)),
-        },
+        "policy": policy_snapshot,
+        "submit_capacity_plan": capacity_plan,
     }
 
 
@@ -1261,6 +1437,7 @@ def build_auto_order_frequency_plan(
     clean_rows = [dict(row) for row in list(rows or []) if isinstance(row, Mapping)]
     plan = dict(submit_plan or {})
     expansion = dict(watchlist_expansion_summary or {})
+    capacity_plan = dict(plan.get("submit_capacity_plan") or {})
     seed_proposals = [
         dict(row)
         for row in list(expansion.get("seed_proposals") or [])
@@ -1347,6 +1524,27 @@ def build_auto_order_frequency_plan(
             1
             for row in seed_intake_plan
             if str(row.get("intake_status") or "") == "NEEDS_EXTERNAL_PREFERRED_ASSET_SOURCE"
+        ),
+        "seed_promotion_review_count": _int(expansion.get("seed_promotion_review_count"), 0),
+        "seed_promotion_ready_count": _int(expansion.get("seed_promotion_ready_count"), 0),
+        "seed_promotion_mapping_required_count": _int(
+            expansion.get("seed_promotion_mapping_required_count"),
+            0,
+        ),
+        "seed_promotion_candidate_report_required_count": _int(
+            expansion.get("seed_promotion_candidate_report_required_count"),
+            0,
+        ),
+        "submit_capacity_status": str(capacity_plan.get("status") or ""),
+        "submit_capacity_reason": str(capacity_plan.get("reason") or ""),
+        "submit_capacity_scale_allowed": bool(capacity_plan.get("scale_allowed", False)),
+        "effective_max_submit_portfolios_per_run": _int(
+            capacity_plan.get("effective_max_submit_portfolios_per_run"),
+            0,
+        ),
+        "effective_max_submit_total_gross_order_value": _float(
+            capacity_plan.get("effective_max_submit_total_gross_order_value"),
+            0.0,
         ),
         "portfolio_count": len(clean_rows),
         "does_not_change_submit_decision": True,
@@ -1676,6 +1874,7 @@ def build_auto_order_readiness_summary(
     *,
     policy: Mapping[str, Any] | None = None,
     watchlist_expansion_summary: Mapping[str, Any] | None = None,
+    weekly_summary: Mapping[str, Any] | None = None,
 ) -> Dict[str, Any]:
     clean_rows = [dict(row) for row in list(rows or []) if isinstance(row, Mapping)]
     ready_rows = [row for row in clean_rows if bool(row.get("ready", False))]
@@ -1788,7 +1987,11 @@ def build_auto_order_readiness_summary(
     sorted_warning_counts = dict(
         sorted(warning_counts.items(), key=lambda item: (_reason_priority(item[0], warning=True), item[0]))
     )
-    submit_plan = build_auto_order_submit_plan(clean_rows, policy=policy)
+    submit_plan = build_auto_order_submit_plan(
+        clean_rows,
+        policy=policy,
+        weekly_summary=weekly_summary,
+    )
     frequency_plan = build_auto_order_frequency_plan(
         clean_rows,
         submit_plan=submit_plan,

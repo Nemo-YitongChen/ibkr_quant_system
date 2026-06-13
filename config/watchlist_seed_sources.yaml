@@ -1,4 +1,4 @@
-version: 1
+version: 2
 review_only: true
 auto_apply: false
 submit_gate_policy: do_not_relax_submit_gates
@@ -23,6 +23,30 @@ markets:
         source_verified_at: "2026-06-08"
         broker_mapping_status: TO_VERIFY
         rationale: Broad ASX 300 exposure from a large established Australian ETF.
+      - symbol: BGBL.AX
+        exchange_ticker: BGBL
+        asset_class: etf
+        product_name: Betashares Global Shares ETF
+        source_name: Betashares official product page
+        source_url: https://www.betashares.com.au/fund/global-shares-etf/
+        source_verified_at: "2026-06-11"
+        broker_mapping_status: TO_VERIFY
+        reference_price: 83.42
+        reference_price_currency: AUD
+        reference_price_at: "2026-06-11"
+        rationale: Broad developed-market exposure, official NAV below the current 100 AUD small-account order cap, and a low published management cost.
+      - symbol: DHHF.AX
+        exchange_ticker: DHHF
+        asset_class: etf
+        product_name: Betashares Diversified All Growth ETF
+        source_name: Betashares official product page
+        source_url: https://www.betashares.com.au/fund/diversified-all-growth-etf/
+        source_verified_at: "2026-06-11"
+        broker_mapping_status: TO_VERIFY
+        reference_price: 40.90
+        reference_price_currency: AUD
+        reference_price_at: "2026-06-11"
+        rationale: Diversified all-equity exposure, official NAV well below the current 100 AUD small-account order cap, subject to broker mapping and normal cost/edge gates.
   HK:
     candidates:
       - symbol: 2800.HK

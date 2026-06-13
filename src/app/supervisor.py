@@ -3120,9 +3120,11 @@ class Supervisor:
         return rows
 
     def _auto_order_submit_plan(self) -> Dict[str, Any]:
+        common = self._auto_order_readiness_common_inputs()
         return build_auto_order_submit_plan(
-            self._auto_order_readiness_rows(),
-            policy=self._auto_order_readiness_policy(),
+            self._auto_order_readiness_rows(common_inputs=common),
+            policy=common["policy"],
+            weekly_summary=common["weekly_summary"],
         )
 
     def _auto_order_recovery_context(self, now: datetime) -> Dict[str, Any]:
@@ -3135,10 +3137,12 @@ class Supervisor:
                     "reason": "auto_order_readiness_disabled",
                 },
             }
-        rows = self._auto_order_readiness_rows()
+        common = self._auto_order_readiness_common_inputs()
+        rows = self._auto_order_readiness_rows(common_inputs=common)
         submit_plan = build_auto_order_submit_plan(
             rows,
-            policy=self._auto_order_readiness_policy(),
+            policy=common["policy"],
+            weekly_summary=common["weekly_summary"],
         )
         recovery_plan = build_auto_order_recovery_plan(rows, submit_plan=submit_plan)
         return {
@@ -3482,6 +3486,7 @@ class Supervisor:
             rows,
             policy=policy,
             watchlist_expansion_summary=common.get("watchlist_expansion_summary"),
+            weekly_summary=common.get("weekly_summary"),
         )
         summary["recovery_eligibility"] = evaluate_auto_order_recovery_eligibility(
             summary.get("recovery_plan"),

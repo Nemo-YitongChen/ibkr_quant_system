@@ -383,6 +383,7 @@ def build_auto_order_readiness_payload(
         rows,
         policy=policy,
         watchlist_expansion_summary=watchlist_expansion_summary,
+        weekly_summary=weekly_summary,
     )
     summary["recovery_eligibility"] = evaluate_auto_order_recovery_eligibility(
         summary.get("recovery_plan"),

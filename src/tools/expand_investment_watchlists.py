@@ -125,6 +125,9 @@ def _write_seed_intake_review_files(path: Path, rows: Iterable[Mapping[str, Any]
             "preferred_asset_classes": list(row.get("preferred_asset_classes") or []),
             "symbols": list(row.get("candidate_symbols") or []),
             "source_candidates": list(row.get("source_candidates") or []),
+            "promotion_review": list(row.get("promotion_review") or []),
+            "promotion_review_count": int(row.get("promotion_review_count", 0) or 0),
+            "promotion_ready_count": int(row.get("promotion_ready_count", 0) or 0),
             "evidence_symbols": list(row.get("evidence_symbols") or []),
             "acceptance_rule": str(row.get("acceptance_rule") or ""),
             "submit_gate_policy": str(row.get("submit_gate_policy") or "do_not_relax_submit_gates"),
@@ -173,20 +176,37 @@ def _candidate_report_dirs(
     return out
 
 
-def _latest_candidate_csv(*, runtime_root: Path, market: str, out_dir: str, watchlist_yaml: str) -> Path | None:
+def _latest_report_csv(
+    filename: str,
+    *,
+    runtime_root: Path,
+    market: str,
+    out_dir: str,
+    watchlist_yaml: str,
+) -> Path | None:
     paths = [
-        path / "investment_candidates.csv"
+        path / filename
         for path in _candidate_report_dirs(
             runtime_root=runtime_root,
             market=market,
             out_dir=out_dir,
             watchlist_yaml=watchlist_yaml,
         )
-        if (path / "investment_candidates.csv").exists()
+        if (path / filename).exists()
     ]
     if not paths:
         return None
     return max(paths, key=lambda path: path.stat().st_mtime)
+
+
+def _latest_candidate_csv(*, runtime_root: Path, market: str, out_dir: str, watchlist_yaml: str) -> Path | None:
+    return _latest_report_csv(
+        "investment_candidates.csv",
+        runtime_root=runtime_root,
+        market=market,
+        out_dir=out_dir,
+        watchlist_yaml=watchlist_yaml,
+    )
 
 
 def _watchlist_symbols(path_str: str) -> List[str]:
@@ -312,11 +332,13 @@ def main() -> None:
     account_profile_payload = _profile_payload(profile, account_equity=account_equity)
     generated_at = datetime.now(timezone.utc).isoformat()
     all_rows: List[Dict[str, Any]] = []
+    all_seed_candidate_rows: List[Dict[str, Any]] = []
     summary_rows: List[Dict[str, Any]] = []
 
     for market, reports in sorted(reports_by_market.items()):
         candidate_rows: List[Dict[str, Any]] = []
         source_files: List[str] = []
+        seed_candidate_files: List[str] = []
         for report in reports:
             path = _latest_candidate_csv(
                 runtime_root=runtime_root,
@@ -328,6 +350,22 @@ def main() -> None:
                 continue
             source_files.append(_display_path(path))
             candidate_rows.extend(_read_csv(path))
+            seed_path = _latest_report_csv(
+                "investment_review_seed_candidates.csv",
+                runtime_root=runtime_root,
+                market=market,
+                out_dir=str(report.get("out_dir") or "reports_investment"),
+                watchlist_yaml=str(report.get("watchlist_yaml") or ""),
+            )
+            if seed_path is not None:
+                seed_candidate_files.append(_display_path(seed_path))
+                all_seed_candidate_rows.extend(
+                    {
+                        **row,
+                        "market": str(row.get("market") or market).strip().upper(),
+                    }
+                    for row in _read_csv(seed_path)
+                )
 
         base_symbols = _base_symbols_for_market(reports, market)
         rows = build_watchlist_expansion_rows(
@@ -373,6 +411,8 @@ def main() -> None:
                 "selected_symbols": ",".join(symbols),
                 "watchlist_path": _display_path(watchlist_path),
                 "source_candidate_file_count": len(source_files),
+                "review_seed_candidate_file_count": len(seed_candidate_files),
+                "review_seed_candidate_files": seed_candidate_files,
                 "account_profile": str(account_profile_payload.get("name") or ""),
                 "account_equity": float(account_profile_payload.get("account_equity", 0.0) or 0.0),
             }
@@ -386,6 +426,7 @@ def main() -> None:
         policy=policy,
         seed_source_registry=seed_source_registry,
         account_profile=account_profile_payload,
+        seed_candidate_rows=all_seed_candidate_rows,
     )
     _write_seed_intake_review_files(
         analysis_dir,
