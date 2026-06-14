@@ -104,6 +104,12 @@ watchlist_expansion_only_when_all_markets_closed: true
 watchlist_expansion_timeout_sec: 120
 watchlist_expansion_account_equity: 1000
 watchlist_expansion_account_profile: small
+run_seed_candidate_evidence_review: true
+seed_candidate_evidence_only_when_all_markets_closed: true
+seed_candidate_evidence_max_symbols_per_run: 4
+seed_candidate_evidence_timeout_sec: 300
+seed_candidate_evidence_request_timeout_sec: 15
+seed_candidate_evidence_out_dir: "reports_investment_seed_review"
 dashboard_enabled: true
 dashboard_auto_open: true
 dashboard_timeout_sec: 120

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import os
+from pathlib import Path
 
 from src.common.watchlist_expansion import (
     WatchlistExpansionPolicy,
@@ -13,6 +15,7 @@ from src.common.watchlist_expansion import (
     selection_reason_summary,
     summarize_watchlist_expansion,
 )
+from src.tools.expand_investment_watchlists import _latest_seed_evidence_csv
 
 
 def test_watchlist_expansion_selects_whole_share_quality_candidates() -> None:
@@ -58,6 +61,22 @@ def test_watchlist_expansion_selects_whole_share_quality_candidates() -> None:
     assert by_symbol["QQQ"]["selection_status"] == "REJECTED"
     assert "whole_share_not_tradable" in by_symbol["QQQ"]["selection_reason"]
     assert selected_watchlist_symbols(rows) == ["SPLG"]
+
+
+def test_latest_seed_evidence_csv_uses_market_scoped_newest_report(tmp_path: Path) -> None:
+    market_root = tmp_path / "asx"
+    older = market_root / "old" / "investment_review_seed_candidates.csv"
+    newer = market_root / "new" / "investment_review_seed_candidates.csv"
+    older.parent.mkdir(parents=True)
+    newer.parent.mkdir(parents=True)
+    older.write_text("symbol\nBGBL.AX\n", encoding="utf-8")
+    newer.write_text("symbol\nDHHF.AX\n", encoding="utf-8")
+    newer.touch()
+    older_mtime = older.stat().st_mtime
+    newer_mtime = max(newer.stat().st_mtime, older_mtime + 1.0)
+    os.utime(newer, (newer_mtime, newer_mtime))
+
+    assert _latest_seed_evidence_csv(tmp_path, "ASX") == newer
 
 
 def test_watchlist_expansion_rejects_high_cost_or_low_quality_rows() -> None:
@@ -321,6 +340,58 @@ def test_watchlist_seed_proposals_keep_manual_acceptance_rules() -> None:
             "auto_apply": False,
         }
     ]
+
+
+def test_watchlist_summary_builds_bounded_seed_evidence_queue() -> None:
+    summary = summarize_watchlist_expansion(
+        [
+            {
+                "market": "ASX",
+                "symbol": "BHP.AX",
+                "selection_status": "REJECTED",
+                "selection_reason": "expected_cost_above_max",
+                "asset_class": "equity",
+            }
+        ],
+        market_rows=[
+            {"market": "ASX", "candidate_row_count": 1, "selected_count": 0}
+        ],
+        policy=WatchlistExpansionPolicy(preferred_asset_classes=("etf",)),
+        seed_source_registry={
+            "markets": {
+                "ASX": {
+                    "candidates": [
+                        {
+                            "symbol": "BGBL.AX",
+                            "asset_class": "etf",
+                            "source_verified_at": "2026-06-11",
+                            "reference_price": 83.42,
+                            "reference_price_currency": "AUD",
+                        },
+                        {
+                            "symbol": "DHHF.AX",
+                            "asset_class": "etf",
+                            "source_verified_at": "2026-06-11",
+                            "reference_price": 40.90,
+                            "reference_price_currency": "AUD",
+                        },
+                    ]
+                }
+            }
+        },
+        account_profile={
+            "name": "small",
+            "broker_equity": 1000.0,
+            "execution_overrides": {"max_order_value_pct": 0.10},
+        },
+        now=datetime(2026, 6, 14, tzinfo=timezone.utc),
+    )
+
+    assert summary["seed_evidence_queue_count"] == 1
+    assert summary["seed_evidence_ready_job_count"] == 1
+    assert summary["seed_evidence_primary_market"] == "ASX"
+    assert summary["seed_evidence_primary_symbols"] == ["DHHF.AX", "BGBL.AX"]
+    assert summary["seed_evidence_mode"] == "YFINANCE_ONLY"
 
 
 def test_watchlist_seed_intake_plan_keeps_etf_first_review_only() -> None:

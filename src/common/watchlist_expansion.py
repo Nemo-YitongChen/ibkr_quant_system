@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Mapping, Sequence
 
+from .watchlist_seed_evidence import build_seed_evidence_queue
+
 
 def _float(value: Any, default: float = 0.0) -> float:
     try:
@@ -793,6 +795,11 @@ def summarize_watchlist_expansion(
         market_recommendations=market_recommendations,
         seed_intake_plan=seed_intake_plan,
     )
+    seed_evidence_queue = build_seed_evidence_queue(
+        seed_promotion_review,
+        account_growth_tier_plan=account_growth_tier_plan,
+    )
+    primary_seed_evidence_job = dict(seed_evidence_queue[0]) if seed_evidence_queue else {}
     return {
         "candidate_row_count": len(clean_rows),
         "selected_count": len(selected_rows),
@@ -842,6 +849,16 @@ def summarize_watchlist_expansion(
             for row in seed_promotion_review
             if str(row.get("promotion_status") or "") == "QUALITY_REJECTED"
         ),
+        "seed_evidence_queue": seed_evidence_queue,
+        "seed_evidence_queue_count": len(seed_evidence_queue),
+        "seed_evidence_ready_job_count": sum(
+            1
+            for row in seed_evidence_queue
+            if str(row.get("status") or "") == "READY"
+        ),
+        "seed_evidence_primary_market": str(primary_seed_evidence_job.get("market") or ""),
+        "seed_evidence_primary_symbols": list(primary_seed_evidence_job.get("symbols") or []),
+        "seed_evidence_mode": str(primary_seed_evidence_job.get("evidence_mode") or ""),
         "primary_recommendation_market": str(primary.get("market") or ""),
         "primary_recommendation_reason": str(primary.get("top_reject_reason") or ""),
         "primary_recommendation_action": str(primary.get("recommendation_action") or ""),

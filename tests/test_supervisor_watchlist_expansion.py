@@ -52,6 +52,9 @@ def test_supervisor_runs_local_watchlist_expansion_review_with_scoped_outputs(tm
     )
     assert command[command.index("--account_equity") + 1] == "1000.0"
     assert command[command.index("--account_profile") + 1] == "small"
+    assert command[command.index("--seed_evidence_root") + 1].endswith(
+        "reports_investment_seed_review"
+    )
 
 
 def test_watchlist_expansion_review_reruns_when_seed_registry_is_newer(tmp_path: Path) -> None:
@@ -75,3 +78,66 @@ def test_watchlist_expansion_review_reruns_when_seed_registry_is_newer(tmp_path:
 
     assert due is True
     assert reason == "dependency_newer_than_artifact"
+
+
+def test_supervisor_runs_one_yfinance_only_seed_evidence_job(tmp_path: Path) -> None:
+    summary_dir = tmp_path / "reports_supervisor"
+    config_path = tmp_path / "supervisor.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                'timezone: "Australia/Sydney"',
+                f'summary_out_dir: "{summary_dir}"',
+                "scope_summary_out_dir: false",
+                "run_seed_candidate_evidence_review: true",
+                "seed_candidate_evidence_only_when_all_markets_closed: false",
+                "seed_candidate_evidence_max_symbols_per_run: 2",
+                'seed_candidate_evidence_out_dir: "reports_investment_seed_review"',
+                "markets:",
+                '  - name: "asx"',
+                '    market: "ASX"',
+                "    enabled: true",
+                "    reports:",
+                '      - kind: "investment"',
+                '        out_dir: "reports_investment_asx"',
+                '        watchlist_yaml: "config/watchlists/asx_top_quality.yaml"',
+                '        investment_config: "config/investment_asx.yaml"',
+                '        ibkr_config: "config/ibkr_asx.yaml"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    expansion_dir = summary_dir / "watchlist_expansion"
+    review_path = expansion_dir / "seed_review" / "asx_preferred_asset_seed_review.yaml"
+    review_path.parent.mkdir(parents=True)
+    review_path.write_text("symbols: [DHHF.AX, BGBL.AX]\n", encoding="utf-8")
+    (expansion_dir / "watchlist_expansion_summary.json").write_text(
+        """
+{
+  "seed_evidence_queue": [
+    {
+      "market": "ASX",
+      "status": "READY",
+      "symbols": ["DHHF.AX", "BGBL.AX"],
+      "evidence_mode": "YFINANCE_ONLY"
+    }
+  ]
+}
+""".strip(),
+        encoding="utf-8",
+    )
+    supervisor = Supervisor(str(config_path))
+
+    with patch.object(supervisor, "_run_cmd", return_value=True) as run_cmd:
+        ran = supervisor._run_seed_candidate_evidence_review(
+            datetime(2026, 6, 14, 10, 0, tzinfo=timezone.utc)
+        )
+
+    assert ran is True
+    task_name, command = run_cmd.call_args.args
+    assert task_name == "review_seed_candidate_evidence:asx:DHHF.AX,BGBL.AX"
+    assert supervisor._is_ibkr_gateway_task(task_name) is False
+    assert "--review_seed_only" in command
+    assert command[command.index("--review_seed_symbols") + 1] == "DHHF.AX,BGBL.AX"
+    assert command[command.index("--backtest_top_k") + 1] == "0"
+    assert command[command.index("--fundamentals_top_k") + 1] == "0"

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import json
 import os
@@ -100,6 +100,17 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--request_timeout_sec", type=float, default=15.0, help="Per-request timeout for enrichment requests in seconds.")
     ap.add_argument("--backtest_top_k", type=int, default=10, help="How many ranked symbols to backtest in detail.")
     ap.add_argument("--fundamentals_top_k", type=int, default=20, help="How many symbols to enrich with fundamentals in detail.")
+    ap.add_argument(
+        "--review_seed_only",
+        action="store_true",
+        default=False,
+        help="Analyze only review seed candidates with yfinance; never use scanner or IBKR market data.",
+    )
+    ap.add_argument(
+        "--review_seed_symbols",
+        default="",
+        help="Optional comma-separated subset of review seed symbols.",
+    )
     return ap
 
 
@@ -205,6 +216,28 @@ def _apply_review_seed_execution_guard(
         row["execution_ready"] = 0
         guarded.append(row)
     return guarded
+
+
+def _select_review_seed_candidates(
+    rows: List[Dict[str, Any]],
+    requested_symbols: str = "",
+) -> List[Dict[str, Any]]:
+    requested = {
+        str(symbol or "").strip().upper()
+        for symbol in str(requested_symbols or "").split(",")
+        if str(symbol or "").strip()
+    }
+    selected = [
+        dict(row)
+        for row in list(rows or [])
+        if str(row.get("symbol") or "").strip()
+        and (
+            not requested
+            or str(row.get("symbol") or "").strip().upper() in requested
+        )
+    ]
+    selected.sort(key=lambda row: str(row.get("symbol") or "").strip().upper())
+    return selected
 
 
 def _candidate_universe_rows(universe: Any, *, review_seed_symbols: List[str]) -> List[Dict[str, Any]]:
@@ -1625,6 +1658,63 @@ def _layered_scan_config(
     )
 
 
+def _review_seed_only_scan_config(
+    layered_cfg: LayeredScanConfig,
+    *,
+    candidate_count: int,
+) -> LayeredScanConfig:
+    bounded_count = max(1, int(candidate_count or 1))
+    return replace(
+        layered_cfg,
+        include_symbol_master=False,
+        include_recent=False,
+        include_scanner=False,
+        broad_limit=bounded_count,
+        deep_limit=bounded_count,
+        enrichment_limit=0,
+        history_workers=min(2, max(1, int(layered_cfg.history_workers or 1))),
+        progress_interval=1,
+        scanner_limit=1,
+    )
+
+
+def _review_seed_only_market_context(market: str) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    market_code = str(market or "").upper().strip()
+    benchmark_symbol = {
+        "US": "SPY",
+        "HK": "2800.HK",
+        "ASX": "VAS.AX",
+        "CN": "510300.SS",
+        "XETRA": "EXS1.DE",
+        "UK": "ISF.L",
+    }.get(market_code, "SPY")
+    sentiment = {
+        "market": market_code,
+        "benchmark_symbol": benchmark_symbol,
+        "benchmark_ret1d": 0.0,
+        "benchmark_ret5d": 0.0,
+        "breadth_ret1d": 0.0,
+        "breadth_positive_ratio": 0.5,
+        "breadth_dispersion_1d": 0.0,
+        "leaders_ret5d": 0.0,
+        "leadership_spread_5d": 0.0,
+        "score": 0.0,
+        "label": "BALANCED",
+        "guidance": "Review-seed evidence mode skips market-wide enrichment.",
+    }
+    bundle = {
+        "asof_utc": EnrichmentProviders._utc_now().isoformat(),
+        "earnings": {},
+        "macro_events": [],
+        "markets": {"tickers": {}},
+        "market_news": [],
+        "fundamentals": {},
+        "macro_indicators": {},
+        "market_sentiment": dict(sentiment),
+    }
+    return bundle, sentiment
+
+
 def _build_market_sentiment(bundle: Dict[str, Any], market: str) -> Dict[str, Any]:
     tickers = dict(bundle.get("markets", {}).get("tickers", {}) or {})
     market_code = str(market or "").upper().strip()
@@ -1807,6 +1897,7 @@ def _cli_summary_payload(
 
 def main(argv: List[str] | None = None) -> None:
     args = parse_args(argv)
+    review_seed_only = bool(args.review_seed_only)
 
     market_code = resolve_market_code(getattr(args, "market", ""))
     explicit_cfg = str(args.ibkr_config) if str(args.ibkr_config) != "config/ibkr.yaml" or not market_code else ""
@@ -1906,7 +1997,8 @@ def main(argv: List[str] | None = None) -> None:
     )
 
     research_only_yfinance = bool(
-        ibkr_cfg.get("research_only_yfinance", False)
+        review_seed_only
+        or ibkr_cfg.get("research_only_yfinance", False)
         or market_universe_cfg.get("research_only_yfinance", False)
         or investment_cfg.get("research_only_yfinance", False)
     )
@@ -1927,6 +2019,10 @@ def main(argv: List[str] | None = None) -> None:
             )
             or {"etf"}
         ),
+    )
+    review_seed_candidates = _select_review_seed_candidates(
+        review_seed_candidates,
+        str(args.review_seed_symbols or ""),
     )
     review_seed_symbols = [str(row.get("symbol") or "").strip().upper() for row in review_seed_candidates]
     review_seed_symbol_set = set(review_seed_symbols)
@@ -1951,11 +2047,20 @@ def main(argv: List[str] | None = None) -> None:
         use_audit_recent=bool(args.use_audit_recent),
         research_only_yfinance=research_only_yfinance,
     )
+    if review_seed_only:
+        layered_cfg = _review_seed_only_scan_config(
+            layered_cfg,
+            candidate_count=len(review_seed_symbols),
+        )
 
-    seed_symbols = _dedupe_keep_order(
-        list(watchlist_symbols)
-        + list(review_seed_symbols)
-        + (list(symbol_master_symbols) if bool(layered_cfg.include_symbol_master) else [])
+    seed_symbols = (
+        _dedupe_keep_order(list(review_seed_symbols))
+        if review_seed_only
+        else _dedupe_keep_order(
+            list(watchlist_symbols)
+            + list(review_seed_symbols)
+            + (list(symbol_master_symbols) if bool(layered_cfg.include_symbol_master) else [])
+        )
     )
     recent_symbols = (
         read_recent_symbols_from_audit(db_path, limit=int(args.audit_limit))
@@ -2056,25 +2161,33 @@ def main(argv: List[str] | None = None) -> None:
             adaptive_strategy,
             market=resolved_market,
         )
-        regime_adaptor = RegimeAdaptor(
-            market=resolved_market,
-            base_cfg=base_regime_cfg,
-            adapt_cfg=RegimeAdaptConfig.from_dict(regime_adaptor_cfg_raw.get("regime_adaptor")),
-        )
-        adapted_regime_cfg = regime_adaptor.refresh_if_due(md, force=True)
-
         providers = EnrichmentProviders()
-        bundle = {
-            "asof_utc": EnrichmentProviders._utc_now().isoformat(),
-            "earnings": {},
-            "macro_events": providers.fetch_macro_calendar(days_ahead=7),
-            "markets": providers.fetch_market_snapshot(market=resolved_market),
-            "market_news": providers.fetch_market_news(market=resolved_market),
-            "fundamentals": {},
-            "macro_indicators": providers.fetch_macro_indicators(),
-        }
-        market_sentiment = _build_market_sentiment(bundle, resolved_market)
-        bundle["market_sentiment"] = dict(market_sentiment)
+        if review_seed_only:
+            adapted_regime_cfg = base_regime_cfg
+            bundle, market_sentiment = _review_seed_only_market_context(resolved_market)
+            log.info(
+                "Review-seed evidence skips regime benchmark and market-wide enrichment: market=%s symbols=%s",
+                resolved_market,
+                ",".join(review_seed_symbols),
+            )
+        else:
+            regime_adaptor = RegimeAdaptor(
+                market=resolved_market,
+                base_cfg=base_regime_cfg,
+                adapt_cfg=RegimeAdaptConfig.from_dict(regime_adaptor_cfg_raw.get("regime_adaptor")),
+            )
+            adapted_regime_cfg = regime_adaptor.refresh_if_due(md, force=True)
+            bundle = {
+                "asof_utc": EnrichmentProviders._utc_now().isoformat(),
+                "earnings": {},
+                "macro_events": providers.fetch_macro_calendar(days_ahead=7),
+                "markets": providers.fetch_market_snapshot(market=resolved_market),
+                "market_news": providers.fetch_market_news(market=resolved_market),
+                "fundamentals": {},
+                "macro_indicators": providers.fetch_macro_indicators(),
+            }
+            market_sentiment = _build_market_sentiment(bundle, resolved_market)
+            bundle["market_sentiment"] = dict(market_sentiment)
         vix = _extract_vix(bundle)
         macro_high_risk = _macro_high_risk(bundle)
         earnings_map: Dict[str, bool] = {}
@@ -2302,15 +2415,19 @@ def main(argv: List[str] | None = None) -> None:
             if isinstance(row.get("signal_decision"), dict):
                 row["signal_decision_json"] = json.dumps(row["signal_decision"], ensure_ascii=False)
 
-        short_universe_symbols = _dedupe_keep_order(
-            list(scanner_symbols)
-            + list(recent_symbols)
-            + list(watchlist_symbols)
-            + [
-                symbol
-                for symbol in candidates[: max(0, int(layered_cfg.deep_limit or 0))]
-                if str(symbol).upper() not in review_seed_symbol_set
-            ]
+        short_universe_symbols = (
+            []
+            if review_seed_only
+            else _dedupe_keep_order(
+                list(scanner_symbols)
+                + list(recent_symbols)
+                + list(watchlist_symbols)
+                + [
+                    symbol
+                    for symbol in candidates[: max(0, int(layered_cfg.deep_limit or 0))]
+                    if str(symbol).upper() not in review_seed_symbol_set
+                ]
+            )
         )
         if ib is not None and short_universe_symbols:
             register_contracts(ib, md, short_universe_symbols)
@@ -2468,48 +2585,49 @@ def main(argv: List[str] | None = None) -> None:
                 plan["signal_decision_json"] = json.dumps(plan["signal_decision"], ensure_ascii=False)
         write_csv(str(out_dir / "investment_plan.csv"), plans)
         plan_map = {str(plan.get("symbol") or "").upper(): dict(plan) for plan in plans}
-        _persist_candidate_snapshots(
-            storage,
-            rows=broad_ranked,
-            stage="broad",
-            market=resolved_market,
-            portfolio_id=portfolio_id,
-            report_dir=out_dir,
-            analysis_run_id=analysis_run_id,
-            source_reason_map=source_reason_map,
-        )
-        _persist_candidate_snapshots(
-            storage,
-            rows=deep_ranked,
-            stage="deep",
-            market=resolved_market,
-            portfolio_id=portfolio_id,
-            report_dir=out_dir,
-            analysis_run_id=analysis_run_id,
-            source_reason_map=source_reason_map,
-        )
-        _persist_candidate_snapshots(
-            storage,
-            rows=ranked,
-            stage="final",
-            market=resolved_market,
-            portfolio_id=portfolio_id,
-            report_dir=out_dir,
-            analysis_run_id=analysis_run_id,
-            source_reason_map=source_reason_map,
-            plan_map=plan_map,
-        )
-        _persist_candidate_snapshots(
-            storage,
-            rows=short_ranked,
-            stage="short",
-            market=resolved_market,
-            portfolio_id=portfolio_id,
-            report_dir=out_dir,
-            analysis_run_id=analysis_run_id,
-            source_reason_map=source_reason_map,
-            plan_map={str(plan.get("symbol") or "").upper(): dict(plan) for plan in short_plans},
-        )
+        if not review_seed_only:
+            _persist_candidate_snapshots(
+                storage,
+                rows=broad_ranked,
+                stage="broad",
+                market=resolved_market,
+                portfolio_id=portfolio_id,
+                report_dir=out_dir,
+                analysis_run_id=analysis_run_id,
+                source_reason_map=source_reason_map,
+            )
+            _persist_candidate_snapshots(
+                storage,
+                rows=deep_ranked,
+                stage="deep",
+                market=resolved_market,
+                portfolio_id=portfolio_id,
+                report_dir=out_dir,
+                analysis_run_id=analysis_run_id,
+                source_reason_map=source_reason_map,
+            )
+            _persist_candidate_snapshots(
+                storage,
+                rows=ranked,
+                stage="final",
+                market=resolved_market,
+                portfolio_id=portfolio_id,
+                report_dir=out_dir,
+                analysis_run_id=analysis_run_id,
+                source_reason_map=source_reason_map,
+                plan_map=plan_map,
+            )
+            _persist_candidate_snapshots(
+                storage,
+                rows=short_ranked,
+                stage="short",
+                market=resolved_market,
+                portfolio_id=portfolio_id,
+                report_dir=out_dir,
+                analysis_run_id=analysis_run_id,
+                source_reason_map=source_reason_map,
+                plan_map={str(plan.get("symbol") or "").upper(): dict(plan) for plan in short_plans},
+            )
 
         context = {
             "summary": {
@@ -2528,6 +2646,12 @@ def main(argv: List[str] | None = None) -> None:
                 "review_seed_source_registry": str(review_seed_registry_path or ""),
                 "review_seed_source_count": int(len(review_seed_candidates)),
                 "review_seed_ranked_count": int(len(review_seed_ranked)),
+                "review_seed_only": bool(review_seed_only),
+                "review_seed_requested_symbols": list(review_seed_symbols),
+                "review_seed_evidence_mode": "YFINANCE_ONLY" if review_seed_only else "",
+                "review_seed_writes_candidate_snapshots": not bool(review_seed_only),
+                "review_seed_market_enrichment_skipped": bool(review_seed_only),
+                "review_seed_short_book_skipped": bool(review_seed_only),
                 "review_seed_execution_blocked_count": int(
                     sum(int(row.get("review_seed_candidate", 0) or 0) == 1 for row in ranked)
                 ),

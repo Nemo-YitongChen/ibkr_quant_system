@@ -1040,6 +1040,16 @@ def test_auto_order_readiness_uses_scoped_watchlist_expansion_artifact(tmp_path:
                 "seed_promotion_review_count": 8,
                 "seed_promotion_ready_count": 0,
                 "seed_promotion_candidate_report_required_count": 2,
+                "seed_evidence_queue": [
+                    {
+                        "market": "ASX",
+                        "status": "READY",
+                        "symbols": ["DHHF.AX", "BGBL.AX"],
+                    }
+                ],
+                "seed_evidence_primary_market": "ASX",
+                "seed_evidence_primary_symbols": ["DHHF.AX", "BGBL.AX"],
+                "seed_evidence_mode": "YFINANCE_ONLY",
             }
         ),
         encoding="utf-8",
@@ -1067,6 +1077,10 @@ def test_auto_order_readiness_uses_scoped_watchlist_expansion_artifact(tmp_path:
     frequency = payload["summary"]["frequency_plan"]
     assert frequency["seed_promotion_review_count"] == 8
     assert frequency["seed_promotion_candidate_report_required_count"] == 2
+    assert frequency["seed_evidence_queue_count"] == 1
+    assert frequency["seed_evidence_ready_job_count"] == 1
+    assert frequency["seed_evidence_primary_market"] == "ASX"
+    assert frequency["seed_evidence_primary_symbols"] == ["DHHF.AX", "BGBL.AX"]
 
 
 def test_auto_order_readiness_blocks_live_without_explicit_policy() -> None:

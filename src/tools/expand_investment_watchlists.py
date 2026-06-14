@@ -54,6 +54,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max_last_close", type=float, default=None)
     parser.add_argument("--account_profile_config", default="config/account_profiles.yaml")
     parser.add_argument("--seed_source_registry", default="config/watchlist_seed_sources.yaml")
+    parser.add_argument(
+        "--seed_evidence_root",
+        default="",
+        help="Optional root containing bounded review-seed candidate reports.",
+    )
     parser.add_argument("--account_equity", type=float, default=0.0)
     parser.add_argument("--account_profile", default="")
     parser.add_argument("--allow_non_whole_share", action="store_true")
@@ -210,6 +215,18 @@ def _latest_candidate_csv(*, runtime_root: Path, market: str, out_dir: str, watc
     )
 
 
+def _latest_seed_evidence_csv(root: Path | None, market: str) -> Path | None:
+    if root is None:
+        return None
+    market_root = root / str(market or "").strip().lower()
+    if not market_root.exists():
+        return None
+    paths = list(market_root.rglob("investment_review_seed_candidates.csv"))
+    if not paths:
+        return None
+    return max(paths, key=lambda path: path.stat().st_mtime)
+
+
 def _watchlist_symbols(path_str: str) -> List[str]:
     if not str(path_str or "").strip():
         return []
@@ -331,6 +348,11 @@ def main() -> None:
     policy = _policy_from_args(args, profile)
     seed_source_registry_path = _resolve(str(args.seed_source_registry or "config/watchlist_seed_sources.yaml"))
     seed_source_registry = _load_yaml(seed_source_registry_path)
+    seed_evidence_root = (
+        _resolve(str(args.seed_evidence_root))
+        if str(args.seed_evidence_root or "").strip()
+        else runtime_root / "reports_investment_seed_review"
+    )
     account_profile_payload = _profile_payload(profile, account_equity=account_equity)
     generated_at = datetime.now(timezone.utc).isoformat()
     all_rows: List[Dict[str, Any]] = []
@@ -368,6 +390,17 @@ def main() -> None:
                     }
                     for row in _read_csv(seed_path)
                 )
+        dedicated_seed_path = _latest_seed_evidence_csv(seed_evidence_root, market)
+        if dedicated_seed_path is not None:
+            seed_candidate_files.append(_display_path(dedicated_seed_path))
+            all_seed_candidate_rows.extend(
+                {
+                    **row,
+                    "market": str(row.get("market") or market).strip().upper(),
+                    "seed_evidence_source": "bounded_seed_report",
+                }
+                for row in _read_csv(dedicated_seed_path)
+            )
 
         base_symbols = _base_symbols_for_market(reports, market)
         rows = build_watchlist_expansion_rows(
@@ -443,6 +476,7 @@ def main() -> None:
                 "runtime_root": str(runtime_root),
                 "seed_source_registry_path": str(seed_source_registry_path),
                 "seed_source_registry_version": seed_source_registry.get("version"),
+                "seed_evidence_root": str(seed_evidence_root),
                 "account_profile": account_profile_payload,
                 "policy": policy.to_dict(),
                 "markets": summary_rows,

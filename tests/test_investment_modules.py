@@ -38,6 +38,7 @@ from src.ibkr.market_data import MarketDataService
 from src.ibkr.market_data import OHLCVBar
 from src.strategies.mid_regime import RegimeConfig
 from src.tools.generate_investment_report import (
+    LayeredScanConfig,
     _apply_review_seed_execution_guard,
     _apply_weekly_feedback_penalties,
     _build_market_sentiment,
@@ -47,6 +48,9 @@ from src.tools.generate_investment_report import (
     _maybe_collect_research_scanner_symbols,
     _normalize_market_symbol,
     _promote_small_account_preferred_candidates,
+    _review_seed_only_market_context,
+    _review_seed_only_scan_config,
+    _select_review_seed_candidates,
 )
 from src.tools.label_investment_snapshots import (
     _build_skip_summary_rows,
@@ -333,6 +337,46 @@ class InvestmentModuleTests(unittest.TestCase):
         self.assertEqual(cfg.history_workers, 6)
         self.assertAlmostEqual(cfg.network_reserve_ratio, 0.45, places=6)
         self.assertFalse(cfg.include_scanner)
+
+    def test_review_seed_only_mode_filters_symbols_and_disables_broad_sources(self):
+        selected = _select_review_seed_candidates(
+            [
+                {"symbol": "BGBL.AX"},
+                {"symbol": "DHHF.AX"},
+                {"symbol": "A200.AX"},
+            ],
+            "DHHF.AX,BGBL.AX",
+        )
+        cfg = _review_seed_only_scan_config(
+            LayeredScanConfig(
+                include_symbol_master=True,
+                include_recent=True,
+                include_scanner=True,
+                broad_limit=180,
+                deep_limit=36,
+                enrichment_limit=18,
+                history_workers=4,
+                scanner_limit=24,
+            ),
+            candidate_count=len(selected),
+        )
+
+        self.assertEqual([row["symbol"] for row in selected], ["BGBL.AX", "DHHF.AX"])
+        self.assertFalse(cfg.include_symbol_master)
+        self.assertFalse(cfg.include_recent)
+        self.assertFalse(cfg.include_scanner)
+        self.assertEqual(cfg.broad_limit, 2)
+        self.assertEqual(cfg.deep_limit, 2)
+        self.assertEqual(cfg.enrichment_limit, 0)
+        self.assertEqual(cfg.history_workers, 2)
+
+        bundle, sentiment = _review_seed_only_market_context("ASX")
+        self.assertEqual(bundle["markets"], {"tickers": {}})
+        self.assertEqual(bundle["macro_events"], [])
+        self.assertEqual(bundle["market_news"], [])
+        self.assertEqual(sentiment["label"], "BALANCED")
+        self.assertEqual(sentiment["score"], 0.0)
+        self.assertEqual(sentiment["breadth_positive_ratio"], 0.5)
 
     def test_layered_scan_config_requires_research_only_scanner_override(self):
         cfg = _layered_scan_config(

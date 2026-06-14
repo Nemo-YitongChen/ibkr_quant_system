@@ -388,6 +388,18 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
                         "does_not_change_symbol_master": True,
                     },
                 ],
+                "seed_evidence_queue": [
+                    {
+                        "market": "ASX",
+                        "status": "READY",
+                        "symbols": ["DHHF.AX", "BGBL.AX"],
+                        "evidence_mode": "YFINANCE_ONLY",
+                        "submit_orders": False,
+                    }
+                ],
+                "seed_evidence_primary_market": "ASX",
+                "seed_evidence_primary_symbols": ["DHHF.AX", "BGBL.AX"],
+                "seed_evidence_mode": "YFINANCE_ONLY",
                 "account_growth_tier_plan": {
                     "profile": "small",
                     "primary_action": "verify_seed_etfs_in_candidate_report_before_submit",
@@ -535,6 +547,13 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
     assert by_id["watchlist_expansion"]["metrics"]["seed_source_candidate_count"] == 2
     assert by_id["watchlist_expansion"]["metrics"]["seed_source_market_count"] == 1
     assert by_id["watchlist_expansion"]["metrics"]["seed_promotion_review_count"] == 2
+    assert by_id["watchlist_expansion"]["metrics"]["seed_evidence_queue_count"] == 1
+    assert by_id["watchlist_expansion"]["metrics"]["seed_evidence_ready_job_count"] == 1
+    assert by_id["watchlist_expansion"]["metrics"]["seed_evidence_primary_market"] == "ASX"
+    assert (
+        by_id["watchlist_expansion"]["metrics"]["seed_evidence_primary_symbols"]
+        == "DHHF.AX,BGBL.AX"
+    )
     assert by_id["watchlist_expansion"]["metrics"]["seed_promotion_ready_count"] == 0
     assert by_id["watchlist_expansion"]["metrics"]["seed_promotion_mapping_required_count"] == 1
     assert by_id["watchlist_expansion"]["metrics"]["seed_promotion_quality_rejected_count"] == 1

@@ -1752,6 +1752,11 @@ def build_auto_order_frequency_plan(
         for row in list(expansion.get("seed_intake_plan") or [])
         if isinstance(row, Mapping)
     ]
+    seed_evidence_queue = [
+        dict(row)
+        for row in list(expansion.get("seed_evidence_queue") or [])
+        if isinstance(row, Mapping)
+    ]
     submit_ready = bool(plan.get("ready", False))
     submit_reason = str(plan.get("reason") or "").strip()
     submit_status = str(plan.get("status") or "").strip().upper()
@@ -1839,6 +1844,19 @@ def build_auto_order_frequency_plan(
             expansion.get("seed_promotion_candidate_report_required_count"),
             0,
         ),
+        "seed_evidence_queue_count": len(seed_evidence_queue),
+        "seed_evidence_ready_job_count": sum(
+            1
+            for row in seed_evidence_queue
+            if str(row.get("status") or "") == "READY"
+        ),
+        "seed_evidence_primary_market": str(
+            expansion.get("seed_evidence_primary_market") or ""
+        ),
+        "seed_evidence_primary_symbols": list(
+            expansion.get("seed_evidence_primary_symbols") or []
+        ),
+        "seed_evidence_mode": str(expansion.get("seed_evidence_mode") or ""),
         "submit_capacity_status": str(capacity_plan.get("status") or ""),
         "submit_capacity_reason": str(capacity_plan.get("reason") or ""),
         "submit_capacity_scale_allowed": bool(capacity_plan.get("scale_allowed", False)),

@@ -671,6 +671,8 @@ class Supervisor:
                     )
                 )
             ),
+            "--seed_evidence_root",
+            str(runtime_root / "reports_investment_seed_review"),
             "--account_equity",
             str(_coerce_float(self.cfg.get("watchlist_expansion_account_equity"), 0.0)),
         ]
@@ -681,6 +683,112 @@ class Supervisor:
             f"expand_investment_watchlists:{reason}",
             cmd,
             timeout_sec=float(self.cfg.get("watchlist_expansion_timeout_sec", 120)),
+        )
+
+    def _seed_candidate_evidence_enabled(self) -> bool:
+        return bool(self.cfg.get("run_seed_candidate_evidence_review", False))
+
+    def _seed_candidate_evidence_job(self) -> Dict[str, Any]:
+        summary = self._watchlist_expansion_summary_payload()
+        for raw in list(summary.get("seed_evidence_queue") or []):
+            row = dict(raw or {})
+            if str(row.get("status") or "").strip().upper() != "READY":
+                continue
+            symbols = [
+                str(symbol or "").strip().upper()
+                for symbol in list(row.get("symbols") or [])
+                if str(symbol or "").strip()
+            ]
+            if symbols:
+                return {**row, "symbols": symbols}
+        return {}
+
+    def _seed_candidate_evidence_report_item(
+        self,
+        market_code: str,
+    ) -> tuple[Optional[MarketRuntime], Optional[Dict[str, Any]]]:
+        target = resolve_market_code(market_code)
+        for market in self.markets:
+            for item in list(market.reports or []):
+                if str(item.get("kind", "investment") or "investment").strip().lower() != "investment":
+                    continue
+                report_market = resolve_market_code(str(item.get("market", market.market_code)))
+                if report_market == target:
+                    return market, item
+        return None, None
+
+    def _run_seed_candidate_evidence_review(self, now: datetime) -> bool:
+        if not self._seed_candidate_evidence_enabled():
+            return False
+        if bool(self.cfg.get("seed_candidate_evidence_only_when_all_markets_closed", True)):
+            if any(market.enabled and self._market_exchange_open(market, now) for market in self.markets):
+                return False
+        job = self._seed_candidate_evidence_job()
+        if not job:
+            return False
+        market_code = resolve_market_code(str(job.get("market") or ""))
+        market, item = self._seed_candidate_evidence_report_item(market_code)
+        if market is None or item is None:
+            log.warning("Skip seed candidate evidence: report config missing for market=%s", market_code)
+            return False
+        symbols = list(job.get("symbols") or [])[
+            : max(1, int(self.cfg.get("seed_candidate_evidence_max_symbols_per_run", 4) or 4))
+        ]
+        if not symbols:
+            return False
+        scope = self._primary_runtime_scope()
+        runtime_root = scope.root(BASE_DIR) if scope is not None else (BASE_DIR / "runtime_data").resolve()
+        analysis_dir = self._watchlist_expansion_review_output_dir()
+        review_watchlist = (
+            analysis_dir
+            / "seed_review"
+            / f"{market_code.lower()}_preferred_asset_seed_review.yaml"
+        )
+        if not review_watchlist.exists():
+            log.warning(
+                "Skip seed candidate evidence: review watchlist missing market=%s path=%s",
+                market_code,
+                review_watchlist,
+            )
+            return False
+        output_root = runtime_root / str(
+            self.cfg.get("seed_candidate_evidence_out_dir", "reports_investment_seed_review")
+            or "reports_investment_seed_review"
+        )
+        cmd = [
+            sys.executable,
+            "-m",
+            "src.tools.generate_investment_report",
+            "--out_dir",
+            str(output_root / market_code.lower()),
+            "--watchlist_yaml",
+            str(review_watchlist),
+            "--market",
+            market_code,
+            "--review_seed_only",
+            "--review_seed_symbols",
+            ",".join(symbols),
+            "--max_universe",
+            str(len(symbols)),
+            "--top_n",
+            str(len(symbols)),
+            "--backtest_top_k",
+            "0",
+            "--fundamentals_top_k",
+            "0",
+            "--request_timeout_sec",
+            str(self.cfg.get("seed_candidate_evidence_request_timeout_sec", 15)),
+            "--db",
+            str(self._db_path(item, market_code)),
+            "--investment_config",
+            str(self._effective_investment_config_path(item, market_code)),
+        ]
+        if item.get("ibkr_config"):
+            cmd.extend(["--ibkr_config", str(item["ibkr_config"])])
+        return self._run_cmd(
+            f"review_seed_candidate_evidence:{market.name}:{','.join(symbols)}",
+            cmd,
+            timeout_sec=float(self.cfg.get("seed_candidate_evidence_timeout_sec", 300)),
         )
 
     def _dashboard_control_enabled(self) -> bool:
@@ -6003,6 +6111,16 @@ class Supervisor:
                 force=bool(labeling_ran and self._weekly_review_enabled()),
             )
             watchlist_expansion_ran = self._run_watchlist_expansion_review(now)
+            seed_candidate_evidence_ran = (
+                self._run_seed_candidate_evidence_review(now)
+                if watchlist_expansion_ran
+                else False
+            )
+            if seed_candidate_evidence_ran:
+                watchlist_expansion_ran = (
+                    self._run_watchlist_expansion_review(now, force=True)
+                    or watchlist_expansion_ran
+                )
             summary_changed = self._write_cycle_summary(now, cycle_summary)
             auto_order_readiness_changed = self._write_auto_order_readiness_summary(now)
             if (
@@ -6011,6 +6129,7 @@ class Supervisor:
                 or labeling_ran
                 or weekly_review_ran
                 or watchlist_expansion_ran
+                or seed_candidate_evidence_ran
             ):
                 self._refresh_dashboard()
             self._write_dashboard_control_state()

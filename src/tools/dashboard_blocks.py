@@ -716,6 +716,10 @@ def build_watchlist_expansion_block(payload: Dict[str, Any]) -> Dict[str, Any]:
         fallback_summary.get("seed_promotion_review"),
         limit=50,
     )
+    seed_evidence_queue = _rows(summary.get("seed_evidence_queue"), limit=20) or _rows(
+        fallback_summary.get("seed_evidence_queue"),
+        limit=20,
+    )
     account_growth_tier_plan = _dict(summary.get("account_growth_tier_plan")) or _dict(
         fallback_summary.get("account_growth_tier_plan")
     )
@@ -814,6 +818,30 @@ def build_watchlist_expansion_block(payload: Dict[str, Any]) -> Dict[str, Any]:
                 for row in seed_promotion_review
                 if str(row.get("promotion_status") or "") == "QUALITY_REJECTED"
             ),
+            "seed_evidence_queue_count": len(seed_evidence_queue),
+            "seed_evidence_ready_job_count": sum(
+                1
+                for row in seed_evidence_queue
+                if str(row.get("status") or "") == "READY"
+            ),
+            "seed_evidence_primary_market": str(
+                summary.get("seed_evidence_primary_market")
+                or fallback_summary.get("seed_evidence_primary_market")
+                or ""
+            ),
+            "seed_evidence_primary_symbols": ",".join(
+                str(symbol)
+                for symbol in list(
+                    summary.get("seed_evidence_primary_symbols")
+                    or fallback_summary.get("seed_evidence_primary_symbols")
+                    or []
+                )
+            ),
+            "seed_evidence_mode": str(
+                summary.get("seed_evidence_mode")
+                or fallback_summary.get("seed_evidence_mode")
+                or ""
+            ),
             "primary_seed_intake_status": str(seed_intake_plan[0].get("intake_status") if seed_intake_plan else ""),
             "primary_seed_intake_next_action": str(seed_intake_plan[0].get("next_action") if seed_intake_plan else ""),
             "account_growth_profile": str(account_growth_tier_plan.get("profile") or ""),
@@ -836,6 +864,7 @@ def build_watchlist_expansion_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "seed_proposals": seed_proposals,
             "seed_intake_plan": seed_intake_plan,
             "seed_promotion_review": seed_promotion_review,
+            "seed_evidence_queue": seed_evidence_queue,
             "account_growth_tier_plan": account_growth_tier_plan,
             "policy": _dict(summary.get("policy")),
         },
