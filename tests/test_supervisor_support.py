@@ -1,6 +1,8 @@
-from datetime import datetime
+import os
+from datetime import datetime, timezone
 
 from src.app.supervisor_support import (
+    artifact_refresh_due,
     feedback_confidence_value,
     in_window,
     merge_execution_feedback_penalties,
@@ -56,3 +58,19 @@ def test_in_window_handles_same_day_and_overnight_windows():
     assert in_window(overnight, "23:20", "06:10", [0]) is True
     assert past_time(same_day, "09:45") is True
     assert past_time(same_day, "10:30") is False
+
+
+def test_artifact_refresh_due_handles_missing_fresh_and_stale_files(tmp_path):
+    marker = tmp_path / "artifact.json"
+    now = datetime(2026, 6, 15, 0, 0, tzinfo=timezone.utc)
+
+    assert artifact_refresh_due(marker, now, 15) is True
+
+    marker.write_text("{}", encoding="utf-8")
+    fresh_ts = datetime(2026, 6, 14, 23, 50, tzinfo=timezone.utc).timestamp()
+    os.utime(marker, (fresh_ts, fresh_ts))
+    assert artifact_refresh_due(marker, now, 15) is False
+
+    stale_ts = datetime(2026, 6, 14, 23, 40, tzinfo=timezone.utc).timestamp()
+    os.utime(marker, (stale_ts, stale_ts))
+    assert artifact_refresh_due(marker, now, 15) is True

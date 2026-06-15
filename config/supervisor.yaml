@@ -50,6 +50,11 @@ auto_order_readiness:
   max_artifact_age_hours: 24
   max_preflight_age_hours: 24
   max_weekly_review_age_hours: 168
+  local_dependency_refresh_enabled: true
+  preflight_refresh_interval_min: 360
+  market_readiness_refresh_interval_min: 15
+  dependency_refresh_retry_interval_min: 10
+  dependency_refresh_timeout_sec: 60
   block_on_preflight_fail: true
   block_on_stale_preflight: true
   block_on_stale_weekly_review: true

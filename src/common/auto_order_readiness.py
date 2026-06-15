@@ -85,6 +85,25 @@ def normalize_auto_order_readiness_policy(raw: Mapping[str, Any] | None) -> Dict
         "excluded_markets": excluded_markets,
         "max_preflight_age_hours": _float(source.get("max_preflight_age_hours", 24.0), 24.0),
         "max_weekly_review_age_hours": _float(source.get("max_weekly_review_age_hours", 168.0), 168.0),
+        "local_dependency_refresh_enabled": bool(
+            source.get("local_dependency_refresh_enabled", False)
+        ),
+        "preflight_refresh_interval_min": max(
+            1,
+            _int(source.get("preflight_refresh_interval_min"), 360),
+        ),
+        "market_readiness_refresh_interval_min": max(
+            1,
+            _int(source.get("market_readiness_refresh_interval_min"), 15),
+        ),
+        "dependency_refresh_retry_interval_min": max(
+            1,
+            _int(source.get("dependency_refresh_retry_interval_min"), 10),
+        ),
+        "dependency_refresh_timeout_sec": max(
+            1.0,
+            _float(source.get("dependency_refresh_timeout_sec"), 60.0),
+        ),
         "max_offline_recovery_gap_hours": _float(
             source.get("max_offline_recovery_gap_hours", source.get("max_preflight_age_hours", 24.0)),
             24.0,

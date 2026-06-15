@@ -113,6 +113,7 @@ from .supervisor_patch_support import (
     sorted_patch_candidates as _sorted_patch_candidates,
 )
 from .supervisor_support import (
+    artifact_refresh_due as _artifact_refresh_due,
     in_window as _in_window,
     parse_feedback_penalty_rows as _parse_feedback_penalty_rows,
     past_time as _past_time,
@@ -337,6 +338,8 @@ class Supervisor:
         self._weekly_review_summary_cache_payload: Dict[str, Any] = {}
         self._last_labeling_recovery_skip_reason = ""
         self._last_recovery_budget_refresh_attempt_ts = 0.0
+        self._last_auto_order_preflight_refresh_attempt_ts = 0.0
+        self._last_auto_order_market_readiness_refresh_attempt_ts = 0.0
         self._cycle_running = False
         self._last_ibkr_gateway_task_start_monotonic = 0.0
         self._dashboard_control_lock = threading.Lock()
@@ -362,6 +365,10 @@ class Supervisor:
                     continue
                 return self._runtime_scope_for(item, market.market_code)
         return None
+
+    def _primary_runtime_root(self) -> Path:
+        scope = self._primary_runtime_scope()
+        return scope.root(BASE_DIR) if scope is not None else (BASE_DIR / "runtime_data").resolve()
 
     def _summary_output_dir(self) -> Path:
         raw_dir = str(self.cfg.get("summary_out_dir", "reports_supervisor"))
@@ -634,8 +641,7 @@ class Supervisor:
             reason = "forced"
         if not due:
             return False
-        scope = self._primary_runtime_scope()
-        runtime_root = scope.root(BASE_DIR) if scope is not None else (BASE_DIR / "runtime_data").resolve()
+        runtime_root = self._primary_runtime_root()
         analysis_dir = self._watchlist_expansion_review_output_dir()
         cmd = [
             sys.executable,
@@ -736,8 +742,7 @@ class Supervisor:
         ]
         if not symbols:
             return False
-        scope = self._primary_runtime_scope()
-        runtime_root = scope.root(BASE_DIR) if scope is not None else (BASE_DIR / "runtime_data").resolve()
+        runtime_root = self._primary_runtime_root()
         analysis_dir = self._watchlist_expansion_review_output_dir()
         review_watchlist = (
             analysis_dir
@@ -3253,8 +3258,7 @@ class Supervisor:
             payload = _load_json_file(fallback_path)
             if payload:
                 return payload
-        scope = self._primary_runtime_scope()
-        runtime_root = scope.root(BASE_DIR) if scope is not None else (BASE_DIR / "runtime_data").resolve()
+        runtime_root = self._primary_runtime_root()
         try:
             return build_market_readiness_payload(
                 base_dir=BASE_DIR,
@@ -3286,6 +3290,113 @@ class Supervisor:
 
     def _auto_order_readiness_enabled(self) -> bool:
         return bool(self._auto_order_readiness_policy().get("enabled", False))
+
+    def _auto_order_local_dependency_refresh_enabled(self) -> bool:
+        policy = self._auto_order_readiness_policy()
+        return bool(policy.get("enabled", False)) and bool(
+            policy.get("local_dependency_refresh_enabled", False)
+        )
+
+    def _auto_order_dependency_retry_due(
+        self,
+        *,
+        last_attempt_ts: float,
+        now: datetime,
+    ) -> bool:
+        retry_min = max(
+            1,
+            int(
+                self._auto_order_readiness_policy().get(
+                    "dependency_refresh_retry_interval_min",
+                    10,
+                )
+                or 10
+            ),
+        )
+        return last_attempt_ts <= 0.0 or (now.timestamp() - last_attempt_ts) >= retry_min * 60
+
+    def _refresh_auto_order_preflight_dependency(self, now: datetime) -> bool:
+        if not self._auto_order_local_dependency_refresh_enabled():
+            return False
+        if self._dashboard_control_preflight_in_progress:
+            return False
+        policy = self._auto_order_readiness_policy()
+        marker = self._preflight_output_dir() / "supervisor_preflight_summary.json"
+        interval_min = max(1, int(policy.get("preflight_refresh_interval_min", 360) or 360))
+        if not _artifact_refresh_due(marker, now, interval_min):
+            return False
+        if not self._auto_order_dependency_retry_due(
+            last_attempt_ts=self._last_auto_order_preflight_refresh_attempt_ts,
+            now=now,
+        ):
+            return False
+        self._last_auto_order_preflight_refresh_attempt_ts = now.timestamp()
+        try:
+            summary = run_preflight(
+                str(_resolve_path(self.config_path)),
+                runtime_root=str(self._primary_runtime_root()),
+                out_dir=str(self._preflight_output_dir()),
+            )
+        except Exception as exc:
+            log.warning(
+                "Automatic preflight dependency refresh failed: %s: %s",
+                type(exc).__name__,
+                exc,
+            )
+            return False
+        log.info(
+            "Automatic preflight dependency refresh complete: pass=%s warn=%s fail=%s",
+            int(summary.get("pass_count", 0) or 0),
+            int(summary.get("warn_count", 0) or 0),
+            int(summary.get("fail_count", 0) or 0),
+        )
+        return True
+
+    def _refresh_auto_order_market_readiness_dependency(
+        self,
+        now: datetime,
+        *,
+        force: bool = False,
+    ) -> bool:
+        if not self._auto_order_local_dependency_refresh_enabled():
+            return False
+        policy = self._auto_order_readiness_policy()
+        marker = self._summary_output_dir() / "market_readiness.json"
+        interval_min = max(
+            1,
+            int(policy.get("market_readiness_refresh_interval_min", 15) or 15),
+        )
+        if not force and not _artifact_refresh_due(marker, now, interval_min):
+            return False
+        if not force and not self._auto_order_dependency_retry_due(
+            last_attempt_ts=self._last_auto_order_market_readiness_refresh_attempt_ts,
+            now=now,
+        ):
+            return False
+        self._last_auto_order_market_readiness_refresh_attempt_ts = now.timestamp()
+        return self._run_cmd(
+            "refresh_market_readiness:local_evidence",
+            [
+                sys.executable,
+                "-m",
+                "src.tools.review_market_readiness",
+                "--config",
+                str(_resolve_path(self.config_path)),
+                "--runtime_root",
+                str(self._primary_runtime_root()),
+                "--out_dir",
+                str(self._summary_output_dir()),
+            ],
+            timeout_sec=float(policy.get("dependency_refresh_timeout_sec", 60) or 60),
+        )
+
+    def _refresh_auto_order_local_dependencies(self, now: datetime) -> bool:
+        preflight_refreshed = self._refresh_auto_order_preflight_dependency(now)
+        market_readiness_refreshed = self._refresh_auto_order_market_readiness_dependency(
+            now,
+            force=preflight_refreshed,
+        )
+        return preflight_refreshed or market_readiness_refreshed
 
     def _auto_order_portfolio_for_item(self, item: Dict[str, Any], report_market: str) -> Dict[str, Any]:
         ibkr_path = self._ibkr_config_path_for(item, report_market)
@@ -5571,6 +5682,7 @@ class Supervisor:
             budget_cfg = dict(self.cfg.get("ibkr_gateway_budgets") or {})
             if budget_cfg and bool(budget_cfg.get("enabled", True)):
                 self._refresh_ibkr_gateway_budget_evidence(now)
+            local_dependency_refresh_ran = self._refresh_auto_order_local_dependencies(now)
             try:
                 recovery_context = self._auto_order_recovery_context(now)
                 recovery_context = self._prepare_auto_order_recovery_context(now, recovery_context)
@@ -6121,11 +6233,21 @@ class Supervisor:
                     self._run_watchlist_expansion_review(now, force=True)
                     or watchlist_expansion_ran
                 )
+            execution_evidence_changed = any(
+                int(row.get("execution_run", 0) or 0) > 0
+                for row in cycle_summary
+            )
+            post_cycle_market_readiness_ran = self._refresh_auto_order_market_readiness_dependency(
+                now,
+                force=execution_evidence_changed,
+            )
             summary_changed = self._write_cycle_summary(now, cycle_summary)
             auto_order_readiness_changed = self._write_auto_order_readiness_summary(now)
             if (
                 summary_changed
                 or auto_order_readiness_changed
+                or local_dependency_refresh_ran
+                or post_cycle_market_readiness_ran
                 or labeling_ran
                 or weekly_review_ran
                 or watchlist_expansion_ran

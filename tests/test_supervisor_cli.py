@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import os
 from pathlib import Path
 from unittest.mock import patch
@@ -447,6 +447,91 @@ class SupervisorCliTests(unittest.TestCase):
             self.assertTrue(changed)
             self.assertEqual(payload["summary"]["portfolio_count"], 1)
             self.assertEqual(payload["rows"][0]["portfolio_id"], "US:watchlist")
+
+    def test_auto_order_local_dependency_refresh_updates_preflight_and_market_readiness(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            cfg_path = base / "supervisor.yaml"
+            summary_dir = base / "reports_supervisor"
+            preflight_dir = base / "reports_preflight"
+            runtime_root = base / "runtime"
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        f'summary_out_dir: "{summary_dir}"',
+                        f'dashboard_preflight_dir: "{preflight_dir}"',
+                        "auto_order_readiness:",
+                        "  enabled: true",
+                        "  local_dependency_refresh_enabled: true",
+                        "  preflight_refresh_interval_min: 360",
+                        "  market_readiness_refresh_interval_min: 15",
+                        "  dependency_refresh_retry_interval_min: 10",
+                        "markets: []",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(cfg_path))
+            now = datetime(2026, 6, 15, 0, 0, tzinfo=timezone.utc)
+            with patch.object(
+                supervisor,
+                "_primary_runtime_root",
+                return_value=runtime_root,
+            ), patch(
+                "src.app.supervisor.run_preflight",
+                return_value={"pass_count": 3, "warn_count": 0, "fail_count": 0},
+            ) as mock_preflight, patch.object(
+                supervisor,
+                "_run_cmd",
+                return_value=True,
+            ) as mock_run:
+                changed = supervisor._refresh_auto_order_local_dependencies(now)
+
+            self.assertTrue(changed)
+            mock_preflight.assert_called_once_with(
+                str(cfg_path.resolve()),
+                runtime_root=str(runtime_root),
+                out_dir=str(preflight_dir.resolve()),
+            )
+            task_name, command = mock_run.call_args.args
+            self.assertEqual(task_name, "refresh_market_readiness:local_evidence")
+            self.assertIn("src.tools.review_market_readiness", command)
+            self.assertIn(str(runtime_root), command)
+            self.assertTrue(bool(mock_run.call_args.kwargs.get("timeout_sec")))
+
+    def test_auto_order_preflight_dependency_refresh_throttles_failed_retry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            cfg_path = base / "supervisor.yaml"
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        f'dashboard_preflight_dir: "{base / "reports_preflight"}"',
+                        "auto_order_readiness:",
+                        "  enabled: true",
+                        "  local_dependency_refresh_enabled: true",
+                        "  dependency_refresh_retry_interval_min: 10",
+                        "markets: []",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(cfg_path))
+            first = datetime(2026, 6, 15, 0, 0, tzinfo=timezone.utc)
+            with patch(
+                "src.app.supervisor.run_preflight",
+                side_effect=RuntimeError("synthetic failure"),
+            ) as mock_preflight:
+                self.assertFalse(supervisor._refresh_auto_order_preflight_dependency(first))
+                self.assertFalse(
+                    supervisor._refresh_auto_order_preflight_dependency(
+                        first + timedelta(minutes=5)
+                    )
+                )
+
+            self.assertEqual(mock_preflight.call_count, 1)
 
     def test_write_auto_order_readiness_summary_refreshes_stale_same_signature(self):
         with tempfile.TemporaryDirectory() as tmp:

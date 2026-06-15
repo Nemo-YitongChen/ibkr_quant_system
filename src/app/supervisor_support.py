@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List
 
 
@@ -147,3 +148,10 @@ def past_time(now: datetime, hhmm: str) -> bool:
     hh, mm = parse_hhmm(hhmm)
     target = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
     return now >= target
+
+
+def artifact_refresh_due(path: Path, now: datetime, interval_min: int) -> bool:
+    if not path.exists():
+        return True
+    age_sec = now.timestamp() - path.stat().st_mtime
+    return age_sec >= max(1, int(interval_min or 1)) * 60
