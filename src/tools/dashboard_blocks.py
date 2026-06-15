@@ -309,6 +309,33 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
         auto_order.get("execution_evidence_maintenance")
     )
     remediation_plan = _rows(summary.get("remediation_plan"), limit=20)
+    wait_pullback_rows = [
+        {
+            "market": str(row.get("market") or ""),
+            "portfolio_id": str(row.get("portfolio_id") or ""),
+            "status": str(row.get("wait_pullback_calibration_status") or ""),
+            "reason": str(row.get("wait_pullback_calibration_reason") or ""),
+            "primary_action": str(row.get("wait_pullback_primary_action") or ""),
+            "wait_pullback_count": _int(row.get("wait_pullback_count")),
+            "close_wait_pullback_count": _int(row.get("wait_pullback_close_count")),
+            "near_candidate_count": _int(row.get("wait_pullback_near_candidate_count")),
+            "avg_entry_anchor_gap_pct": float(row.get("wait_pullback_avg_gap_pct", 0.0) or 0.0),
+            "min_entry_anchor_gap_pct": float(row.get("wait_pullback_min_gap_pct", 0.0) or 0.0),
+            "dominant_anchor_component": str(row.get("wait_pullback_dominant_anchor_component") or ""),
+            "top_wait_symbols": str(row.get("wait_pullback_top_symbols") or ""),
+        }
+        for row in rows
+        if str(row.get("wait_pullback_calibration_status") or "").strip()
+    ]
+    wait_pullback_review_statuses = {
+        "REVIEW_NEAR_ENTRY",
+        "REVIEW_ANCHOR",
+        "MA_ANCHOR_CONSERVATIVE",
+        "MISSING_ASSET_CLASS",
+    }
+    wait_pullback_review_rows = [
+        row for row in wait_pullback_rows if str(row.get("status") or "").strip().upper() in wait_pullback_review_statuses
+    ]
     frontier_candidates = _rows(submit_plan.get("frontier_candidates"), limit=20)
     top_frontier = dict(frontier_candidates[0]) if frontier_candidates else {}
     frontier_quality_pass_count = sum(
@@ -442,6 +469,24 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "execution_evidence_maintenance_submit_orders": int(
                 bool(execution_evidence_maintenance.get("submit_orders", False))
             ),
+            "wait_pullback_calibration_portfolio_count": len(wait_pullback_rows),
+            "wait_pullback_review_portfolio_count": len(wait_pullback_review_rows),
+            "wait_pullback_review_wait_count": sum(_int(row.get("close_wait_pullback_count")) for row in wait_pullback_rows),
+            "wait_pullback_near_candidate_count": sum(_int(row.get("near_candidate_count")) for row in wait_pullback_rows),
+            "wait_pullback_primary_status": (
+                str(wait_pullback_review_rows[0].get("status") or "")
+                if wait_pullback_review_rows
+                else str(wait_pullback_rows[0].get("status") or "")
+                if wait_pullback_rows
+                else ""
+            ),
+            "wait_pullback_primary_action": (
+                str(wait_pullback_review_rows[0].get("primary_action") or "")
+                if wait_pullback_review_rows
+                else str(wait_pullback_rows[0].get("primary_action") or "")
+                if wait_pullback_rows
+                else ""
+            ),
             "candidate_count": _int(submit_plan.get("candidate_count")),
             "frontier_candidate_count": _int(submit_plan.get("frontier_candidate_count"))
             or len(frontier_candidates),
@@ -478,6 +523,7 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "recovery_plan": recovery_plan,
             "recovery_eligibility": recovery_eligibility,
             "execution_evidence_maintenance": execution_evidence_maintenance,
+            "wait_pullback_calibration": wait_pullback_rows,
             "frontier_candidates": frontier_candidates,
             "portfolios": rows,
         },

@@ -966,11 +966,11 @@ def test_auto_order_readiness_payload_builds_market_readiness_when_missing(tmp_p
         "\n".join(
             [
                 (
-                    "symbol,status,expected_edge_bps,expected_cost_bps,edge_gate_threshold_bps,"
+                    "symbol,action,status,expected_edge_bps,expected_cost_bps,edge_gate_threshold_bps,"
                     "whole_share_edge_margin_bps,dynamic_order_adv_pct,execution_order_type,"
                     "edge_gate_status,quality_status,market_rule_status,shadow_review_status,manual_review_status"
                 ),
-                "SPLG,PLANNED,34,22,28,6,0.0001,LMT,PASS,QUALITY_OK,RULES_OK,AUTO_OK,AUTO_OK",
+                "SPLG,BUY,PLANNED,34,22,28,6,0.0001,LMT,PASS,QUALITY_OK,RULES_OK,AUTO_OK,AUTO_OK",
             ]
         )
         + "\n",

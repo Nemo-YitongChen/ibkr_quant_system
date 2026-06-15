@@ -122,6 +122,16 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
                     "portfolio_id": "US:watchlist",
                     "status": "BLOCKED",
                     "primary_reason": "preflight_stale",
+                    "wait_pullback_calibration_status": "REVIEW_ANCHOR",
+                    "wait_pullback_calibration_reason": "wait_pullback_gap_within_review_band",
+                    "wait_pullback_primary_action": "review_pullback_anchor_before_changing_thresholds",
+                    "wait_pullback_count": 10,
+                    "wait_pullback_close_count": 4,
+                    "wait_pullback_near_candidate_count": 0,
+                    "wait_pullback_avg_gap_pct": 2.4,
+                    "wait_pullback_min_gap_pct": 2.0,
+                    "wait_pullback_dominant_anchor_component": "ma",
+                    "wait_pullback_top_symbols": "CSCO,CAT",
                 },
                 {
                     "market": "HK",
@@ -511,6 +521,15 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
     assert by_id["auto_order_readiness"]["metrics"]["frequency_seed_source_markets"] == ["US"]
     assert by_id["auto_order_readiness"]["metrics"]["frequency_plan_does_not_change_submit_decision"] == 1
     assert by_id["auto_order_readiness"]["rows"]["frequency_plan"]["seed_proposal_markets"] == ["US"]
+    assert by_id["auto_order_readiness"]["metrics"]["wait_pullback_calibration_portfolio_count"] == 1
+    assert by_id["auto_order_readiness"]["metrics"]["wait_pullback_review_portfolio_count"] == 1
+    assert by_id["auto_order_readiness"]["metrics"]["wait_pullback_review_wait_count"] == 4
+    assert by_id["auto_order_readiness"]["metrics"]["wait_pullback_primary_status"] == "REVIEW_ANCHOR"
+    assert (
+        by_id["auto_order_readiness"]["metrics"]["wait_pullback_primary_action"]
+        == "review_pullback_anchor_before_changing_thresholds"
+    )
+    assert by_id["auto_order_readiness"]["rows"]["wait_pullback_calibration"][0]["top_wait_symbols"] == "CSCO,CAT"
     assert by_id["dashboard_control_actions"]["metrics"]["history_count"] == 3
     assert by_id["dashboard_control_actions"]["metrics"]["linked_action_history_count"] == 1
     assert (

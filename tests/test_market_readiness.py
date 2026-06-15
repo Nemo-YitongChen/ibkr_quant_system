@@ -47,6 +47,7 @@ def test_market_readiness_classifies_ready_closed_and_research_only(tmp_path: Pa
         us_dir / "investment_execution_plan.csv",
         {
             "symbol": "SPLG",
+            "action": "BUY",
             "status": "PLANNED",
             "expected_edge_bps": 34.0,
             "expected_cost_bps": 22.0,
@@ -167,6 +168,7 @@ def test_market_readiness_blocks_submit_quality_when_post_cost_edge_is_too_low(t
         us_dir / "investment_execution_plan.csv",
         {
             "symbol": "SPLG",
+            "action": "BUY",
             "status": "PLANNED",
             "expected_edge_bps": 29.0,
             "expected_cost_bps": 24.0,
@@ -217,6 +219,75 @@ def test_market_readiness_blocks_submit_quality_when_post_cost_edge_is_too_low(t
     assert row["submit_quality_tier"] == "NONE"
 
 
+def test_market_readiness_submit_quality_ignores_exit_only_orders(tmp_path: Path) -> None:
+    reports_root = tmp_path / "reports"
+    hk_dir = reports_root / "resolved_hk_top100_bluechip"
+    _write_json(
+        hk_dir / "investment_execution_summary.json",
+        {
+            "market": "HK",
+            "portfolio_id": "HK:resolved_hk_top100_bluechip",
+            "paper_submit_ready": False,
+            "paper_submit_readiness_status": "MARKET_CLOSED",
+            "primary_no_order_reason": "MARKET_CLOSED_FOR_SUBMIT",
+            "order_count": 1,
+            "planned_gross_order_value": 30.0,
+            "planned_sell_order_value": 30.0,
+            "broker_equity": 1000.0,
+        },
+    )
+    _write_execution_plan(
+        hk_dir / "investment_execution_plan.csv",
+        {
+            "symbol": "SCHX.HK",
+            "action": "SELL",
+            "status": "PLANNED",
+            "reason": "rebalance_exit|no_submit_closed",
+            "expected_edge_bps": 0.0,
+            "expected_cost_bps": 0.0,
+            "edge_gate_threshold_bps": 55.0,
+            "dynamic_order_adv_pct": 0.0001,
+            "execution_order_type": "LMT",
+            "edge_gate_status": "",
+            "quality_status": "",
+            "market_rule_status": "RULES_OK",
+            "shadow_review_status": "",
+            "manual_review_status": "AUTO_OK",
+        },
+    )
+
+    payload = build_market_readiness_payload(
+        base_dir=REPO_ROOT,
+        supervisor_config={
+            "markets": [
+                {
+                    "name": "hk",
+                    "market": "HK",
+                    "enabled": True,
+                    "reports": [
+                        {
+                            "kind": "investment",
+                            "out_dir": str(reports_root),
+                            "watchlist_yaml": "config/watchlists/resolved_hk_top100_bluechip.yaml",
+                            "run_investment_execution": True,
+                            "submit_investment_execution": True,
+                        }
+                    ],
+                }
+            ],
+        },
+        config_path=tmp_path / "supervisor.yaml",
+        runtime_root=tmp_path / "runtime",
+    )
+
+    row = payload["rows"][0]
+    assert row["submit_quality_status"] == "NO_BUY_ORDERS"
+    assert row["submit_quality_reason"] == "no_planned_buy_orders"
+    assert row["submit_quality_order_count"] == 0
+    assert row["submit_quality_buy_order_count"] == 0
+    assert row["submit_quality_non_buy_order_count"] == 1
+
+
 def test_market_readiness_marks_high_quality_submit_tier(tmp_path: Path) -> None:
     reports_root = tmp_path / "reports"
     us_dir = reports_root / "watchlist"
@@ -238,6 +309,7 @@ def test_market_readiness_marks_high_quality_submit_tier(tmp_path: Path) -> None
         us_dir / "investment_execution_plan.csv",
         {
             "symbol": "SPLG",
+            "action": "BUY",
             "status": "PLANNED",
             "expected_edge_bps": 45.0,
             "expected_cost_bps": 18.0,

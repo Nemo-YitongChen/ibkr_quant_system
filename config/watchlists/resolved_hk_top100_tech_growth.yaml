@@ -1,8 +1,8 @@
 version: 1
 name: hk_top100_tech_growth
-generated_at: '2026-04-16 19:10:41'
+generated_at: '2026-06-12 19:10:24'
 target_n: 100
-count: 62
+count: 64
 symbols:
 - 0700.HK
 - 1810.HK
@@ -11,8 +11,8 @@ symbols:
 - 9988.HK
 - 9999.HK
 - 0020.HK
+- 0100.HK
 - 0241.HK
-- 0268.HK
 - 0285.HK
 - 0300.HK
 - 0780.HK
@@ -24,7 +24,7 @@ symbols:
 - 1698.HK
 - 2015.HK
 - 2382.HK
-- 3888.HK
+- 2513.HK
 - 6618.HK
 - 6690.HK
 - 9626.HK
@@ -34,14 +34,15 @@ symbols:
 - 9868.HK
 - 9888.HK
 - 9961.HK
-- 2423.HK
 - 2628.HK
 - 2899.HK
 - 3328.HK
+- 3692.HK
 - 3968.HK
 - 3988.HK
 - 6160.HK
 - 9633.HK
+- 9926.HK
 - 9987.HK
 - 9992.HK
 - 0175.HK
@@ -66,6 +67,7 @@ symbols:
 - 2313.HK
 - 2318.HK
 - 2328.HK
+- 2423.HK
 source_config: config/watchlists/hk_top100_tech_growth.yaml
 sources:
 - type: aastocks_index_constituents
@@ -74,3 +76,5 @@ sources:
 - type: aastocks_index_constituents
   index: HSCEI
   url: https://www.aastocks.com/en/stocks/market/index/hk-index-con.aspx?index=HSCEI
+source_success_count: 2
+source_failure_count: 0

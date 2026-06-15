@@ -198,6 +198,7 @@
 - **2026-06-14 已新增 bounded seed evidence queue：Supervisor 只对 `CANDIDATE_REPORT_REQUIRED` 的 review seed 运行单市场、有限标的、yfinance-only 报告，并跳过 IBKR/scanner/benchmark/macro/news/short-book/backtest；真实 ASX 运行只分析 DHHF/BGBL，2 个候选均转为 `QUALITY_REJECTED`，队列归零且没有自动晋级或下单**
 - **2026-06-15 已新增 auto-order 本地依赖自动维护：Supervisor 每 6 小时刷新轻量 preflight、每 15 分钟从现有 artifacts 重建 market readiness，并在新 execution evidence 产生后立即再构建；真实单周期得到 `29 PASS / 0 WARN / 0 FAIL`，`preflight_stale` 已消除，剩余阻塞收敛为 stale/degraded execution artifact、post-cost edge 不足和 HK strategy suggestion governance**
 - **2026-06-15 已新增 bounded execution evidence maintenance：Supervisor 在全市场休市、同周期无正常 execution、无 active recovery checkpoint 且 Gateway execution reserve 可用时，只选择 1 个 paper portfolio 运行 `--recovery_evidence_only` dry-run；强制 `submit=false`、不刷新 report/opportunity、不占 submit slot，并把状态写入 auto-order readiness/dashboard。真实 ASX dry-run 已把旧 `IBKR_GATEWAY_UNAVAILABLE` 更新为 fresh `BLOCKED_OPPORTUNITY`，完整测试为 `722 passed`**
+- **2026-06-16 已校准 post-cost buy-quality 诊断与 WAIT_PULLBACK evidence：market readiness 现在只用 `BUY/ACCUMULATE` planned rows 评估 submit quality，HK/US 的 `SCHX/SCHX.HK` exit-only recovery evidence 改为 `NO_BUY_ORDERS`，不再误报为低 edge 买入阻塞；WAIT_PULLBACK calibration 已进入 market readiness、auto-order readiness 和 dashboard v2 现有 Auto Order block，当前 6 个 portfolio 需要 anchor review、31 个 close wait rows、0 个 near-entry candidate，submit plan 仍为 `BLOCKED/no_single_safe_submit_candidate`**
 - **后续开发报告已补充到 `docs/development_report_2026-05-09.md`：下一步明确为 evidence-driven single strategy parameter suggestions，后续再推进 dashboard/weekly 大文件拆分、config defaults+overrides、walk-forward acceptance rules、execution quality evidence 和 live 变更四件套**
 - **weekly review 已新增 read-only `strategy_parameter_suggestions` 产物：当 candidate model review 出现 `SIGNAL_RANKING_INVERTED` 且样本足够时，每个 market/portfolio/week 只生成一个 primary strategy field 建议，带 linked evidence、acceptance rule、rollback note 和 `auto_apply=0`**
 - **dashboard control audit 已能关联 strategy parameter suggestions：控制 payload 可携带 `strategy_parameter_suggestion_id/primary_field/config_path/resolution_status/resolution_note`，审计历史和 dashboard v2 Governance block 会展示 linked strategy suggestion 与处理状态，但仍不自动写配置**
@@ -556,3 +557,12 @@
 - CLI readiness 现在优先消费轻量 Gateway budget artifact，避免 weekly summary 内嵌旧 budget 与 Supervisor 判断不一致。
 - 最新本地 evidence（UTC `2026-06-12T00:13:02.619921+00:00`）：Gateway requests `9596`，4 个市场超预算；US 为 `3062/2000`、`153.1%`，projected recovery 为 UTC `2026-06-13T23:59:59.999999+00:00`。当前仍不允许 submit。
 - 本轮没有放宽 risk、edge、cost、liquidity、market-rule、preflight、Gateway budget 或 submit-quality gate。
+
+## 37. 2026-06-16 Post-cost buy quality and WAIT_PULLBACK calibration
+
+- `market_readiness` 的 submit-quality 现在只评估计划买入腿：`BUY` / `ACCUMULATE` 才会进入 expected edge、cost、edge margin、order type 和 gate 状态计算。
+- 退出/再平衡计划单会显示为 `NO_BUY_ORDERS`，并保留 `submit_quality_buy_order_count` 与 `submit_quality_non_buy_order_count`，避免把 `SELL` 行的空 edge-gate 字段误判成低质量买入。
+- 新增 `opportunity_calibration`，从 `investment_opportunity_scan.csv` 聚合 `WAIT_PULLBACK` 行，输出 review band、near-entry candidate、anchor component、top wait symbols 和缺失 asset class 诊断。
+- `auto_order_readiness` rows 和 dashboard v2 的现有 `auto_order_readiness` block 已显示 WAIT_PULLBACK calibration；没有新增 dashboard block，block 数仍为 14。
+- 当前真实刷新：HK/US 的 `SCHX` / `SCHX.HK` recovery exit-only evidence 为 `NO_BUY_ORDERS`；6 个 portfolio 进入 `REVIEW_ANCHOR`，共 31 个 close wait rows，near-entry candidate 为 0。
+- 下一步不是降低风险门或 edge gate，而是在相关市场窗口刷新 stale execution artifact，并用 5/20d outcome evidence 验证 close WAIT_PULLBACK 行是否被 anchor 过度挡住。

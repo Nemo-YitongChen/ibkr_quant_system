@@ -1,8 +1,8 @@
 version: 1
 name: hk_top100_bluechip
-generated_at: '2026-05-03 19:10:21'
+generated_at: '2026-06-12 19:10:18'
 target_n: 100
-count: 99
+count: 100
 symbols:
 - 0700.HK
 - 9988.HK
@@ -27,6 +27,7 @@ symbols:
 - 1299.HK
 - 1378.HK
 - 1398.HK
+- 1519.HK
 - 1801.HK
 - 1810.HK
 - 1876.HK
@@ -44,6 +45,7 @@ symbols:
 - 2359.HK
 - 2382.HK
 - 2388.HK
+- 2600.HK
 - 2618.HK
 - 2628.HK
 - 2688.HK
@@ -54,6 +56,7 @@ symbols:
 - 3968.HK
 - 3988.HK
 - 3993.HK
+- 6160.HK
 - 6181.HK
 - 6618.HK
 - 6690.HK
@@ -94,15 +97,13 @@ symbols:
 - 0836.HK
 - 0857.HK
 - 0868.HK
-- 2423.HK
 - 3328.HK
-- 6160.HK
 - 9660.HK
 - 9868.HK
+- 9926.HK
 - 9987.HK
 - 1288.HK
 - 1658.HK
-- 2328.HK
 source_config: config/watchlists/hk_top100_bluechip.yaml
 sources:
 - type: aastocks_index_constituents
@@ -111,3 +112,5 @@ sources:
 - type: aastocks_index_constituents
   index: HSCEI
   url: https://www.aastocks.com/en/stocks/market/index/hk-index-con.aspx?index=HSCEI
+source_success_count: 2
+source_failure_count: 0

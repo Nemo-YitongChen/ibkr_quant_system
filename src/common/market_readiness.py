@@ -11,6 +11,10 @@ from .config_layers import load_layered_config
 from .freshness import file_age_hours
 from .market_structure import load_market_structure, market_structure_summary
 from .markets import market_config_path, resolve_market_code
+from .opportunity_calibration import (
+    build_wait_pullback_calibration,
+    build_wait_pullback_calibration_summary,
+)
 from .runtime_paths import resolve_repo_path
 
 
@@ -337,12 +341,19 @@ def _submit_quality_summary(
         for row in list(execution_plan_rows or [])
         if str(row.get("status") or "").strip().upper() in {"PLANNED", "SUBMITTED", "FILLED"}
     ]
+    buy_rows = [
+        row
+        for row in planned_rows
+        if str(row.get("action") or "").strip().upper() in {"BUY", "ACCUMULATE"}
+    ]
     if order_count <= 0:
         return {
             "submit_quality_status": "NO_ORDERS",
             "submit_quality_reason": "no_planned_orders",
             "submit_quality_tier": "NONE",
             "submit_quality_order_count": 0,
+            "submit_quality_buy_order_count": 0,
+            "submit_quality_non_buy_order_count": 0,
         }
     if not planned_rows:
         return {
@@ -350,21 +361,32 @@ def _submit_quality_summary(
             "submit_quality_reason": "missing_execution_plan_rows",
             "submit_quality_tier": "NONE",
             "submit_quality_order_count": int(order_count),
+            "submit_quality_buy_order_count": 0,
+            "submit_quality_non_buy_order_count": 0,
+        }
+    if not buy_rows:
+        return {
+            "submit_quality_status": "NO_BUY_ORDERS",
+            "submit_quality_reason": "no_planned_buy_orders",
+            "submit_quality_tier": "NONE",
+            "submit_quality_order_count": 0,
+            "submit_quality_buy_order_count": 0,
+            "submit_quality_non_buy_order_count": int(len(planned_rows)),
         }
 
-    edge_values = [_float(row.get("expected_edge_bps"), 0.0) for row in planned_rows]
-    cost_values = [_float(row.get("expected_cost_bps"), 0.0) for row in planned_rows]
-    threshold_values = [_float(row.get("edge_gate_threshold_bps"), 0.0) for row in planned_rows]
+    edge_values = [_float(row.get("expected_edge_bps"), 0.0) for row in buy_rows]
+    cost_values = [_float(row.get("expected_cost_bps"), 0.0) for row in buy_rows]
+    threshold_values = [_float(row.get("edge_gate_threshold_bps"), 0.0) for row in buy_rows]
     net_edge_values = [edge - cost for edge, cost in zip(edge_values, cost_values)]
     margin_values: List[float] = []
-    for row, edge, threshold in zip(planned_rows, edge_values, threshold_values):
+    for row, edge, threshold in zip(buy_rows, edge_values, threshold_values):
         explicit_margin = str(row.get("whole_share_edge_margin_bps") or "").strip()
         if explicit_margin:
             margin_values.append(_float(explicit_margin, edge - threshold))
         else:
             margin_values.append(edge - threshold)
-    order_adv_values = [_float(row.get("dynamic_order_adv_pct"), 0.0) for row in planned_rows]
-    order_types = sorted({str(row.get("execution_order_type") or "").strip().upper() or "UNKNOWN" for row in planned_rows})
+    order_adv_values = [_float(row.get("dynamic_order_adv_pct"), 0.0) for row in buy_rows]
+    order_types = sorted({str(row.get("execution_order_type") or "").strip().upper() or "UNKNOWN" for row in buy_rows})
 
     blocked_reasons: List[str] = []
     if min(net_edge_values or [0.0]) < _float(thresholds.get("min_submit_net_edge_bps"), 8.0):
@@ -378,11 +400,11 @@ def _submit_quality_summary(
     if _bool(thresholds.get("require_limit_order_for_submit", True)) and any(order_type != "LMT" for order_type in order_types):
         blocked_reasons.append("non_limit_order")
 
-    bad_edge_gate = sum(1 for row in planned_rows if not _status_ok(row.get("edge_gate_status"), {"PASS"}))
-    bad_quality = sum(1 for row in planned_rows if not _status_ok(row.get("quality_status"), {"QUALITY_OK"}))
-    bad_market_rule = sum(1 for row in planned_rows if not _status_ok(row.get("market_rule_status"), {"RULES_OK"}))
-    bad_shadow = sum(1 for row in planned_rows if not _status_ok(row.get("shadow_review_status"), {"AUTO_OK", ""}))
-    bad_manual = sum(1 for row in planned_rows if not _status_ok(row.get("manual_review_status"), {"AUTO_OK", ""}))
+    bad_edge_gate = sum(1 for row in buy_rows if not _status_ok(row.get("edge_gate_status"), {"PASS"}))
+    bad_quality = sum(1 for row in buy_rows if not _status_ok(row.get("quality_status"), {"QUALITY_OK"}))
+    bad_market_rule = sum(1 for row in buy_rows if not _status_ok(row.get("market_rule_status"), {"RULES_OK"}))
+    bad_shadow = sum(1 for row in buy_rows if not _status_ok(row.get("shadow_review_status"), {"AUTO_OK", ""}))
+    bad_manual = sum(1 for row in buy_rows if not _status_ok(row.get("manual_review_status"), {"AUTO_OK", ""}))
     if bad_edge_gate:
         blocked_reasons.append("edge_gate_not_pass")
     if bad_quality:
@@ -410,7 +432,9 @@ def _submit_quality_summary(
         "submit_quality_status": status,
         "submit_quality_reason": ",".join(blocked_reasons) if blocked_reasons else "PASS",
         "submit_quality_tier": tier,
-        "submit_quality_order_count": int(len(planned_rows)),
+        "submit_quality_order_count": int(len(buy_rows)),
+        "submit_quality_buy_order_count": int(len(buy_rows)),
+        "submit_quality_non_buy_order_count": int(len(planned_rows) - len(buy_rows)),
         "submit_quality_min_expected_edge_bps": min_expected_edge_bps,
         "submit_quality_avg_expected_edge_bps": _mean(edge_values),
         "submit_quality_max_expected_cost_bps": max_expected_cost_bps,
@@ -581,6 +605,14 @@ def build_market_readiness_rows(
                 watchlist_yaml=watchlist_yaml,
                 filename="investment_execution_plan.csv",
             )
+            opportunity_scan_path = _latest_artifact_path(
+                base_dir=base_dir,
+                runtime_root=runtime_root,
+                market=market,
+                out_dir=out_dir,
+                watchlist_yaml=watchlist_yaml,
+                filename="investment_opportunity_scan.csv",
+            )
             snapshot_path, snapshot_summary = _latest_artifact(
                 base_dir=base_dir,
                 runtime_root=runtime_root,
@@ -633,6 +665,11 @@ def build_market_readiness_rows(
                 order_count=order_count,
                 thresholds=submit_quality_thresholds,
             )
+            wait_pullback_calibration = build_wait_pullback_calibration(
+                _load_csv_rows(opportunity_scan_path),
+                market=market,
+                portfolio_id=portfolio_id,
+            )
             account_equity_cap = _float(execution_payload.get("account_equity_cap"), 0.0)
             equity_cap_applied = bool(account_equity_cap > 0.0 and broker_equity > account_equity_cap + 1e-9)
             rows.append(
@@ -674,8 +711,26 @@ def build_market_readiness_rows(
                     "broker_position_count": _int(snapshot_summary.get("position_count"), 0),
                     "execution_summary_path": str(execution_path or ""),
                     "execution_plan_path": str(execution_plan_path or ""),
+                    "opportunity_scan_path": str(opportunity_scan_path or ""),
                     "broker_snapshot_path": str(snapshot_path or ""),
                     **submit_quality,
+                    "wait_pullback_calibration_status": str(wait_pullback_calibration.get("status") or ""),
+                    "wait_pullback_calibration_reason": str(wait_pullback_calibration.get("reason") or ""),
+                    "wait_pullback_primary_action": str(wait_pullback_calibration.get("primary_action") or ""),
+                    "wait_pullback_count": _int(wait_pullback_calibration.get("wait_pullback_count"), 0),
+                    "wait_pullback_close_count": _int(wait_pullback_calibration.get("close_wait_pullback_count"), 0),
+                    "wait_pullback_near_candidate_count": _int(wait_pullback_calibration.get("near_candidate_count"), 0),
+                    "wait_pullback_avg_gap_pct": _float(wait_pullback_calibration.get("avg_entry_anchor_gap_pct"), 0.0),
+                    "wait_pullback_min_gap_pct": _float(wait_pullback_calibration.get("min_entry_anchor_gap_pct"), 0.0),
+                    "wait_pullback_dominant_anchor_component": str(
+                        wait_pullback_calibration.get("dominant_anchor_component") or ""
+                    ),
+                    "wait_pullback_top_symbols": str(wait_pullback_calibration.get("top_wait_symbols") or ""),
+                    "wait_pullback_missing_asset_class_count": _int(
+                        wait_pullback_calibration.get("missing_asset_class_count"),
+                        0,
+                    ),
+                    "wait_pullback_calibration": wait_pullback_calibration,
                     "market_scope": str(structure.market_scope or ""),
                     "benchmark_symbol": str(structure.benchmark_symbol or ""),
                     "buy_lot_multiple": _int(structure_summary.get("buy_lot_multiple"), 1),
@@ -809,6 +864,11 @@ def build_market_readiness_payload(
         supervisor_config=supervisor_config,
         runtime_root=runtime_root,
     )
+    wait_pullback_rows = [
+        dict(row.get("wait_pullback_calibration") or {})
+        for row in rows
+        if isinstance(row.get("wait_pullback_calibration"), Mapping)
+    ]
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "schema_version": "2026Q2.market_readiness.v1",
@@ -816,5 +876,9 @@ def build_market_readiness_payload(
         "runtime_root": str(runtime_root),
         "summary": build_market_readiness_summary(rows),
         "preparation_plan": build_market_preparation_plan(rows),
+        "opportunity_calibration": {
+            "wait_pullback_summary": build_wait_pullback_calibration_summary(wait_pullback_rows),
+            "wait_pullback_rows": wait_pullback_rows,
+        },
         "rows": rows,
     }

@@ -1530,6 +1530,21 @@ def evaluate_auto_order_readiness(
         ),
         "market_readiness_planned_order_symbols": market_planned_order_symbols,
         "market_readiness_next_action": str(market_readiness.get("next_action") or ""),
+        "wait_pullback_calibration_status": str(market_readiness.get("wait_pullback_calibration_status") or ""),
+        "wait_pullback_calibration_reason": str(market_readiness.get("wait_pullback_calibration_reason") or ""),
+        "wait_pullback_primary_action": str(market_readiness.get("wait_pullback_primary_action") or ""),
+        "wait_pullback_count": _int(market_readiness.get("wait_pullback_count"), 0),
+        "wait_pullback_close_count": _int(market_readiness.get("wait_pullback_close_count"), 0),
+        "wait_pullback_near_candidate_count": _int(
+            market_readiness.get("wait_pullback_near_candidate_count"),
+            0,
+        ),
+        "wait_pullback_avg_gap_pct": _float(market_readiness.get("wait_pullback_avg_gap_pct"), 0.0),
+        "wait_pullback_min_gap_pct": _float(market_readiness.get("wait_pullback_min_gap_pct"), 0.0),
+        "wait_pullback_dominant_anchor_component": str(
+            market_readiness.get("wait_pullback_dominant_anchor_component") or ""
+        ),
+        "wait_pullback_top_symbols": str(market_readiness.get("wait_pullback_top_symbols") or ""),
         "submit_quality_status": submit_quality_status,
         "submit_quality_tier": submit_quality_tier,
         "submit_quality_reason": submit_quality_reason,

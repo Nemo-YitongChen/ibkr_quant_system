@@ -3812,7 +3812,12 @@ class Supervisor:
             str(checkpoint.get("target_market") or ""),
             str(checkpoint.get("target_portfolio_id") or ""),
         )
-        return self._auto_order_recovery_checkpoint_context(checkpoint, now=now)
+        return recovery_checkpoint_context(
+            checkpoint,
+            now=now,
+            report_refreshed=False,
+            execution_refreshed=False,
+        )
 
     def _mark_auto_order_recovery_attempt(
         self,
