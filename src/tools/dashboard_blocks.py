@@ -305,6 +305,9 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
     recovery_eligibility = _dict(
         summary.get("recovery_eligibility")
     ) or evaluate_auto_order_recovery_eligibility(recovery_plan)
+    execution_evidence_maintenance = _dict(
+        auto_order.get("execution_evidence_maintenance")
+    )
     remediation_plan = _rows(summary.get("remediation_plan"), limit=20)
     frontier_candidates = _rows(submit_plan.get("frontier_candidates"), limit=20)
     top_frontier = dict(frontier_candidates[0]) if frontier_candidates else {}
@@ -416,6 +419,29 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "recovery_eligibility_active": int(bool(recovery_eligibility.get("active", False))),
             "recovery_eligibility_eligible": int(bool(recovery_eligibility.get("eligible", False))),
             "recovery_eligibility_reason": str(recovery_eligibility.get("reason") or ""),
+            "execution_evidence_maintenance_status": str(
+                execution_evidence_maintenance.get("status")
+                or summary.get("execution_evidence_maintenance_status")
+                or ""
+            ),
+            "execution_evidence_maintenance_reason": str(
+                execution_evidence_maintenance.get("reason")
+                or summary.get("execution_evidence_maintenance_reason")
+                or ""
+            ),
+            "execution_evidence_maintenance_target_market": str(
+                execution_evidence_maintenance.get("target_market")
+                or summary.get("execution_evidence_maintenance_target_market")
+                or ""
+            ),
+            "execution_evidence_maintenance_target_portfolio_id": str(
+                execution_evidence_maintenance.get("target_portfolio_id")
+                or summary.get("execution_evidence_maintenance_target_portfolio_id")
+                or ""
+            ),
+            "execution_evidence_maintenance_submit_orders": int(
+                bool(execution_evidence_maintenance.get("submit_orders", False))
+            ),
             "candidate_count": _int(submit_plan.get("candidate_count")),
             "frontier_candidate_count": _int(submit_plan.get("frontier_candidate_count"))
             or len(frontier_candidates),
@@ -451,6 +477,7 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "frequency_plan": frequency_plan,
             "recovery_plan": recovery_plan,
             "recovery_eligibility": recovery_eligibility,
+            "execution_evidence_maintenance": execution_evidence_maintenance,
             "frontier_candidates": frontier_candidates,
             "portfolios": rows,
         },

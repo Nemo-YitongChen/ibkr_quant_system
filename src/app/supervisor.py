@@ -41,6 +41,10 @@ from ..common.auto_order_recovery_state import (
     recovery_checkpoint_context,
     write_recovery_checkpoint,
 )
+from ..common.execution_evidence_maintenance import (
+    build_execution_evidence_maintenance_plan,
+    write_execution_evidence_maintenance_state,
+)
 from ..common.ibkr_client_id import (
     IBKR_CLIENT_ID_OFFSET_ENV,
     IBKR_CLIENT_ID_RETRY_SPAN_ENV,
@@ -3291,6 +3295,27 @@ class Supervisor:
     def _auto_order_readiness_enabled(self) -> bool:
         return bool(self._auto_order_readiness_policy().get("enabled", False))
 
+    def _execution_evidence_maintenance_enabled(self) -> bool:
+        policy = self._auto_order_readiness_policy()
+        return bool(policy.get("enabled", False)) and bool(
+            policy.get("execution_evidence_maintenance_enabled", False)
+        )
+
+    def _execution_evidence_maintenance_state_path(self) -> Path:
+        return self._summary_output_dir() / "execution_evidence_maintenance.json"
+
+    def _execution_evidence_maintenance_due(self, now: datetime) -> bool:
+        policy = self._auto_order_readiness_policy()
+        interval_min = max(
+            1,
+            int(policy.get("execution_evidence_maintenance_interval_min", 60) or 60),
+        )
+        return _artifact_refresh_due(
+            self._execution_evidence_maintenance_state_path(),
+            now,
+            interval_min,
+        )
+
     def _auto_order_local_dependency_refresh_enabled(self) -> bool:
         policy = self._auto_order_readiness_policy()
         return bool(policy.get("enabled", False)) and bool(
@@ -3455,6 +3480,156 @@ class Supervisor:
                     )
                 )
         return rows
+
+    def _execution_evidence_maintenance_readiness_rows(
+        self,
+        now: datetime,
+    ) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        common = self._auto_order_readiness_common_inputs()
+        rows = self._auto_order_readiness_rows(common_inputs=common)
+        for row in rows:
+            market, item, report_market = self._auto_order_recovery_target(
+                target_market=str(row.get("market") or ""),
+                target_portfolio_id=str(row.get("portfolio_id") or ""),
+            )
+            if market is None or item is None:
+                row["maintenance_report_fresh"] = False
+                row["maintenance_report_reason"] = "portfolio_not_configured"
+                continue
+            item["_local_timezone"] = market.local_timezone
+            self._restore_report_state(item, report_market)
+            files_ready, files_reason = self._report_files_ready(
+                item,
+                report_market,
+                ["investment_candidates.csv", "investment_plan.csv", "investment_report.md"],
+            )
+            if not files_ready:
+                row["maintenance_report_fresh"] = False
+                row["maintenance_report_reason"] = files_reason
+                continue
+            report_fresh, report_reason = self._report_fresh_enough(
+                market,
+                item,
+                report_market=report_market,
+                market_now=now,
+            )
+            row["maintenance_report_fresh"] = bool(report_fresh)
+            row["maintenance_report_reason"] = report_reason
+        return rows, common
+
+    def _execution_evidence_maintenance_plan(self, now: datetime) -> Dict[str, Any]:
+        rows, common = self._execution_evidence_maintenance_readiness_rows(now)
+        try:
+            gateway_rows = self._ibkr_gateway_live_budget_rows()
+        except Exception as exc:
+            log.warning(
+                "Execution evidence maintenance live budget unavailable; using artifact: %s: %s",
+                type(exc).__name__,
+                exc,
+            )
+            gateway_rows = list(common["weekly_summary"].get("ibkr_gateway_budget_rows") or [])
+        policy = common["policy"]
+        return build_execution_evidence_maintenance_plan(
+            rows,
+            gateway_rows,
+            excluded_markets=list(policy.get("excluded_markets") or []),
+            max_targets=int(
+                policy.get("execution_evidence_maintenance_max_targets_per_cycle", 1)
+                or 1
+            ),
+            generated_at=now,
+        )
+
+    def _run_execution_evidence_maintenance(
+        self,
+        now: datetime,
+        cycle_summary: List[Dict[str, Any]],
+        *,
+        recovery_context: Dict[str, Any],
+    ) -> bool:
+        if not self._execution_evidence_maintenance_enabled():
+            return False
+        if not self._execution_evidence_maintenance_due(now):
+            return False
+        if bool(dict(recovery_context.get("eligibility") or {}).get("active", False)):
+            return False
+        policy = self._auto_order_readiness_policy()
+        if bool(
+            policy.get(
+                "execution_evidence_maintenance_only_when_all_markets_closed",
+                True,
+            )
+        ) and self._active_live_market(now) is not None:
+            return False
+        if any(int(row.get("execution_run", 0) or 0) > 0 for row in cycle_summary):
+            return False
+
+        state_path = self._execution_evidence_maintenance_state_path()
+        plan = self._execution_evidence_maintenance_plan(now)
+        if str(plan.get("status") or "") != "READY":
+            write_execution_evidence_maintenance_state(state_path, plan)
+            return False
+
+        market, item, report_market = self._auto_order_recovery_target(
+            target_market=str(plan.get("target_market") or ""),
+            target_portfolio_id=str(plan.get("target_portfolio_id") or ""),
+        )
+        if market is None or item is None:
+            write_execution_evidence_maintenance_state(
+                state_path,
+                {
+                    **plan,
+                    "status": "FAILED",
+                    "reason": "selected_portfolio_not_configured",
+                    "completed_at": now.astimezone(timezone.utc).isoformat(),
+                },
+            )
+            return False
+
+        started_at = now.astimezone(timezone.utc).isoformat()
+        write_execution_evidence_maintenance_state(
+            state_path,
+            {
+                **plan,
+                "status": "RUNNING",
+                "started_at": started_at,
+            },
+        )
+        execution_item = dict(item)
+        execution_item["submit_investment_execution"] = False
+        execution_item["_recovery_evidence_only"] = True
+        succeeded = self._run_investment_execution(market, execution_item)
+        completed_at = datetime.now(timezone.utc).isoformat()
+        write_execution_evidence_maintenance_state(
+            state_path,
+            {
+                **plan,
+                "status": "COMPLETE" if succeeded else "FAILED",
+                "reason": (
+                    "execution_evidence_refreshed"
+                    if succeeded
+                    else "execution_evidence_refresh_failed"
+                ),
+                "started_at": started_at,
+                "completed_at": completed_at,
+            },
+        )
+        if not succeeded:
+            return False
+        for row in cycle_summary:
+            if resolve_market_code(str(row.get("market") or "")) != report_market:
+                continue
+            row["execution_run"] = int(row.get("execution_run", 0) or 0) + 1
+            row.setdefault("notable_actions", []).append(
+                f"execution_evidence_maintenance:{Path(str(item['watchlist_yaml'])).stem}:dry_run"
+            )
+            break
+        log.info(
+            "Execution evidence maintenance complete: market=%s portfolio=%s submit=false",
+            report_market,
+            self._portfolio_id_for_item(item, report_market),
+        )
+        return True
 
     def _auto_order_submit_plan(self) -> Dict[str, Any]:
         common = self._auto_order_readiness_common_inputs()
@@ -3829,12 +4004,28 @@ class Supervisor:
             summary.get("recovery_plan"),
             now=now,
         )
+        maintenance_state = _load_json_file(
+            self._execution_evidence_maintenance_state_path()
+        )
+        summary["execution_evidence_maintenance_status"] = str(
+            maintenance_state.get("status") or ""
+        )
+        summary["execution_evidence_maintenance_reason"] = str(
+            maintenance_state.get("reason") or ""
+        )
+        summary["execution_evidence_maintenance_target_market"] = str(
+            maintenance_state.get("target_market") or ""
+        )
+        summary["execution_evidence_maintenance_target_portfolio_id"] = str(
+            maintenance_state.get("target_portfolio_id") or ""
+        )
         payload_fields = {
             "schema_version": "2026Q2.auto_order_readiness.v1",
             "config_path": str(_resolve_path(self.config_path)),
             "policy": policy,
             "summary": summary,
             "rows": rows,
+            "execution_evidence_maintenance": maintenance_state,
         }
         signature = hashlib.sha1(
             json.dumps(
@@ -6208,6 +6399,11 @@ class Supervisor:
             else:
                 self.trade_proc.stop()
                 self._active_market = None
+            execution_evidence_maintenance_ran = self._run_execution_evidence_maintenance(
+                now,
+                cycle_summary,
+                recovery_context=recovery_context,
+            )
             if self._auto_order_recovery_suppresses_labeling(recovery_context):
                 labeling_ran = False
                 labeling_due, labeling_reason = self._labeling_due(now)
@@ -6236,7 +6432,7 @@ class Supervisor:
             execution_evidence_changed = any(
                 int(row.get("execution_run", 0) or 0) > 0
                 for row in cycle_summary
-            )
+            ) or execution_evidence_maintenance_ran
             post_cycle_market_readiness_ran = self._refresh_auto_order_market_readiness_dependency(
                 now,
                 force=execution_evidence_changed,
@@ -6252,6 +6448,7 @@ class Supervisor:
                 or weekly_review_ran
                 or watchlist_expansion_ran
                 or seed_candidate_evidence_ran
+                or execution_evidence_maintenance_ran
             ):
                 self._refresh_dashboard()
             self._write_dashboard_control_state()

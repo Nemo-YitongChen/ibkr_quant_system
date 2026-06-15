@@ -36,6 +36,13 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
             "alert_rows": [{"status": "warn", "name": "stale"}],
         },
         "auto_order_readiness": {
+            "execution_evidence_maintenance": {
+                "status": "COMPLETE",
+                "reason": "execution_evidence_refreshed",
+                "target_market": "ASX",
+                "target_portfolio_id": "ASX:asx_top_quality",
+                "submit_orders": False,
+            },
             "summary": {
                 "status": "blocked",
                 "summary_text": "auto_order_readiness portfolios=2 ready=1 warning=0 blocked=1 disabled=0",
@@ -768,6 +775,13 @@ def test_watchlist_expansion_block_warns_when_no_growth_candidates_selected():
 def test_auto_order_readiness_block_backfills_seed_metrics_for_legacy_frequency_plan():
     payload = {
         "auto_order_readiness": {
+            "execution_evidence_maintenance": {
+                "status": "COMPLETE",
+                "reason": "execution_evidence_refreshed",
+                "target_market": "ASX",
+                "target_portfolio_id": "ASX:asx_top_quality",
+                "submit_orders": False,
+            },
             "summary": {
                 "status": "blocked",
                 "portfolio_count": 1,
@@ -852,12 +866,24 @@ def test_auto_order_readiness_block_backfills_seed_metrics_for_legacy_frequency_
         "gateway_budget_recovery_not_reached",
         "gateway_budget_evidence_refresh_required",
     }
+    assert block["metrics"]["execution_evidence_maintenance_status"] == "COMPLETE"
+    assert (
+        block["metrics"]["execution_evidence_maintenance_reason"]
+        == "execution_evidence_refreshed"
+    )
+    assert block["metrics"]["execution_evidence_maintenance_target_market"] == "ASX"
+    assert (
+        block["metrics"]["execution_evidence_maintenance_target_portfolio_id"]
+        == "ASX:asx_top_quality"
+    )
+    assert block["metrics"]["execution_evidence_maintenance_submit_orders"] == 0
     assert block["rows"]["frequency_plan"]["seed_source_candidate_count"] == 4
     assert (
         block["rows"]["recovery_plan"]["gateway_budget_projected_recovery_at"]
         == "2026-06-12T23:59:59+00:00"
     )
     assert block["rows"]["recovery_plan"]["steps"][0]["submit_orders"] is False
+    assert block["rows"]["execution_evidence_maintenance"]["status"] == "COMPLETE"
 
 
 def test_evidence_focus_actions_block_keeps_sample_collection_non_warning():
