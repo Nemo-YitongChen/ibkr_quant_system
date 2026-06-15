@@ -29,6 +29,128 @@ def _component_counts(rows: Iterable[Mapping[str, Any]]) -> Dict[str, int]:
     return dict(sorted(counts.items(), key=lambda item: (-item[1], item[0])))
 
 
+def _expected_edge_bps(row: Mapping[str, Any]) -> float:
+    direct = _float(row.get("expected_edge_bps"), 0.0)
+    if direct > 0.0:
+        return direct
+    whole_share = _float(row.get("whole_share_expected_edge_bps"), 0.0)
+    if whole_share > 0.0:
+        return whole_share
+    score_before_cost = _float(row.get("score_before_cost"), 0.0)
+    threshold = _float(row.get("accumulate_threshold"), _float(row.get("hold_threshold"), 0.0))
+    if score_before_cost > threshold:
+        return (score_before_cost - threshold) * 140.0
+    return 0.0
+
+
+def _post_cost_candidate(row: Mapping[str, Any]) -> Dict[str, Any]:
+    expected_edge_bps = _expected_edge_bps(row)
+    expected_cost_bps = _float(row.get("expected_cost_bps"), 0.0)
+    return {
+        "symbol": str(row.get("symbol") or ""),
+        "action": str(row.get("action") or ""),
+        "score": _float(row.get("score"), 0.0),
+        "score_before_cost": _float(row.get("score_before_cost"), 0.0),
+        "score_cost_drag": round(
+            max(0.0, _float(row.get("score_before_cost"), 0.0) - _float(row.get("score"), 0.0)),
+            6,
+        ),
+        "expected_edge_bps": round(expected_edge_bps, 6),
+        "expected_cost_bps": round(expected_cost_bps, 6),
+        "post_cost_edge_bps": round(expected_edge_bps - expected_cost_bps, 6),
+        "spread_proxy_bps": round(_float(row.get("spread_proxy_bps"), 0.0), 6),
+        "slippage_proxy_bps": round(_float(row.get("slippage_proxy_bps"), 0.0), 6),
+        "commission_proxy_bps": round(_float(row.get("commission_proxy_bps"), 0.0), 6),
+        "liquidity_score": round(_float(row.get("liquidity_score"), 0.0), 6),
+        "last_close": round(_float(row.get("last_close"), 0.0), 6),
+        "asset_class": str(row.get("asset_class") or ""),
+    }
+
+
+def build_post_cost_calibration(
+    rows: Iterable[Mapping[str, Any]],
+    *,
+    market: str = "",
+    portfolio_id: str = "",
+    max_expected_cost_bps: float = 45.0,
+    min_post_cost_edge_bps: float = 0.0,
+    top_limit: int = 5,
+) -> Dict[str, Any]:
+    clean_rows = [
+        dict(row or {})
+        for row in list(rows or [])
+        if isinstance(row, Mapping) and str(row.get("symbol") or "").strip()
+    ]
+    candidate_rows = [_post_cost_candidate(row) for row in clean_rows]
+    high_cost_rows = [
+        row for row in candidate_rows if _float(row.get("expected_cost_bps"), 0.0) > float(max_expected_cost_bps)
+    ]
+    positive_rows = [
+        row
+        for row in candidate_rows
+        if _float(row.get("post_cost_edge_bps"), 0.0) >= float(min_post_cost_edge_bps)
+    ]
+    high_cost_positive_rows = [
+        row
+        for row in high_cost_rows
+        if _float(row.get("post_cost_edge_bps"), 0.0) >= float(min_post_cost_edge_bps)
+    ]
+    avg_expected_cost = _mean(_float(row.get("expected_cost_bps"), 0.0) for row in candidate_rows)
+    avg_post_cost_edge = _mean(_float(row.get("post_cost_edge_bps"), 0.0) for row in candidate_rows)
+    high_cost_ratio = float(len(high_cost_rows) / len(candidate_rows)) if candidate_rows else 0.0
+
+    if not candidate_rows:
+        status = "NO_CANDIDATES"
+        reason = "missing_candidate_rows"
+        primary_action = "refresh_candidate_report_evidence"
+    elif not positive_rows:
+        status = "EDGE_AFTER_COST_WEAK"
+        reason = "no_positive_post_cost_edge_candidates"
+        primary_action = "improve_signal_edge_before_expansion"
+    elif high_cost_ratio >= 0.5 and high_cost_positive_rows:
+        status = "COST_THRESHOLD_REVIEW"
+        reason = "global_cost_threshold_blocks_positive_post_cost_candidates"
+        primary_action = "review_market_specific_cost_threshold_with_post_cost_margin"
+    elif high_cost_ratio >= 0.5 or avg_expected_cost > float(max_expected_cost_bps):
+        status = "COST_DRAG_DOMINANT"
+        reason = "expected_cost_above_market_threshold"
+        primary_action = "expand_lower_cost_candidates_before_submit"
+    else:
+        status = "POST_COST_HEALTHY"
+        reason = "candidate_post_cost_edge_positive"
+        primary_action = "keep_post_cost_gate_monitor_outcomes"
+
+    top_candidates = sorted(
+        candidate_rows,
+        key=lambda row: (
+            -_float(row.get("post_cost_edge_bps"), 0.0),
+            _float(row.get("expected_cost_bps"), 0.0),
+            -_float(row.get("score"), 0.0),
+            str(row.get("symbol") or ""),
+        ),
+    )[: max(0, int(top_limit))]
+    return {
+        "market": resolve_market_code(market),
+        "portfolio_id": str(portfolio_id or ""),
+        "status": status,
+        "reason": reason,
+        "primary_action": primary_action,
+        "candidate_count": int(len(candidate_rows)),
+        "high_cost_candidate_count": int(len(high_cost_rows)),
+        "positive_post_cost_edge_count": int(len(positive_rows)),
+        "high_cost_positive_edge_count": int(len(high_cost_positive_rows)),
+        "max_expected_cost_bps": float(max_expected_cost_bps),
+        "min_post_cost_edge_bps": float(min_post_cost_edge_bps),
+        "avg_expected_cost_bps": avg_expected_cost,
+        "avg_post_cost_edge_bps": avg_post_cost_edge,
+        "high_cost_ratio": round(high_cost_ratio, 6),
+        "top_post_cost_symbols": ",".join(
+            str(row.get("symbol") or "") for row in top_candidates if str(row.get("symbol") or "")
+        ),
+        "top_post_cost_rows": top_candidates,
+    }
+
+
 def build_wait_pullback_calibration(
     rows: Iterable[Mapping[str, Any]],
     *,
@@ -133,6 +255,37 @@ def build_wait_pullback_calibration(
             }
             for row in top_wait
         ],
+    }
+
+
+def build_post_cost_calibration_summary(
+    rows: Iterable[Mapping[str, Any]],
+) -> Dict[str, Any]:
+    clean_rows = [dict(row or {}) for row in list(rows or []) if isinstance(row, Mapping)]
+    status_counts: Dict[str, int] = {}
+    market_counts: Dict[str, int] = {}
+    for row in clean_rows:
+        status = str(row.get("status") or "UNKNOWN")
+        market = resolve_market_code(str(row.get("market") or "")) or "UNKNOWN"
+        status_counts[status] = status_counts.get(status, 0) + 1
+        market_counts[market] = market_counts.get(market, 0) + 1
+    review_statuses = {"COST_THRESHOLD_REVIEW", "COST_DRAG_DOMINANT", "EDGE_AFTER_COST_WEAK"}
+    review_count = sum(1 for row in clean_rows if str(row.get("status") or "") in review_statuses)
+    high_cost_count = sum(int(row.get("high_cost_candidate_count", 0) or 0) for row in clean_rows)
+    positive_count = sum(int(row.get("positive_post_cost_edge_count", 0) or 0) for row in clean_rows)
+    return {
+        "portfolio_count": int(len(clean_rows)),
+        "market_count": int(len(market_counts)),
+        "status_counts": status_counts,
+        "market_counts": market_counts,
+        "review_portfolio_count": int(review_count),
+        "high_cost_candidate_count": int(high_cost_count),
+        "positive_post_cost_edge_count": int(positive_count),
+        "primary_status": next(iter(status_counts), "UNKNOWN") if len(status_counts) == 1 else "MIXED",
+        "summary_text": (
+            f"portfolios={len(clean_rows)} review_portfolios={review_count} "
+            f"high_cost_candidates={high_cost_count}"
+        ),
     }
 
 

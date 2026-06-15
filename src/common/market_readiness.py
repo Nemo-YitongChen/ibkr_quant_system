@@ -12,6 +12,8 @@ from .freshness import file_age_hours
 from .market_structure import load_market_structure, market_structure_summary
 from .markets import market_config_path, resolve_market_code
 from .opportunity_calibration import (
+    build_post_cost_calibration,
+    build_post_cost_calibration_summary,
     build_wait_pullback_calibration,
     build_wait_pullback_calibration_summary,
 )
@@ -613,6 +615,14 @@ def build_market_readiness_rows(
                 watchlist_yaml=watchlist_yaml,
                 filename="investment_opportunity_scan.csv",
             )
+            candidate_path = _latest_artifact_path(
+                base_dir=base_dir,
+                runtime_root=runtime_root,
+                market=market,
+                out_dir=out_dir,
+                watchlist_yaml=watchlist_yaml,
+                filename="investment_candidates.csv",
+            )
             snapshot_path, snapshot_summary = _latest_artifact(
                 base_dir=base_dir,
                 runtime_root=runtime_root,
@@ -670,6 +680,11 @@ def build_market_readiness_rows(
                 market=market,
                 portfolio_id=portfolio_id,
             )
+            post_cost_calibration = build_post_cost_calibration(
+                _load_csv_rows(candidate_path),
+                market=market,
+                portfolio_id=portfolio_id,
+            )
             account_equity_cap = _float(execution_payload.get("account_equity_cap"), 0.0)
             equity_cap_applied = bool(account_equity_cap > 0.0 and broker_equity > account_equity_cap + 1e-9)
             rows.append(
@@ -712,8 +727,35 @@ def build_market_readiness_rows(
                     "execution_summary_path": str(execution_path or ""),
                     "execution_plan_path": str(execution_plan_path or ""),
                     "opportunity_scan_path": str(opportunity_scan_path or ""),
+                    "candidate_path": str(candidate_path or ""),
                     "broker_snapshot_path": str(snapshot_path or ""),
                     **submit_quality,
+                    "post_cost_calibration_status": str(post_cost_calibration.get("status") or ""),
+                    "post_cost_calibration_reason": str(post_cost_calibration.get("reason") or ""),
+                    "post_cost_primary_action": str(post_cost_calibration.get("primary_action") or ""),
+                    "post_cost_candidate_count": _int(post_cost_calibration.get("candidate_count"), 0),
+                    "post_cost_high_cost_candidate_count": _int(
+                        post_cost_calibration.get("high_cost_candidate_count"),
+                        0,
+                    ),
+                    "post_cost_positive_edge_count": _int(
+                        post_cost_calibration.get("positive_post_cost_edge_count"),
+                        0,
+                    ),
+                    "post_cost_high_cost_positive_edge_count": _int(
+                        post_cost_calibration.get("high_cost_positive_edge_count"),
+                        0,
+                    ),
+                    "post_cost_avg_expected_cost_bps": _float(
+                        post_cost_calibration.get("avg_expected_cost_bps"),
+                        0.0,
+                    ),
+                    "post_cost_avg_post_cost_edge_bps": _float(
+                        post_cost_calibration.get("avg_post_cost_edge_bps"),
+                        0.0,
+                    ),
+                    "post_cost_top_symbols": str(post_cost_calibration.get("top_post_cost_symbols") or ""),
+                    "post_cost_calibration": post_cost_calibration,
                     "wait_pullback_calibration_status": str(wait_pullback_calibration.get("status") or ""),
                     "wait_pullback_calibration_reason": str(wait_pullback_calibration.get("reason") or ""),
                     "wait_pullback_primary_action": str(wait_pullback_calibration.get("primary_action") or ""),
@@ -869,6 +911,11 @@ def build_market_readiness_payload(
         for row in rows
         if isinstance(row.get("wait_pullback_calibration"), Mapping)
     ]
+    post_cost_rows = [
+        dict(row.get("post_cost_calibration") or {})
+        for row in rows
+        if isinstance(row.get("post_cost_calibration"), Mapping)
+    ]
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "schema_version": "2026Q2.market_readiness.v1",
@@ -877,6 +924,8 @@ def build_market_readiness_payload(
         "summary": build_market_readiness_summary(rows),
         "preparation_plan": build_market_preparation_plan(rows),
         "opportunity_calibration": {
+            "post_cost_summary": build_post_cost_calibration_summary(post_cost_rows),
+            "post_cost_rows": post_cost_rows,
             "wait_pullback_summary": build_wait_pullback_calibration_summary(wait_pullback_rows),
             "wait_pullback_rows": wait_pullback_rows,
         },

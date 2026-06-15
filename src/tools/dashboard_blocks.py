@@ -309,6 +309,28 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
         auto_order.get("execution_evidence_maintenance")
     )
     remediation_plan = _rows(summary.get("remediation_plan"), limit=20)
+    post_cost_rows = [
+        {
+            "market": str(row.get("market") or ""),
+            "portfolio_id": str(row.get("portfolio_id") or ""),
+            "status": str(row.get("post_cost_calibration_status") or ""),
+            "reason": str(row.get("post_cost_calibration_reason") or ""),
+            "primary_action": str(row.get("post_cost_primary_action") or ""),
+            "candidate_count": _int(row.get("post_cost_candidate_count")),
+            "high_cost_candidate_count": _int(row.get("post_cost_high_cost_candidate_count")),
+            "positive_post_cost_edge_count": _int(row.get("post_cost_positive_edge_count")),
+            "high_cost_positive_edge_count": _int(row.get("post_cost_high_cost_positive_edge_count")),
+            "avg_expected_cost_bps": float(row.get("post_cost_avg_expected_cost_bps", 0.0) or 0.0),
+            "avg_post_cost_edge_bps": float(row.get("post_cost_avg_post_cost_edge_bps", 0.0) or 0.0),
+            "top_post_cost_symbols": str(row.get("post_cost_top_symbols") or ""),
+        }
+        for row in rows
+        if str(row.get("post_cost_calibration_status") or "").strip()
+    ]
+    post_cost_review_statuses = {"COST_THRESHOLD_REVIEW", "COST_DRAG_DOMINANT", "EDGE_AFTER_COST_WEAK"}
+    post_cost_review_rows = [
+        row for row in post_cost_rows if str(row.get("status") or "").strip().upper() in post_cost_review_statuses
+    ]
     wait_pullback_rows = [
         {
             "market": str(row.get("market") or ""),
@@ -469,6 +491,26 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "execution_evidence_maintenance_submit_orders": int(
                 bool(execution_evidence_maintenance.get("submit_orders", False))
             ),
+            "post_cost_calibration_portfolio_count": len(post_cost_rows),
+            "post_cost_review_portfolio_count": len(post_cost_review_rows),
+            "post_cost_high_cost_candidate_count": sum(_int(row.get("high_cost_candidate_count")) for row in post_cost_rows),
+            "post_cost_positive_edge_candidate_count": sum(
+                _int(row.get("positive_post_cost_edge_count")) for row in post_cost_rows
+            ),
+            "post_cost_primary_status": (
+                str(post_cost_review_rows[0].get("status") or "")
+                if post_cost_review_rows
+                else str(post_cost_rows[0].get("status") or "")
+                if post_cost_rows
+                else ""
+            ),
+            "post_cost_primary_action": (
+                str(post_cost_review_rows[0].get("primary_action") or "")
+                if post_cost_review_rows
+                else str(post_cost_rows[0].get("primary_action") or "")
+                if post_cost_rows
+                else ""
+            ),
             "wait_pullback_calibration_portfolio_count": len(wait_pullback_rows),
             "wait_pullback_review_portfolio_count": len(wait_pullback_review_rows),
             "wait_pullback_review_wait_count": sum(_int(row.get("close_wait_pullback_count")) for row in wait_pullback_rows),
@@ -523,6 +565,7 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "recovery_plan": recovery_plan,
             "recovery_eligibility": recovery_eligibility,
             "execution_evidence_maintenance": execution_evidence_maintenance,
+            "post_cost_calibration": post_cost_rows,
             "wait_pullback_calibration": wait_pullback_rows,
             "frontier_candidates": frontier_candidates,
             "portfolios": rows,

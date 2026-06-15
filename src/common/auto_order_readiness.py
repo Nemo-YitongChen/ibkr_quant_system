@@ -1530,6 +1530,28 @@ def evaluate_auto_order_readiness(
         ),
         "market_readiness_planned_order_symbols": market_planned_order_symbols,
         "market_readiness_next_action": str(market_readiness.get("next_action") or ""),
+        "post_cost_calibration_status": str(market_readiness.get("post_cost_calibration_status") or ""),
+        "post_cost_calibration_reason": str(market_readiness.get("post_cost_calibration_reason") or ""),
+        "post_cost_primary_action": str(market_readiness.get("post_cost_primary_action") or ""),
+        "post_cost_candidate_count": _int(market_readiness.get("post_cost_candidate_count"), 0),
+        "post_cost_high_cost_candidate_count": _int(
+            market_readiness.get("post_cost_high_cost_candidate_count"),
+            0,
+        ),
+        "post_cost_positive_edge_count": _int(market_readiness.get("post_cost_positive_edge_count"), 0),
+        "post_cost_high_cost_positive_edge_count": _int(
+            market_readiness.get("post_cost_high_cost_positive_edge_count"),
+            0,
+        ),
+        "post_cost_avg_expected_cost_bps": _float(
+            market_readiness.get("post_cost_avg_expected_cost_bps"),
+            0.0,
+        ),
+        "post_cost_avg_post_cost_edge_bps": _float(
+            market_readiness.get("post_cost_avg_post_cost_edge_bps"),
+            0.0,
+        ),
+        "post_cost_top_symbols": str(market_readiness.get("post_cost_top_symbols") or ""),
         "wait_pullback_calibration_status": str(market_readiness.get("wait_pullback_calibration_status") or ""),
         "wait_pullback_calibration_reason": str(market_readiness.get("wait_pullback_calibration_reason") or ""),
         "wait_pullback_primary_action": str(market_readiness.get("wait_pullback_primary_action") or ""),

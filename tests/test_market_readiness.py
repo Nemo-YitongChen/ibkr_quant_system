@@ -288,6 +288,69 @@ def test_market_readiness_submit_quality_ignores_exit_only_orders(tmp_path: Path
     assert row["submit_quality_non_buy_order_count"] == 1
 
 
+def test_market_readiness_includes_post_cost_calibration_from_candidates(tmp_path: Path) -> None:
+    reports_root = tmp_path / "reports"
+    hk_dir = reports_root / "resolved_hk_top100_bluechip"
+    _write_json(
+        hk_dir / "investment_execution_summary.json",
+        {
+            "market": "HK",
+            "portfolio_id": "HK:resolved_hk_top100_bluechip",
+            "paper_submit_ready": False,
+            "paper_submit_readiness_status": "NO_ORDERS",
+            "primary_no_order_reason": "BLOCKED_OPPORTUNITY",
+            "order_count": 0,
+            "broker_equity": 1000.0,
+        },
+    )
+    _write_execution_plan(
+        hk_dir / "investment_candidates.csv",
+        {
+            "symbol": "3988.HK",
+            "action": "HOLD",
+            "score": 0.97,
+            "score_before_cost": 1.02,
+            "accumulate_threshold": 0.34,
+            "expected_cost_bps": 50.0,
+            "spread_proxy_bps": 14.0,
+            "slippage_proxy_bps": 25.0,
+            "commission_proxy_bps": 11.0,
+        },
+    )
+
+    payload = build_market_readiness_payload(
+        base_dir=REPO_ROOT,
+        supervisor_config={
+            "markets": [
+                {
+                    "name": "hk",
+                    "market": "HK",
+                    "enabled": True,
+                    "reports": [
+                        {
+                            "kind": "investment",
+                            "out_dir": str(reports_root),
+                            "watchlist_yaml": "config/watchlists/resolved_hk_top100_bluechip.yaml",
+                            "run_investment_execution": True,
+                            "submit_investment_execution": True,
+                        }
+                    ],
+                }
+            ],
+        },
+        config_path=tmp_path / "supervisor.yaml",
+        runtime_root=tmp_path / "runtime",
+    )
+
+    row = payload["rows"][0]
+    assert row["post_cost_calibration_status"] == "COST_THRESHOLD_REVIEW"
+    assert row["post_cost_primary_action"] == "review_market_specific_cost_threshold_with_post_cost_margin"
+    assert row["post_cost_high_cost_candidate_count"] == 1
+    assert row["post_cost_positive_edge_count"] == 1
+    assert row["post_cost_top_symbols"] == "3988.HK"
+    assert payload["opportunity_calibration"]["post_cost_summary"]["review_portfolio_count"] == 1
+
+
 def test_market_readiness_marks_high_quality_submit_tier(tmp_path: Path) -> None:
     reports_root = tmp_path / "reports"
     us_dir = reports_root / "watchlist"

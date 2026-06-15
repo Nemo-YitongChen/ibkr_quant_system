@@ -122,6 +122,16 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
                     "portfolio_id": "US:watchlist",
                     "status": "BLOCKED",
                     "primary_reason": "preflight_stale",
+                    "post_cost_calibration_status": "COST_THRESHOLD_REVIEW",
+                    "post_cost_calibration_reason": "global_cost_threshold_blocks_positive_post_cost_candidates",
+                    "post_cost_primary_action": "review_market_specific_cost_threshold_with_post_cost_margin",
+                    "post_cost_candidate_count": 2,
+                    "post_cost_high_cost_candidate_count": 2,
+                    "post_cost_positive_edge_count": 2,
+                    "post_cost_high_cost_positive_edge_count": 2,
+                    "post_cost_avg_expected_cost_bps": 49.0,
+                    "post_cost_avg_post_cost_edge_bps": 36.4,
+                    "post_cost_top_symbols": "3988.HK,0939.HK",
                     "wait_pullback_calibration_status": "REVIEW_ANCHOR",
                     "wait_pullback_calibration_reason": "wait_pullback_gap_within_review_band",
                     "wait_pullback_primary_action": "review_pullback_anchor_before_changing_thresholds",
@@ -521,6 +531,16 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
     assert by_id["auto_order_readiness"]["metrics"]["frequency_seed_source_markets"] == ["US"]
     assert by_id["auto_order_readiness"]["metrics"]["frequency_plan_does_not_change_submit_decision"] == 1
     assert by_id["auto_order_readiness"]["rows"]["frequency_plan"]["seed_proposal_markets"] == ["US"]
+    assert by_id["auto_order_readiness"]["metrics"]["post_cost_calibration_portfolio_count"] == 1
+    assert by_id["auto_order_readiness"]["metrics"]["post_cost_review_portfolio_count"] == 1
+    assert by_id["auto_order_readiness"]["metrics"]["post_cost_high_cost_candidate_count"] == 2
+    assert by_id["auto_order_readiness"]["metrics"]["post_cost_positive_edge_candidate_count"] == 2
+    assert by_id["auto_order_readiness"]["metrics"]["post_cost_primary_status"] == "COST_THRESHOLD_REVIEW"
+    assert (
+        by_id["auto_order_readiness"]["metrics"]["post_cost_primary_action"]
+        == "review_market_specific_cost_threshold_with_post_cost_margin"
+    )
+    assert by_id["auto_order_readiness"]["rows"]["post_cost_calibration"][0]["top_post_cost_symbols"] == "3988.HK,0939.HK"
     assert by_id["auto_order_readiness"]["metrics"]["wait_pullback_calibration_portfolio_count"] == 1
     assert by_id["auto_order_readiness"]["metrics"]["wait_pullback_review_portfolio_count"] == 1
     assert by_id["auto_order_readiness"]["metrics"]["wait_pullback_review_wait_count"] == 4

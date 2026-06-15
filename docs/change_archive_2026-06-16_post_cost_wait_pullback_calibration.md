@@ -12,8 +12,11 @@ At the same time, ASX/HK/US/XETRA opportunity scans were mostly blocked by `WAIT
 - Exit-only planned rows now produce `submit_quality_status=NO_BUY_ORDERS`, with separate buy/non-buy order counts.
 - Added `src/common/opportunity_calibration.py` to summarize `WAIT_PULLBACK` rows by market/portfolio.
 - `market_readiness.json` now includes per-portfolio WAIT_PULLBACK calibration fields plus a top-level summary.
+- `market_readiness.json` now also reads `investment_candidates.csv` and emits post-cost calibration rows, including expected cost, expected edge, post-cost edge, high-cost counts, positive post-cost edge counts, and top symbols.
 - `auto_order_readiness` rows now carry WAIT_PULLBACK calibration fields through to dashboard v2.
+- `auto_order_readiness` rows now also carry post-cost calibration fields through to dashboard v2.
 - Dashboard v2 keeps the existing 14-block information architecture and adds WAIT_PULLBACK metrics inside the existing `auto_order_readiness` block.
+- Dashboard v2 also adds post-cost calibration metrics inside the existing `auto_order_readiness` block, without creating a new block.
 - Recovery checkpoint creation now returns the targeted refresh context immediately instead of completing against older marker files in the same call.
 
 ## Current Evidence
@@ -21,6 +24,9 @@ At the same time, ASX/HK/US/XETRA opportunity scans were mostly blocked by `WAIT
 - HK/US exit-only `SCHX` / `SCHX.HK` recovery evidence is now classified as `NO_BUY_ORDERS` instead of failed post-cost buy quality.
 - `market_readiness` currently reports 7 portfolios across 5 markets, with no ready submit candidate.
 - WAIT_PULLBACK calibration reports 6 portfolios needing anchor review, 31 close wait rows, and 0 near-entry candidates.
+- Fresh HK post-cost calibration shows 15 candidate rows per HK portfolio, 14 high-cost candidates, and 6 positive post-cost edge candidates.
+- HK top positive post-cost symbols are `3988.HK`, `0939.HK`, `1398.HK`, `2388.HK`, and `0005.HK`.
+- Dashboard v2 auto-order metrics show 6 post-cost review portfolios, 69 high-cost candidates, and 41 positive post-cost edge candidates across the non-research portfolios.
 - The dashboard v2 block count remains 14.
 - Current auto-order submit plan remains `BLOCKED/no_single_safe_submit_candidate`.
 
@@ -30,18 +36,21 @@ This change does not loosen automated submit gates. It makes the diagnostics mor
 
 - Post-cost edge calibration should only inspect actual buy-side candidates.
 - Exit/rebalance rows should not be used to decide whether expected edge is too low.
+- HK cost is a market-specific calibration issue: some candidates have positive post-cost edge even though the global 45 bps cost threshold is exceeded. This is evidence for review, not automatic threshold relaxation.
 - The main current opportunity blocker is anchor placement for `WAIT_PULLBACK`, not a reason to lower risk, edge, cost, liquidity, or market-rule controls.
 
 ## Next Technical Path
 
 1. Refresh preflight and stale execution artifacts for US overnight, XETRA, HK tech-growth, and ASX during their relevant market windows.
 2. For markets with repeated `REVIEW_ANCHOR`, compare `WAIT_PULLBACK` close rows against next 5/20d outcomes before changing entry-band parameters.
-3. Only if outcome evidence supports it, test paper-only NEAR_ENTRY limit trials with stricter size and limit-buffer rules.
-4. Continue expanding ETF-first whole-share candidates, but require fresh buy plans with positive post-cost edge before submit.
+3. For HK, compare positive post-cost edge candidates against realized 5/20d outcomes and execution cost before changing market-specific `max_expected_cost_bps`.
+4. Only if outcome evidence supports it, test paper-only NEAR_ENTRY limit trials with stricter size and limit-buffer rules.
+5. Continue expanding ETF-first whole-share candidates, but require fresh buy plans with positive post-cost edge before submit.
 
 ## Verification
 
 - `PYTHONDONTWRITEBYTECODE=1 .venv/bin/pytest -q -p no:cacheprovider tests/test_auto_order_readiness.py tests/test_dashboard_blocks.py tests/test_market_readiness.py tests/test_opportunity_calibration.py`
+- `PYTHONDONTWRITEBYTECODE=1 .venv/bin/pytest -q -p no:cacheprovider`
 - `PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m src.tools.review_market_readiness --config config/supervisor.yaml --runtime_root runtime_data/paper_investment_only_duq152001 --out_dir runtime_data/paper_investment_only_duq152001/reports_supervisor`
-- `PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m src.tools.review_auto_order_readiness --config config/supervisor.yaml --out_dir runtime_data/paper_investment_only_duq152001/reports_supervisor --preflight_summary runtime_data/paper_investment_only_duq152001/reports_preflight/supervisor_preflight_summary.json --weekly_summary reports_investment_weekly/weekly_review_summary.json --market_readiness runtime_data/paper_investment_only_duq152001/reports_supervisor/market_readiness.json --runtime_root runtime_data/paper_investment_only_duq152001`
+- `PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m src.tools.review_auto_order_readiness --config config/supervisor.yaml --out_dir runtime_data/paper_investment_only_duq152001/reports_supervisor --preflight_summary reports_preflight/supervisor_preflight_summary.json --weekly_summary reports_investment_weekly/weekly_review_summary.json --market_readiness runtime_data/paper_investment_only_duq152001/reports_supervisor/market_readiness.json --runtime_root runtime_data/paper_investment_only_duq152001`
 - `PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m src.tools.generate_dashboard --config config/supervisor.yaml --out_dir runtime_data/paper_investment_only_duq152001/reports_supervisor`
