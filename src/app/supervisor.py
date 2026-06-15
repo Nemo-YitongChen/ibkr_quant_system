@@ -3559,8 +3559,13 @@ class Supervisor:
                 "execution_evidence_maintenance_only_when_all_markets_closed",
                 True,
             )
-        ) and self._active_live_market(now) is not None:
-            return False
+        ):
+            exchange_open = any(
+                bool(row.get("exchange_open", False))
+                for row in cycle_summary
+            )
+            if exchange_open or self._active_live_market(now) is not None:
+                return False
         if any(int(row.get("execution_run", 0) or 0) > 0 for row in cycle_summary):
             return False
 

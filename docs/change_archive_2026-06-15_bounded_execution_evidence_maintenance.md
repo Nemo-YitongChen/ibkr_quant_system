@@ -49,10 +49,18 @@ was performed with `--recovery_evidence_only`:
 - the leading `AZJ.AX` intent passed the configured edge gate but remained
   blocked by `WAIT_PULLBACK`, so no order was submitted.
 
-The current planner preview selects
-`HK:resolved_hk_top100_bluechip` first because its artifact is still
-`DEGRADED_GATEWAY`. It will not run until all configured markets are closed and
-execution reserve remains available.
+Before deployment, the planner selected
+`HK:resolved_hk_top100_bluechip` first because its artifact was
+`DEGRADED_GATEWAY`. The first real maintenance run connected successfully,
+kept `submitted=false`, produced one `SCHX.HK` plan worth about `29.58 AUD`,
+and marked `consumes_submit_slot=false`. Market readiness changed to fresh
+`PLANNED_MARKET_CLOSED`; submit quality remained blocked by net-edge,
+edge-margin, edge-gate, and quality checks.
+
+The first deployed cycle also exposed that a disabled live-engine window is not
+equivalent to a closed exchange. The guard now checks both active live-engine
+windows and each cycle row's `exchange_open` state, so maintenance cannot run
+while a configured exchange remains open.
 
 ## Safety Boundary
 

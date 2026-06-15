@@ -146,3 +146,38 @@ def test_supervisor_maintenance_skips_existing_execution_and_active_recovery(
 
     build_plan.assert_not_called()
     run_execution.assert_not_called()
+
+
+def test_supervisor_maintenance_skips_when_exchange_is_open_without_live_engine(
+    tmp_path: Path,
+) -> None:
+    supervisor = _supervisor(tmp_path)
+    supervisor.cfg["auto_order_readiness"][
+        "execution_evidence_maintenance_only_when_all_markets_closed"
+    ] = True
+    now = datetime(2026, 6, 15, 22, 0, tzinfo=supervisor.tz)
+
+    with patch.object(
+        supervisor,
+        "_execution_evidence_maintenance_due",
+        return_value=True,
+    ), patch.object(
+        supervisor,
+        "_active_live_market",
+        return_value=None,
+    ), patch.object(
+        supervisor,
+        "_execution_evidence_maintenance_plan",
+    ) as build_plan, patch.object(
+        supervisor,
+        "_run_investment_execution",
+    ) as run_execution:
+        ran = supervisor._run_execution_evidence_maintenance(
+            now,
+            [{"market": "XETRA", "exchange_open": True, "execution_run": 0}],
+            recovery_context={},
+        )
+
+    assert ran is False
+    build_plan.assert_not_called()
+    run_execution.assert_not_called()
