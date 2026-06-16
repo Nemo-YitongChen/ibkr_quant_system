@@ -151,6 +151,32 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
                 },
             ],
         },
+        "opportunity_outcome_validation": {
+            "summary": {
+                "validation_count": 2,
+                "matched_symbol_count": 3,
+                "matured_5d_sample_count": 120,
+                "matured_20d_sample_count": 90,
+            },
+            "calibration_suggestion_summary": {
+                "suggestion_count": 2,
+                "priority_counts": {"P1": 1, "P2": 1},
+                "type_counts": {
+                    "WAIT_PULLBACK_ANCHOR_REVIEW": 1,
+                    "HK_POST_COST_THRESHOLD_REVIEW": 1,
+                },
+            },
+            "calibration_suggestions": [
+                {
+                    "market": "HK",
+                    "portfolio_id": "HK:watchlist",
+                    "suggestion_type": "HK_POST_COST_THRESHOLD_REVIEW",
+                    "primary_field": "submit_quality.max_expected_cost_bps",
+                    "auto_apply": False,
+                    "read_only": True,
+                }
+            ],
+        },
         "open_market_analysis_summary": {
             "status": "warning",
             "summary_text": "open_markets=1 open_portfolios=1 auto_blocked=1",
@@ -550,6 +576,15 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
         == "review_pullback_anchor_before_changing_thresholds"
     )
     assert by_id["auto_order_readiness"]["rows"]["wait_pullback_calibration"][0]["top_wait_symbols"] == "CSCO,CAT"
+    assert by_id["auto_order_readiness"]["metrics"]["opportunity_outcome_validation_count"] == 2
+    assert by_id["auto_order_readiness"]["metrics"]["opportunity_outcome_matured_20d_sample_count"] == 90
+    assert by_id["auto_order_readiness"]["metrics"]["opportunity_calibration_suggestion_count"] == 2
+    assert by_id["auto_order_readiness"]["metrics"]["opportunity_calibration_p1_suggestion_count"] == 1
+    assert by_id["auto_order_readiness"]["metrics"]["opportunity_calibration_hk_post_cost_review_count"] == 1
+    assert (
+        by_id["auto_order_readiness"]["rows"]["opportunity_calibration_suggestions"][0]["suggestion_type"]
+        == "HK_POST_COST_THRESHOLD_REVIEW"
+    )
     assert by_id["dashboard_control_actions"]["metrics"]["history_count"] == 3
     assert by_id["dashboard_control_actions"]["metrics"]["linked_action_history_count"] == 1
     assert (

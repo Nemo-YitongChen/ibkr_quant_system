@@ -7979,6 +7979,7 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
     dashboard_control = _load_dashboard_control_payload(summary_dir, cfg, cards)
     _attach_dashboard_control(cards, dashboard_control)
     auto_order_readiness = _load_json(summary_dir / "auto_order_readiness.json")
+    opportunity_outcome_validation = _load_json(summary_dir / "opportunity_outcome_validation.json")
     auto_order_policy = dict(cfg.get("auto_order_readiness") or {})
     auto_order_readiness_max_age_hours = float(
         auto_order_policy.get(
@@ -8137,6 +8138,7 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
         "ops_overview": ops_overview,
         "auto_order_readiness": auto_order_readiness,
         "auto_order_readiness_health": auto_order_readiness_health,
+        "opportunity_outcome_validation": opportunity_outcome_validation,
         "open_market_analysis_summary": open_market_analysis_summary,
         "watchlist_expansion_summary": watchlist_expansion_summary,
         "ibkr_gateway_budget": weekly_ibkr_gateway_budget_payload,

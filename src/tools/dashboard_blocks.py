@@ -308,6 +308,15 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
     execution_evidence_maintenance = _dict(
         auto_order.get("execution_evidence_maintenance")
     )
+    opportunity_outcome_validation = _dict(payload.get("opportunity_outcome_validation"))
+    opportunity_outcome_summary = _dict(opportunity_outcome_validation.get("summary"))
+    calibration_suggestion_summary = _dict(
+        opportunity_outcome_validation.get("calibration_suggestion_summary")
+    )
+    calibration_suggestions = _rows(
+        opportunity_outcome_validation.get("calibration_suggestions"),
+        limit=20,
+    )
     remediation_plan = _rows(summary.get("remediation_plan"), limit=20)
     post_cost_rows = [
         {
@@ -529,6 +538,30 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
                 if wait_pullback_rows
                 else ""
             ),
+            "opportunity_outcome_validation_count": _int(
+                opportunity_outcome_summary.get("validation_count")
+            ),
+            "opportunity_outcome_matched_symbol_count": _int(
+                opportunity_outcome_summary.get("matched_symbol_count")
+            ),
+            "opportunity_outcome_matured_5d_sample_count": _int(
+                opportunity_outcome_summary.get("matured_5d_sample_count")
+            ),
+            "opportunity_outcome_matured_20d_sample_count": _int(
+                opportunity_outcome_summary.get("matured_20d_sample_count")
+            ),
+            "opportunity_calibration_suggestion_count": _int(
+                calibration_suggestion_summary.get("suggestion_count")
+            ),
+            "opportunity_calibration_p1_suggestion_count": _int(
+                _dict(calibration_suggestion_summary.get("priority_counts")).get("P1")
+            ),
+            "opportunity_calibration_wait_pullback_anchor_review_count": _int(
+                _dict(calibration_suggestion_summary.get("type_counts")).get("WAIT_PULLBACK_ANCHOR_REVIEW")
+            ),
+            "opportunity_calibration_hk_post_cost_review_count": _int(
+                _dict(calibration_suggestion_summary.get("type_counts")).get("HK_POST_COST_THRESHOLD_REVIEW")
+            ),
             "candidate_count": _int(submit_plan.get("candidate_count")),
             "frontier_candidate_count": _int(submit_plan.get("frontier_candidate_count"))
             or len(frontier_candidates),
@@ -565,6 +598,8 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "recovery_plan": recovery_plan,
             "recovery_eligibility": recovery_eligibility,
             "execution_evidence_maintenance": execution_evidence_maintenance,
+            "opportunity_outcome_validation": opportunity_outcome_validation,
+            "opportunity_calibration_suggestions": calibration_suggestions,
             "post_cost_calibration": post_cost_rows,
             "wait_pullback_calibration": wait_pullback_rows,
             "frontier_candidates": frontier_candidates,

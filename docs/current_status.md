@@ -578,3 +578,13 @@
 - 解释边界：这是同符号历史成熟 outcome 验证，不代表 2026-06-16 最新候选本身已经拥有未来 5/20d 成熟结果；当前结论是保持 gate、继续监控 fresh realized outcomes，而不是放宽 risk/edge/cost/liquidity/market-rule/Gateway budget/submit-quality。
 - Supervisor 新增 `supervisor_shutdown_status.json`，记录 `running/stopping/stopped/crashed`、pid、config、signal 和写入时间；SIGINT/SIGTERM 仍优雅停止。
 - Supervisor 现在处理 SIGHUP 并保持运行，降低前台 terminal/PTY 断开导致“无声自动 shutdown”的概率；若未来仍退出，优先读取 shutdown status artifact 判断是 signal、exception 还是人为停止。
+
+## 39. 2026-06-16 Opportunity outcome calibration suggestions
+
+- `review_opportunity_outcomes` 已升级到 v2 schema，除 validation rows 外新增 `calibration_suggestion_summary`、`calibration_suggestions` 和 `opportunity_outcome_calibration_suggestions.csv`。
+- 所有建议都是只读治理建议：`read_only=true`、`auto_apply=false`、`paper_only=true`；不会自动修改 YAML，不会绕过 risk/edge/cost/liquidity/market-rule/Gateway budget/submit-quality gate。
+- 最新全市场 validation：14 条验证、78 个 matched symbols、10,365 个成熟 5d 样本、7,572 个成熟 20d 样本。
+- 最新建议层：14 条建议，其中 7 条 P1、6 条 `WAIT_PULLBACK_ANCHOR_REVIEW`、2 条 HK `HK_POST_COST_THRESHOLD_REVIEW`、1 条 CN `WAIT_PULLBACK_NO_ACTION`。
+- HK post-cost 建议字段是 `submit_quality.max_expected_cost_bps`，但接受规则要求只在 paper 中单字段试验、必须有 fresh HK BUY plan、`expected_post_cost_edge_bps >= 0`、submit quality PASS、且 fill/slippage 与 5/20d outcome 不退化。
+- WAIT_PULLBACK 建议字段是 `opportunity_entry.near_entry_gap_pct`，用于准备小额 limit paper trial；支持市场包括 HK、US、XETRA、ASX，CN 因没有 close WAIT_PULLBACK candidate group 暂不动作。
+- Dashboard v2 现有 Auto Order block 已显示这些 outcome validation / calibration suggestion metrics；当前实际 dashboard 显示 validation=14、P1=7、WAIT_PULLBACK anchor review=6、HK post-cost review=2。
