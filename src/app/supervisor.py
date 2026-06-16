@@ -359,6 +359,8 @@ class Supervisor:
         self._dashboard_control_last_error = ""
         self._dashboard_control_action_history: List[Dict[str, Any]] = []
         self._instance_lock_handle: Any = None
+        self._shutdown_reason = "not_started"
+        self._last_signal_name = ""
         self._capture_dashboard_control_baselines()
         self._apply_dashboard_control_overrides()
 
@@ -388,6 +390,26 @@ class Supervisor:
         if configured:
             return _resolve_path(configured)
         return self._summary_output_dir() / "supervisor.lock"
+
+    def _shutdown_status_path(self) -> Path:
+        return self._summary_output_dir() / "supervisor_shutdown_status.json"
+
+    def _write_shutdown_status(self, *, status: str, reason: str) -> None:
+        try:
+            path = self._shutdown_status_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "schema_version": "2026Q2.supervisor_shutdown_status.v1",
+                "status": str(status or ""),
+                "reason": str(reason or ""),
+                "pid": os.getpid(),
+                "config_path": str(_resolve_path(self.config_path)),
+                "last_signal_name": str(self._last_signal_name or ""),
+                "written_at": datetime.now(timezone.utc).isoformat(),
+            }
+            path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as exc:
+            log.debug("Unable to write Supervisor shutdown status: %s: %s", type(exc).__name__, exc)
 
     def _acquire_instance_lock(self) -> bool:
         if self._instance_lock_handle is not None:
@@ -5865,12 +5887,31 @@ class Supervisor:
         return active[0]
 
     def _setup_signal_handlers(self) -> None:
+        def _signal_name(signum: int) -> str:
+            try:
+                return signal.Signals(signum).name
+            except Exception:
+                return str(signum)
+
         def _handler(signum, frame):
             self._stopping = True
-            log.info("Supervisor stop requested: signal=%s", signum)
+            signal_name = _signal_name(signum)
+            self._last_signal_name = signal_name
+            self._shutdown_reason = f"signal:{signal_name}"
+            self._write_shutdown_status(status="stopping", reason=self._shutdown_reason)
+            log.info("Supervisor stop requested: signal=%s name=%s", signum, signal_name)
             raise KeyboardInterrupt
+
+        def _sighup_handler(signum, frame):
+            signal_name = _signal_name(signum)
+            self._last_signal_name = signal_name
+            self._write_shutdown_status(status="running", reason=f"ignored_signal:{signal_name}")
+            log.warning("Supervisor ignored signal=%s name=%s; staying alive", signum, signal_name)
+
         signal.signal(signal.SIGINT, _handler)
         signal.signal(signal.SIGTERM, _handler)
+        if hasattr(signal, "SIGHUP"):
+            signal.signal(signal.SIGHUP, _sighup_handler)
 
     def run_cycle(self, now: Optional[datetime] = None) -> None:
         if self._cycle_running:
@@ -6493,6 +6534,8 @@ class Supervisor:
         try:
             self._setup_signal_handlers()
             self._start_dashboard_control_service()
+            self._shutdown_reason = "running"
+            self._write_shutdown_status(status="running", reason="started")
             log.info(
                 "Supervisor loop started: config=%s markets=%s poll_sec=%s dashboard_control=%s url=%s; press Ctrl+C to stop",
                 self.config_path,
@@ -6506,10 +6549,19 @@ class Supervisor:
                 time.sleep(self.poll_sec)
         except KeyboardInterrupt:
             self._stopping = True
-            log.info("Supervisor interrupted; shutting down")
+            if not self._shutdown_reason or self._shutdown_reason == "running":
+                self._shutdown_reason = "keyboard_interrupt"
+            log.info("Supervisor interrupted; shutting down reason=%s", self._shutdown_reason)
+        except Exception as exc:
+            self._stopping = True
+            self._shutdown_reason = f"exception:{type(exc).__name__}"
+            self._write_shutdown_status(status="crashed", reason=self._shutdown_reason)
+            log.exception("Supervisor crashed; shutting down reason=%s", self._shutdown_reason)
+            raise
         finally:
             self._stop_dashboard_control_service()
             self.trade_proc.stop()
+            self._write_shutdown_status(status="stopped", reason=self._shutdown_reason or "stopped")
             self._release_instance_lock()
 
 

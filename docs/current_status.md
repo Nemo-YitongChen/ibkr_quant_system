@@ -569,3 +569,12 @@
 - 当前真实刷新：HK/US 的 `SCHX` / `SCHX.HK` recovery exit-only evidence 为 `NO_BUY_ORDERS`；6 个 portfolio 进入 `REVIEW_ANCHOR`，共 31 个 close wait rows，near-entry candidate 为 0。
 - Fresh HK evidence：每个 HK portfolio 15 个候选中 14 个 high-cost，6 个仍有正 post-cost edge，top symbols 为 `3988.HK,0939.HK,1398.HK,2388.HK,0005.HK`；dashboard 汇总 6 个 post-cost review portfolios、69 个 high-cost candidates、41 个 positive-edge candidates。
 - 下一步不是降低风险门或 edge gate，而是在相关市场窗口刷新 stale execution artifact，并用 5/20d outcome evidence 验证 close WAIT_PULLBACK 行与 HK positive post-cost candidates 是否真的改善交易质量。
+
+## 38. 2026-06-16 HK outcome validation and Supervisor shutdown diagnostics
+
+- 新增 `src.tools.review_opportunity_outcomes`，按需流式读取 `weekly_unified_evidence.csv`，只筛选当前 market readiness 中的相关 market/portfolio/symbol，生成 `opportunity_outcome_validation.json/csv/md`；该工具不进入 Supervisor 高频循环，避免每 30 秒读取 112MB weekly evidence。
+- `opportunity_calibration` 现在保留 bounded `positive_post_cost_rows` 与 `close_wait_pullback_rows`，让后续 outcome 验证不再只能依赖 top-symbol 字符串。
+- 最新 HK 验证结果：两个 HK portfolio 的 positive post-cost group 与 close WAIT_PULLBACK group 全部为 `OUTCOME_SUPPORTS_GROUP`；5d 平均约 `133.66-141.12` bps，20d 平均约 `245.53-313.61` bps，成熟样本合计 4,072 个 5d、3,124 个 20d。
+- 解释边界：这是同符号历史成熟 outcome 验证，不代表 2026-06-16 最新候选本身已经拥有未来 5/20d 成熟结果；当前结论是保持 gate、继续监控 fresh realized outcomes，而不是放宽 risk/edge/cost/liquidity/market-rule/Gateway budget/submit-quality。
+- Supervisor 新增 `supervisor_shutdown_status.json`，记录 `running/stopping/stopped/crashed`、pid、config、signal 和写入时间；SIGINT/SIGTERM 仍优雅停止。
+- Supervisor 现在处理 SIGHUP 并保持运行，降低前台 terminal/PTY 断开导致“无声自动 shutdown”的概率；若未来仍退出，优先读取 shutdown status artifact 判断是 signal、exception 还是人为停止。

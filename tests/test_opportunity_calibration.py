@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from src.common.opportunity_calibration import (
+    build_candidate_outcome_validation,
+    build_candidate_outcome_validation_summary,
     build_post_cost_calibration,
     build_post_cost_calibration_summary,
     build_wait_pullback_calibration,
@@ -29,6 +31,8 @@ def test_wait_pullback_calibration_flags_close_wait_rows() -> None:
     assert row["primary_action"] == "review_pullback_anchor_before_changing_thresholds"
     assert row["close_wait_pullback_count"] == 1
     assert row["top_wait_symbols"] == "AZJ.AX"
+    assert row["close_wait_pullback_symbols"] == "AZJ.AX"
+    assert row["close_wait_pullback_rows"][0]["symbol"] == "AZJ.AX"
 
 
 def test_wait_pullback_calibration_detects_ma_anchor_conservatism() -> None:
@@ -102,6 +106,8 @@ def test_post_cost_calibration_flags_market_specific_cost_threshold_review() -> 
     assert row["high_cost_candidate_count"] == 2
     assert row["positive_post_cost_edge_count"] == 2
     assert row["top_post_cost_symbols"] == "3988.HK,0939.HK"
+    assert row["positive_post_cost_symbols"] == "3988.HK,0939.HK"
+    assert row["positive_post_cost_rows"][0]["symbol"] == "3988.HK"
 
 
 def test_post_cost_calibration_flags_weak_edge_after_cost() -> None:
@@ -145,3 +151,93 @@ def test_post_cost_summary_counts_review_and_candidates() -> None:
     assert summary["review_portfolio_count"] == 1
     assert summary["high_cost_candidate_count"] == 2
     assert summary["positive_post_cost_edge_count"] == 3
+
+
+def test_candidate_outcome_validation_supports_positive_hk_candidate_group() -> None:
+    row = build_candidate_outcome_validation(
+        [
+            {"symbol": "3988.HK"},
+            {"symbol": "0939.HK"},
+        ],
+        [
+            {
+                "market": "HK",
+                "portfolio_id": "HK:resolved_hk_top100_bluechip",
+                "symbol": "3988.HK",
+                "outcome_5d_bps": "120.0",
+                "outcome_20d_bps": "220.0",
+                "decision_ts": "2026-05-01T00:00:00+00:00",
+            },
+            {
+                "market": "HK",
+                "portfolio_id": "HK:resolved_hk_top100_bluechip",
+                "symbol": "0939.HK",
+                "outcome_5d_bps": "80.0",
+                "outcome_20d_bps": "180.0",
+                "decision_ts": "2026-05-02T00:00:00+00:00",
+            },
+        ],
+        market="HK",
+        portfolio_id="HK:resolved_hk_top100_bluechip",
+        group_name="positive_post_cost_candidates",
+        min_5d_samples=2,
+        min_20d_samples=2,
+    )
+
+    assert row["status"] == "OUTCOME_SUPPORTS_GROUP"
+    assert row["matched_symbol_count"] == 2
+    assert row["matured_5d_sample_count"] == 2
+    assert row["matured_20d_sample_count"] == 2
+    assert row["avg_outcome_5d_bps"] == 100.0
+    assert row["avg_outcome_20d_bps"] == 200.0
+    assert row["latest_outcome_decision_ts"] == "2026-05-02T00:00:00+00:00"
+
+
+def test_candidate_outcome_validation_marks_missing_maturity_pending() -> None:
+    row = build_candidate_outcome_validation(
+        [{"symbol": "3988.HK"}],
+        [
+            {
+                "market": "HK",
+                "portfolio_id": "HK:resolved_hk_top100_bluechip",
+                "symbol": "0005.HK",
+                "outcome_5d_bps": "50.0",
+            }
+        ],
+        market="HK",
+        portfolio_id="HK:resolved_hk_top100_bluechip",
+        group_name="close_wait_pullback",
+    )
+
+    assert row["status"] == "OUTCOME_PENDING"
+    assert row["primary_action"] == "wait_for_5d_20d_outcome_maturity"
+    assert row["matched_symbol_count"] == 0
+    assert row["unmatched_symbols"] == "3988.HK"
+
+
+def test_candidate_outcome_validation_summary_counts_mature_samples() -> None:
+    summary = build_candidate_outcome_validation_summary(
+        [
+            {
+                "market": "HK",
+                "status": "OUTCOME_SUPPORTS_GROUP",
+                "candidate_symbol_count": 2,
+                "matched_symbol_count": 2,
+                "matured_5d_sample_count": 10,
+                "matured_20d_sample_count": 8,
+            },
+            {
+                "market": "ASX",
+                "status": "OUTCOME_PENDING",
+                "candidate_symbol_count": 1,
+                "matched_symbol_count": 0,
+                "matured_5d_sample_count": 0,
+                "matured_20d_sample_count": 0,
+            },
+        ]
+    )
+
+    assert summary["validation_count"] == 2
+    assert summary["candidate_symbol_count"] == 3
+    assert summary["matched_symbol_count"] == 2
+    assert summary["primary_status"] == "MIXED"

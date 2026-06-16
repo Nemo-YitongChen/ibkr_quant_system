@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, Mapping
+from typing import Any, Dict, Iterable, List, Mapping
 
 from .markets import resolve_market_code
 
@@ -15,6 +15,18 @@ def _float(value: Any, default: float = 0.0) -> float:
 def _mean(values: Iterable[float]) -> float:
     clean = [float(value) for value in values]
     return round(sum(clean) / len(clean), 6) if clean else 0.0
+
+
+def _number_or_none(value: Any) -> float | None:
+    try:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        return float(text)
+    except (TypeError, ValueError):
+        return None
 
 
 def _status(value: Any) -> str:
@@ -41,6 +53,22 @@ def _expected_edge_bps(row: Mapping[str, Any]) -> float:
     if score_before_cost > threshold:
         return (score_before_cost - threshold) * 140.0
     return 0.0
+
+
+def _symbol(row: Mapping[str, Any]) -> str:
+    return str(row.get("symbol") or "").strip()
+
+
+def _unique_symbols(rows: Iterable[Mapping[str, Any]]) -> List[str]:
+    seen: set[str] = set()
+    out: List[str] = []
+    for row in rows:
+        symbol = _symbol(row)
+        if not symbol or symbol in seen:
+            continue
+        seen.add(symbol)
+        out.append(symbol)
+    return out
 
 
 def _post_cost_candidate(row: Mapping[str, Any]) -> Dict[str, Any]:
@@ -129,6 +157,15 @@ def build_post_cost_calibration(
             str(row.get("symbol") or ""),
         ),
     )[: max(0, int(top_limit))]
+    positive_candidates = sorted(
+        positive_rows,
+        key=lambda row: (
+            -_float(row.get("post_cost_edge_bps"), 0.0),
+            _float(row.get("expected_cost_bps"), 0.0),
+            -_float(row.get("score"), 0.0),
+            str(row.get("symbol") or ""),
+        ),
+    )[: max(0, int(max(top_limit, 20)))]
     return {
         "market": resolve_market_code(market),
         "portfolio_id": str(portfolio_id or ""),
@@ -148,6 +185,10 @@ def build_post_cost_calibration(
             str(row.get("symbol") or "") for row in top_candidates if str(row.get("symbol") or "")
         ),
         "top_post_cost_rows": top_candidates,
+        "positive_post_cost_symbols": ",".join(
+            str(row.get("symbol") or "") for row in positive_candidates if str(row.get("symbol") or "")
+        ),
+        "positive_post_cost_rows": positive_candidates,
     }
 
 
@@ -224,6 +265,14 @@ def build_wait_pullback_calibration(
             str(row.get("symbol") or ""),
         ),
     )[:5]
+    close_wait = sorted(
+        close_wait_rows,
+        key=lambda row: (
+            _float(row.get("entry_anchor_gap_pct"), 999.0),
+            -_float(row.get("score"), 0.0),
+            str(row.get("symbol") or ""),
+        ),
+    )[:20]
     return {
         "market": resolve_market_code(market),
         "portfolio_id": str(portfolio_id or ""),
@@ -255,6 +304,173 @@ def build_wait_pullback_calibration(
             }
             for row in top_wait
         ],
+        "close_wait_pullback_symbols": ",".join(
+            str(row.get("symbol") or "") for row in close_wait if str(row.get("symbol") or "")
+        ),
+        "close_wait_pullback_rows": [
+            {
+                "symbol": str(row.get("symbol") or ""),
+                "action": str(row.get("action") or ""),
+                "score": _float(row.get("score"), 0.0),
+                "entry_anchor_gap_pct": _float(row.get("entry_anchor_gap_pct"), 0.0),
+                "entry_anchor_selected_component": str(row.get("entry_anchor_selected_component") or ""),
+                "entry_anchor_profile": str(row.get("entry_anchor_profile") or ""),
+                "asset_class": str(row.get("asset_class") or ""),
+            }
+            for row in close_wait
+        ],
+    }
+
+
+def build_candidate_outcome_validation(
+    candidate_rows: Iterable[Mapping[str, Any]],
+    outcome_rows: Iterable[Mapping[str, Any]],
+    *,
+    market: str = "",
+    portfolio_id: str = "",
+    group_name: str = "",
+    min_5d_samples: int = 5,
+    min_20d_samples: int = 5,
+) -> Dict[str, Any]:
+    """Validate a current candidate group against mature historical symbol outcomes.
+
+    The function intentionally validates by symbol history rather than implying that
+    the latest candidate snapshot already has a mature 5/20d outcome.
+    """
+    normalized_market = resolve_market_code(market)
+    normalized_portfolio = str(portfolio_id or "")
+    candidates = [dict(row or {}) for row in list(candidate_rows or []) if isinstance(row, Mapping)]
+    symbols = _unique_symbols(candidates)
+    symbol_set = set(symbols)
+    by_symbol: Dict[str, Dict[str, List[float]]] = {
+        symbol: {"5d": [], "20d": []}
+        for symbol in symbols
+    }
+    matched_outcome_rows = 0
+    latest_decision_ts = ""
+    for raw_row in outcome_rows or []:
+        if not isinstance(raw_row, Mapping):
+            continue
+        symbol = _symbol(raw_row)
+        if symbol not in symbol_set:
+            continue
+        row_market = resolve_market_code(str(raw_row.get("market") or ""))
+        row_portfolio = str(raw_row.get("portfolio_id") or "")
+        if normalized_market and row_market and row_market != normalized_market:
+            continue
+        if normalized_portfolio and row_portfolio and row_portfolio != normalized_portfolio:
+            continue
+        value_5d = _number_or_none(raw_row.get("outcome_5d_bps"))
+        value_20d = _number_or_none(raw_row.get("outcome_20d_bps"))
+        if value_5d is None and value_20d is None:
+            continue
+        matched_outcome_rows += 1
+        if value_5d is not None:
+            by_symbol[symbol]["5d"].append(value_5d)
+        if value_20d is not None:
+            by_symbol[symbol]["20d"].append(value_20d)
+        decision_ts = str(raw_row.get("decision_ts") or "").strip()
+        if decision_ts and decision_ts > latest_decision_ts:
+            latest_decision_ts = decision_ts
+
+    values_5d = [value for symbol in symbols for value in by_symbol[symbol]["5d"]]
+    values_20d = [value for symbol in symbols for value in by_symbol[symbol]["20d"]]
+    matched_symbols = [
+        symbol
+        for symbol in symbols
+        if by_symbol[symbol]["5d"] or by_symbol[symbol]["20d"]
+    ]
+    unmatched_symbols = [symbol for symbol in symbols if symbol not in set(matched_symbols)]
+    mature_5d = len(values_5d) >= int(min_5d_samples)
+    mature_20d = len(values_20d) >= int(min_20d_samples)
+    avg_5d = _mean(values_5d)
+    avg_20d = _mean(values_20d)
+    positive_rate_5d = round(sum(1 for value in values_5d if value > 0.0) / len(values_5d), 6) if values_5d else 0.0
+    positive_rate_20d = round(sum(1 for value in values_20d if value > 0.0) / len(values_20d), 6) if values_20d else 0.0
+
+    if not symbols:
+        status = "NO_CANDIDATE_SYMBOLS"
+        reason = "candidate_group_empty"
+        primary_action = "refresh_candidate_group_evidence"
+    elif not matched_symbols:
+        status = "OUTCOME_PENDING"
+        reason = "no_mature_symbol_outcome_for_candidate_group"
+        primary_action = "wait_for_5d_20d_outcome_maturity"
+    elif not (mature_5d or mature_20d):
+        status = "OUTCOME_SAMPLE_THIN"
+        reason = "mature_outcome_sample_below_threshold"
+        primary_action = "continue_paper_review_until_outcome_sample_matures"
+    elif (
+        (not mature_5d or avg_5d >= 0.0)
+        and (not mature_20d or avg_20d >= 0.0)
+    ):
+        status = "OUTCOME_SUPPORTS_GROUP"
+        reason = "candidate_group_historical_symbol_outcome_positive"
+        primary_action = "keep_gate_monitor_realized_outcomes"
+    else:
+        status = "OUTCOME_WEAK_OR_MIXED"
+        reason = "candidate_group_historical_symbol_outcome_not_consistently_positive"
+        primary_action = "review_gate_or_anchor_before_submit_expansion"
+
+    symbol_rows = []
+    for symbol in symbols[:20]:
+        symbol_5d = by_symbol[symbol]["5d"]
+        symbol_20d = by_symbol[symbol]["20d"]
+        symbol_rows.append(
+            {
+                "symbol": symbol,
+                "outcome_5d_sample_count": int(len(symbol_5d)),
+                "outcome_20d_sample_count": int(len(symbol_20d)),
+                "avg_outcome_5d_bps": _mean(symbol_5d),
+                "avg_outcome_20d_bps": _mean(symbol_20d),
+            }
+        )
+
+    return {
+        "market": normalized_market,
+        "portfolio_id": normalized_portfolio,
+        "group_name": str(group_name or ""),
+        "status": status,
+        "reason": reason,
+        "primary_action": primary_action,
+        "candidate_symbol_count": int(len(symbols)),
+        "matched_symbol_count": int(len(matched_symbols)),
+        "matched_outcome_row_count": int(matched_outcome_rows),
+        "matured_5d_sample_count": int(len(values_5d)),
+        "matured_20d_sample_count": int(len(values_20d)),
+        "avg_outcome_5d_bps": avg_5d,
+        "avg_outcome_20d_bps": avg_20d,
+        "positive_rate_5d": positive_rate_5d,
+        "positive_rate_20d": positive_rate_20d,
+        "latest_outcome_decision_ts": latest_decision_ts,
+        "candidate_symbols": ",".join(symbols),
+        "matched_symbols": ",".join(matched_symbols),
+        "unmatched_symbols": ",".join(unmatched_symbols),
+        "symbol_rows": symbol_rows,
+    }
+
+
+def build_candidate_outcome_validation_summary(
+    rows: Iterable[Mapping[str, Any]],
+) -> Dict[str, Any]:
+    clean_rows = [dict(row or {}) for row in list(rows or []) if isinstance(row, Mapping)]
+    status_counts: Dict[str, int] = {}
+    market_counts: Dict[str, int] = {}
+    for row in clean_rows:
+        status = str(row.get("status") or "UNKNOWN")
+        market = resolve_market_code(str(row.get("market") or "")) or "UNKNOWN"
+        status_counts[status] = status_counts.get(status, 0) + 1
+        market_counts[market] = market_counts.get(market, 0) + 1
+    return {
+        "validation_count": int(len(clean_rows)),
+        "market_count": int(len(market_counts)),
+        "status_counts": status_counts,
+        "market_counts": market_counts,
+        "candidate_symbol_count": int(sum(int(row.get("candidate_symbol_count", 0) or 0) for row in clean_rows)),
+        "matched_symbol_count": int(sum(int(row.get("matched_symbol_count", 0) or 0) for row in clean_rows)),
+        "matured_5d_sample_count": int(sum(int(row.get("matured_5d_sample_count", 0) or 0) for row in clean_rows)),
+        "matured_20d_sample_count": int(sum(int(row.get("matured_20d_sample_count", 0) or 0) for row in clean_rows)),
+        "primary_status": next(iter(status_counts), "UNKNOWN") if len(status_counts) == 1 else "MIXED",
     }
 
 
