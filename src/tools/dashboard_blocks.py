@@ -313,8 +313,15 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
     calibration_suggestion_summary = _dict(
         opportunity_outcome_validation.get("calibration_suggestion_summary")
     )
+    calibration_trial_plan_summary = _dict(
+        opportunity_outcome_validation.get("calibration_trial_plan_summary")
+    )
     calibration_suggestions = _rows(
         opportunity_outcome_validation.get("calibration_suggestions"),
+        limit=20,
+    )
+    calibration_trial_plan = _rows(
+        opportunity_outcome_validation.get("calibration_trial_plan"),
         limit=20,
     )
     remediation_plan = _rows(summary.get("remediation_plan"), limit=20)
@@ -562,6 +569,18 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "opportunity_calibration_hk_post_cost_review_count": _int(
                 _dict(calibration_suggestion_summary.get("type_counts")).get("HK_POST_COST_THRESHOLD_REVIEW")
             ),
+            "opportunity_calibration_trial_count": _int(
+                calibration_trial_plan_summary.get("trial_count")
+            ),
+            "opportunity_calibration_trial_ready_count": _int(
+                calibration_trial_plan_summary.get("ready_for_manual_review_count")
+            ),
+            "opportunity_calibration_trial_p1_ready_count": _int(
+                calibration_trial_plan_summary.get("p1_ready_for_manual_review_count")
+            ),
+            "opportunity_calibration_trial_auto_apply_count": sum(
+                1 for row in calibration_trial_plan if bool(row.get("auto_apply", False))
+            ),
             "candidate_count": _int(submit_plan.get("candidate_count")),
             "frontier_candidate_count": _int(submit_plan.get("frontier_candidate_count"))
             or len(frontier_candidates),
@@ -600,6 +619,7 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "execution_evidence_maintenance": execution_evidence_maintenance,
             "opportunity_outcome_validation": opportunity_outcome_validation,
             "opportunity_calibration_suggestions": calibration_suggestions,
+            "opportunity_calibration_trial_plan": calibration_trial_plan,
             "post_cost_calibration": post_cost_rows,
             "wait_pullback_calibration": wait_pullback_rows,
             "frontier_candidates": frontier_candidates,

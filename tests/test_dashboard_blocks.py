@@ -166,12 +166,28 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
                     "HK_POST_COST_THRESHOLD_REVIEW": 1,
                 },
             },
+            "calibration_trial_plan_summary": {
+                "trial_count": 1,
+                "ready_for_manual_review_count": 1,
+                "p1_ready_for_manual_review_count": 1,
+            },
             "calibration_suggestions": [
                 {
                     "market": "HK",
                     "portfolio_id": "HK:watchlist",
                     "suggestion_type": "HK_POST_COST_THRESHOLD_REVIEW",
                     "primary_field": "submit_quality.max_expected_cost_bps",
+                    "auto_apply": False,
+                    "read_only": True,
+                }
+            ],
+            "calibration_trial_plan": [
+                {
+                    "market": "HK",
+                    "portfolio_id": "HK:watchlist",
+                    "trial_type": "HK_POST_COST_THRESHOLD_PAPER_TRIAL",
+                    "primary_field": "auto_order_readiness.max_submit_expected_cost_bps",
+                    "suggested_value": 55.0,
                     "auto_apply": False,
                     "read_only": True,
                 }
@@ -581,9 +597,16 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
     assert by_id["auto_order_readiness"]["metrics"]["opportunity_calibration_suggestion_count"] == 2
     assert by_id["auto_order_readiness"]["metrics"]["opportunity_calibration_p1_suggestion_count"] == 1
     assert by_id["auto_order_readiness"]["metrics"]["opportunity_calibration_hk_post_cost_review_count"] == 1
+    assert by_id["auto_order_readiness"]["metrics"]["opportunity_calibration_trial_count"] == 1
+    assert by_id["auto_order_readiness"]["metrics"]["opportunity_calibration_trial_ready_count"] == 1
+    assert by_id["auto_order_readiness"]["metrics"]["opportunity_calibration_trial_auto_apply_count"] == 0
     assert (
         by_id["auto_order_readiness"]["rows"]["opportunity_calibration_suggestions"][0]["suggestion_type"]
         == "HK_POST_COST_THRESHOLD_REVIEW"
+    )
+    assert (
+        by_id["auto_order_readiness"]["rows"]["opportunity_calibration_trial_plan"][0]["trial_type"]
+        == "HK_POST_COST_THRESHOLD_PAPER_TRIAL"
     )
     assert by_id["dashboard_control_actions"]["metrics"]["history_count"] == 3
     assert by_id["dashboard_control_actions"]["metrics"]["linked_action_history_count"] == 1

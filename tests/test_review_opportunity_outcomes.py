@@ -107,6 +107,12 @@ def test_opportunity_outcome_validation_payload_filters_hk_groups(tmp_path: Path
     ]
     assert all(row["auto_apply"] is False for row in suggestions)
     assert all(row["read_only"] is True for row in suggestions)
+    trial_plan = payload["calibration_trial_plan"]
+    assert trial_plan[0]["trial_type"] == "WAIT_PULLBACK_NEAR_ENTRY_LIMIT_TRIAL"
+    assert trial_plan[0]["primary_field"] == "opportunity_entry.near_entry_gap_pct"
+    assert trial_plan[0]["suggested_value"] == 1.5
+    assert trial_plan[0]["auto_apply"] is False
+    assert payload["calibration_trial_plan_summary"]["trial_count"] == 1
 
 
 def test_opportunity_outcome_validation_suggests_hk_post_cost_review(tmp_path: Path) -> None:
@@ -159,3 +165,11 @@ def test_opportunity_outcome_validation_suggests_hk_post_cost_review(tmp_path: P
     assert suggestion["auto_apply"] is False
     assert suggestion["paper_only"] is True
     assert "Do not auto-apply" in suggestion["acceptance_rule"]
+    trial = payload["calibration_trial_plan"][0]
+    assert trial["trial_type"] == "HK_POST_COST_THRESHOLD_PAPER_TRIAL"
+    assert trial["primary_field"] == "auto_order_readiness.max_submit_expected_cost_bps"
+    assert trial["current_value"] == 35.0
+    assert trial["suggested_value"] == 55.0
+    assert trial["requires_submit_quality_pass"] is True
+    assert trial["auto_apply"] is False
+    assert payload["calibration_trial_plan_summary"]["p1_ready_for_manual_review_count"] == 1

@@ -581,10 +581,19 @@
 
 ## 39. 2026-06-16 Opportunity outcome calibration suggestions
 
-- `review_opportunity_outcomes` 已升级到 v2 schema，除 validation rows 外新增 `calibration_suggestion_summary`、`calibration_suggestions` 和 `opportunity_outcome_calibration_suggestions.csv`。
+- `review_opportunity_outcomes` 已引入 calibration suggestion 层，除 validation rows 外新增 `calibration_suggestion_summary`、`calibration_suggestions` 和 `opportunity_outcome_calibration_suggestions.csv`。
 - 所有建议都是只读治理建议：`read_only=true`、`auto_apply=false`、`paper_only=true`；不会自动修改 YAML，不会绕过 risk/edge/cost/liquidity/market-rule/Gateway budget/submit-quality gate。
 - 最新全市场 validation：14 条验证、78 个 matched symbols、10,365 个成熟 5d 样本、7,572 个成熟 20d 样本。
 - 最新建议层：14 条建议，其中 7 条 P1、6 条 `WAIT_PULLBACK_ANCHOR_REVIEW`、2 条 HK `HK_POST_COST_THRESHOLD_REVIEW`、1 条 CN `WAIT_PULLBACK_NO_ACTION`。
 - HK post-cost 建议字段是 `submit_quality.max_expected_cost_bps`，但接受规则要求只在 paper 中单字段试验、必须有 fresh HK BUY plan、`expected_post_cost_edge_bps >= 0`、submit quality PASS、且 fill/slippage 与 5/20d outcome 不退化。
 - WAIT_PULLBACK 建议字段是 `opportunity_entry.near_entry_gap_pct`，用于准备小额 limit paper trial；支持市场包括 HK、US、XETRA、ASX，CN 因没有 close WAIT_PULLBACK candidate group 暂不动作。
 - Dashboard v2 现有 Auto Order block 已显示这些 outcome validation / calibration suggestion metrics；当前实际 dashboard 显示 validation=14、P1=7、WAIT_PULLBACK anchor review=6、HK post-cost review=2。
+
+## 40. 2026-06-16 Opportunity calibration paper-only trial plan
+
+- `review_opportunity_outcomes` 已升级到 v3 schema，新增 `calibration_trial_plan_summary`、`calibration_trial_plan` 和 `opportunity_outcome_calibration_trial_plan.csv`。
+- 当前真实 trial plan：9 条 rows、8 条 ready for manual review、7 条 P1 ready、auto-apply rows 为 0。
+- HK post-cost 纸面试验合同：字段 `auto_order_readiness.max_submit_expected_cost_bps`，当前值 `35.0 bps`，建议仅在 HK market-scoped paper review 中审查 `55.0 bps`，最大 `60.0 bps`；必须保持 fresh HK BUY plan、`expected_post_cost_edge_bps >= 0`、submit quality PASS、limit order、Gateway budget OK、fill/slippage 与 5/20d outcome 不退化。
+- WAIT_PULLBACK 纸面试验合同：字段 `opportunity_entry.near_entry_gap_pct`，当前值 `1.0%`，P1 市场建议审查 `2.0%`，ASX P2 审查 `1.5%`，最大 `3.0%`；只允许小额 whole-share feasible、post-cost positive、limit paper trial。
+- Dashboard v2 Auto Order block 已显示 trial plan metrics：trial=9、ready=8、P1 ready=7、auto_apply=0。
+- 本步骤仍不修改 YAML、不提交真实订单、不放宽 risk/edge/liquidity/market-rule/Gateway budget/submit-quality gate；它只是把下一步人工 paper calibration 变成可审计合同。

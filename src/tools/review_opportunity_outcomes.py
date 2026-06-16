@@ -264,6 +264,142 @@ def build_calibration_suggestion_summary(rows: Iterable[Mapping[str, Any]]) -> D
     }
 
 
+def _trial_id(suggestion: Mapping[str, Any]) -> str:
+    return f"{str(suggestion.get('suggestion_id') or '').strip()}_paper_trial".strip("_")
+
+
+def _trial_for_suggestion(suggestion: Mapping[str, Any]) -> Dict[str, Any] | None:
+    suggestion_type = str(suggestion.get("suggestion_type") or "")
+    priority = str(suggestion.get("priority") or "")
+    market = resolve_market_code(str(suggestion.get("market") or ""))
+    portfolio_id = str(suggestion.get("portfolio_id") or "")
+    base = {
+        "trial_id": _trial_id(suggestion),
+        "source_suggestion_id": str(suggestion.get("suggestion_id") or ""),
+        "market": market,
+        "portfolio_id": portfolio_id,
+        "priority": priority,
+        "suggestion_type": suggestion_type,
+        "auto_apply": False,
+        "read_only": True,
+        "paper_only": True,
+        "max_trial_orders_per_run": 1,
+        "max_trial_gross_order_value": 100.0,
+        "requires_fresh_buy_plan": True,
+        "requires_submit_quality_pass": True,
+        "requires_gateway_budget_ok": True,
+        "requires_limit_order": True,
+        "requires_whole_share_feasible": True,
+        "unchanged_gates": "risk,edge,liquidity,market_rule,gateway_budget,submit_quality",
+        "candidate_symbols": str(suggestion.get("candidate_symbols") or ""),
+    }
+    if suggestion_type == "HK_POST_COST_THRESHOLD_REVIEW":
+        return {
+            **base,
+            "trial_status": "READY_FOR_MANUAL_REVIEW",
+            "trial_type": "HK_POST_COST_THRESHOLD_PAPER_TRIAL",
+            "primary_field": "auto_order_readiness.max_submit_expected_cost_bps",
+            "config_scope": f"market:{market}",
+            "current_value": 35.0,
+            "suggested_value": 55.0,
+            "suggested_value_unit": "bps",
+            "max_trial_value": 60.0,
+            "min_required_post_cost_edge_bps": 0.0,
+            "trial_action": "paper_single_field_cost_threshold_trial",
+            "acceptance_rule": (
+                "Manual paper-only market-scoped trial. Keep all other gates unchanged; require fresh HK BUY plan, "
+                "expected_post_cost_edge_bps >= 0, submit quality PASS, limit order, Gateway budget OK, and no worse "
+                "fill/slippage or 5/20d outcome versus the source group."
+            ),
+            "rollback_rule": (
+                "Revert to the previous cost threshold immediately if realized edge is negative, slippage breaches policy, "
+                "or mature 5/20d outcomes degrade."
+            ),
+        }
+    if suggestion_type == "WAIT_PULLBACK_ANCHOR_REVIEW":
+        suggested_gap = 2.0 if priority == "P1" else 1.5
+        return {
+            **base,
+            "trial_status": "READY_FOR_MANUAL_REVIEW",
+            "trial_type": "WAIT_PULLBACK_NEAR_ENTRY_LIMIT_TRIAL",
+            "primary_field": "opportunity_entry.near_entry_gap_pct",
+            "config_scope": f"market:{market}",
+            "current_value": 1.0,
+            "suggested_value": suggested_gap,
+            "suggested_value_unit": "pct",
+            "max_trial_value": 3.0,
+            "min_required_post_cost_edge_bps": 0.0,
+            "trial_action": "paper_near_entry_limit_trial",
+            "acceptance_rule": (
+                "Manual paper-only near-entry trial. Do not change risk, edge, cost, liquidity, market-rule, Gateway budget, "
+                "or submit-quality gates. Only allow small limit orders that are whole-share feasible and post-cost positive."
+            ),
+            "rollback_rule": (
+                "Restore the previous near-entry gap if paper fills show worse slippage, negative realized edge, or weaker "
+                "mature 5/20d outcomes versus close WAIT_PULLBACK evidence."
+            ),
+        }
+    if suggestion_type == "WAIT_PULLBACK_NO_ACTION":
+        return {
+            **base,
+            "trial_status": "NO_ACTION",
+            "trial_type": "NO_WAIT_PULLBACK_TRIAL",
+            "primary_field": "opportunity_entry.anchor_review",
+            "config_scope": f"market:{market}",
+            "current_value": "",
+            "suggested_value": "",
+            "suggested_value_unit": "",
+            "max_trial_value": "",
+            "min_required_post_cost_edge_bps": 0.0,
+            "trial_action": "keep_existing_wait_pullback_policy",
+            "acceptance_rule": "No trial without close WAIT_PULLBACK candidate symbols and mature outcomes.",
+            "rollback_rule": "No config change to roll back.",
+        }
+    return None
+
+
+def build_calibration_trial_plan(rows: Iterable[Mapping[str, Any]]) -> List[Dict[str, Any]]:
+    trial_rows = [
+        trial
+        for trial in (_trial_for_suggestion(row) for row in list(rows or []))
+        if isinstance(trial, dict)
+    ]
+    trial_rows.sort(
+        key=lambda row: (
+            {"P1": 0, "P2": 1, "P3": 2}.get(str(row.get("priority") or ""), 9),
+            str(row.get("trial_status") or ""),
+            str(row.get("market") or ""),
+            str(row.get("portfolio_id") or ""),
+            str(row.get("trial_type") or ""),
+        )
+    )
+    return trial_rows
+
+
+def build_calibration_trial_plan_summary(rows: Iterable[Mapping[str, Any]]) -> Dict[str, Any]:
+    clean_rows = [dict(row or {}) for row in list(rows or []) if isinstance(row, Mapping)]
+    type_counts: Dict[str, int] = {}
+    status_counts: Dict[str, int] = {}
+    p1_ready = 0
+    for row in clean_rows:
+        trial_type = str(row.get("trial_type") or "UNKNOWN")
+        status = str(row.get("trial_status") or "UNKNOWN")
+        type_counts[trial_type] = type_counts.get(trial_type, 0) + 1
+        status_counts[status] = status_counts.get(status, 0) + 1
+        if str(row.get("priority") or "") == "P1" and status == "READY_FOR_MANUAL_REVIEW":
+            p1_ready += 1
+    return {
+        "trial_count": int(len(clean_rows)),
+        "ready_for_manual_review_count": int(status_counts.get("READY_FOR_MANUAL_REVIEW", 0)),
+        "p1_ready_for_manual_review_count": int(p1_ready),
+        "type_counts": type_counts,
+        "status_counts": status_counts,
+        "read_only": True,
+        "auto_apply": False,
+        "paper_only": True,
+    }
+
+
 def build_opportunity_outcome_validation_payload(
     *,
     market_readiness_path: Path,
@@ -335,15 +471,18 @@ def build_opportunity_outcome_validation_payload(
             )
         ] = dict(group.get("calibration_context") or {})
     calibration_suggestions = build_calibration_suggestions(validation_rows, calibration_by_key)
+    calibration_trial_plan = build_calibration_trial_plan(calibration_suggestions)
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "schema_version": "2026Q2.opportunity_outcome_validation.v2",
+        "schema_version": "2026Q2.opportunity_outcome_validation.v3",
         "market": market_filter,
         "market_readiness_path": str(market_readiness_path),
         "weekly_unified_evidence_path": str(weekly_unified_evidence_path),
         "summary": build_candidate_outcome_validation_summary(validation_rows),
         "calibration_suggestion_summary": build_calibration_suggestion_summary(calibration_suggestions),
         "calibration_suggestions": calibration_suggestions,
+        "calibration_trial_plan_summary": build_calibration_trial_plan_summary(calibration_trial_plan),
+        "calibration_trial_plan": calibration_trial_plan,
         "rows": validation_rows,
     }
 
@@ -408,6 +547,45 @@ def _write_suggestions_csv(path: Path, rows: List[Mapping[str, Any]]) -> None:
             writer.writerow({key: dict(row).get(key, "") for key in fieldnames})
 
 
+def _write_trial_plan_csv(path: Path, rows: List[Mapping[str, Any]]) -> None:
+    fieldnames = [
+        "trial_id",
+        "source_suggestion_id",
+        "market",
+        "portfolio_id",
+        "priority",
+        "trial_status",
+        "trial_type",
+        "primary_field",
+        "config_scope",
+        "current_value",
+        "suggested_value",
+        "suggested_value_unit",
+        "max_trial_value",
+        "min_required_post_cost_edge_bps",
+        "max_trial_orders_per_run",
+        "max_trial_gross_order_value",
+        "requires_fresh_buy_plan",
+        "requires_submit_quality_pass",
+        "requires_gateway_budget_ok",
+        "requires_limit_order",
+        "requires_whole_share_feasible",
+        "auto_apply",
+        "read_only",
+        "paper_only",
+        "unchanged_gates",
+        "candidate_symbols",
+        "trial_action",
+        "acceptance_rule",
+        "rollback_rule",
+    ]
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({key: dict(row).get(key, "") for key in fieldnames})
+
+
 def _write_markdown(path: Path, payload: Mapping[str, Any]) -> None:
     lines = ["# Opportunity Outcome Validation", ""]
     summary = dict(payload.get("summary") or {})
@@ -453,6 +631,26 @@ def _write_markdown(path: Path, payload: Mapping[str, Any]) -> None:
                     auto_apply=row.get("auto_apply"),
                 )
             )
+    trial_plan = _rows(payload.get("calibration_trial_plan"))
+    if trial_plan:
+        lines.append("")
+        lines.append("## Paper-Only Trial Plan")
+        lines.append("")
+        lines.append("| Priority | Market | Portfolio | Trial | Field | Current | Suggested | Auto apply |")
+        lines.append("|---|---|---|---|---|---:|---:|---:|")
+        for row in trial_plan:
+            lines.append(
+                "| {priority} | {market} | {portfolio_id} | {trial_type} | {field} | {current} | {suggested} | {auto_apply} |".format(
+                    priority=row.get("priority") or "",
+                    market=row.get("market") or "",
+                    portfolio_id=row.get("portfolio_id") or "",
+                    trial_type=row.get("trial_type") or "",
+                    field=row.get("primary_field") or "",
+                    current=row.get("current_value"),
+                    suggested=row.get("suggested_value"),
+                    auto_apply=row.get("auto_apply"),
+                )
+            )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -489,10 +687,12 @@ def main(argv: List[str] | None = None) -> None:
     json_path = out_dir / "opportunity_outcome_validation.json"
     csv_path = out_dir / "opportunity_outcome_validation.csv"
     suggestions_csv_path = out_dir / "opportunity_outcome_calibration_suggestions.csv"
+    trial_plan_csv_path = out_dir / "opportunity_outcome_calibration_trial_plan.csv"
     md_path = out_dir / "opportunity_outcome_validation.md"
     json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     _write_csv(csv_path, _rows(payload.get("rows")))
     _write_suggestions_csv(suggestions_csv_path, _rows(payload.get("calibration_suggestions")))
+    _write_trial_plan_csv(trial_plan_csv_path, _rows(payload.get("calibration_trial_plan")))
     _write_markdown(md_path, payload)
     print(f"Wrote opportunity outcome validation -> {json_path}")
 
