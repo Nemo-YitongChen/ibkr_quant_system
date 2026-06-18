@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from src.tools.dashboard_blocks import build_dashboard_v2_blocks
+from src.tools.dashboard_blocks import _build_outcome_trial_gate_plan, build_dashboard_v2_blocks
 
 
 def _by_id(blocks):
@@ -636,6 +636,17 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
     assert by_id["auto_order_readiness"]["metrics"]["opportunity_calibration_trial_count"] == 1
     assert by_id["auto_order_readiness"]["metrics"]["opportunity_calibration_trial_ready_count"] == 1
     assert by_id["auto_order_readiness"]["metrics"]["opportunity_calibration_trial_auto_apply_count"] == 0
+    assert by_id["auto_order_readiness"]["metrics"]["outcome_trial_gate_status"] == "BLOCKED_BY_CURRENT_GATES"
+    assert by_id["auto_order_readiness"]["metrics"]["outcome_trial_gate_trial_count"] == 1
+    assert by_id["auto_order_readiness"]["metrics"]["outcome_trial_gate_ready_count"] == 0
+    assert by_id["auto_order_readiness"]["metrics"]["outcome_trial_gate_blocked_count"] == 1
+    assert by_id["auto_order_readiness"]["metrics"]["outcome_trial_gate_primary_market"] == "HK"
+    assert by_id["auto_order_readiness"]["metrics"]["outcome_trial_gate_primary_blocker"] == "fresh_buy_plan_required"
+    assert by_id["auto_order_readiness"]["metrics"]["outcome_trial_gate_submit_orders"] == 0
+    assert (
+        by_id["auto_order_readiness"]["rows"]["outcome_trial_gate_plan"]["rows"][0]["status"]
+        == "BLOCKED_BY_CURRENT_GATES"
+    )
     assert (
         by_id["auto_order_readiness"]["rows"]["opportunity_calibration_suggestions"][0]["suggestion_type"]
         == "HK_POST_COST_THRESHOLD_REVIEW"
@@ -763,6 +774,83 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
         by_id["dashboard_control_action_history"]["metrics"]["linked_strategy_parameter_suggestion_history_count"]
         == 1
     )
+
+
+def test_outcome_trial_gate_plan_blocks_until_current_submit_gates_pass():
+    plan = _build_outcome_trial_gate_plan(
+        [
+            {
+                "market": "HK",
+                "portfolio_id": "HK:bluechip",
+                "trial_status": "READY_FOR_MANUAL_REVIEW",
+                "trial_type": "HK_POST_COST_THRESHOLD_PAPER_TRIAL",
+                "priority": "P1",
+                "requires_fresh_buy_plan": True,
+                "requires_submit_quality_pass": True,
+                "requires_gateway_budget_ok": True,
+            }
+        ],
+        [
+            {
+                "market": "HK",
+                "portfolio_id": "HK:bluechip",
+                "market_readiness_status": "NEEDS_REFRESH",
+                "market_readiness_artifact_health_status": "STALE",
+                "market_readiness_order_count": 0,
+                "market_readiness_planned_buy_order_value": 0.0,
+                "submit_quality_status": "NO_ORDERS",
+                "hard_blocks": ["strategy_suggestion_stale"],
+            }
+        ],
+    )
+
+    assert plan["status"] == "BLOCKED_BY_CURRENT_GATES"
+    assert plan["ready_trial_count"] == 0
+    assert plan["blocked_trial_count"] == 1
+    assert plan["primary_blocker"] == "fresh_buy_plan_required"
+    blockers = plan["rows"][0]["gate_blockers"]
+    assert "fresh_buy_plan_required" in blockers
+    assert "buy_plan_missing" in blockers
+    assert "submit_quality_not_pass" in blockers
+    assert "strategy_suggestion_stale" in blockers
+    assert plan["submit_orders"] is False
+    assert plan["does_not_relax_submit_gates"] is True
+
+
+def test_outcome_trial_gate_plan_allows_only_operator_paper_trial_when_gates_pass():
+    plan = _build_outcome_trial_gate_plan(
+        [
+            {
+                "market": "HK",
+                "portfolio_id": "HK:bluechip",
+                "trial_status": "READY_FOR_MANUAL_REVIEW",
+                "trial_type": "WAIT_PULLBACK_NEAR_ENTRY_LIMIT_TRIAL",
+                "priority": "P2",
+                "requires_fresh_buy_plan": True,
+                "requires_submit_quality_pass": True,
+                "requires_gateway_budget_ok": True,
+            }
+        ],
+        [
+            {
+                "market": "HK",
+                "portfolio_id": "HK:bluechip",
+                "market_readiness_status": "READY_FOR_PAPER_REVIEW",
+                "market_readiness_artifact_health_status": "FRESH",
+                "market_readiness_order_count": 1,
+                "market_readiness_planned_buy_order_value": 75.0,
+                "submit_quality_status": "PASS",
+                "hard_blocks": [],
+            }
+        ],
+    )
+
+    assert plan["status"] == "READY_FOR_OPERATOR_PAPER_TRIAL"
+    assert plan["ready_trial_count"] == 1
+    assert plan["blocked_trial_count"] == 0
+    assert plan["rows"][0]["status"] == "READY_FOR_OPERATOR_PAPER_TRIAL"
+    assert plan["rows"][0]["submit_orders"] is False
+    assert plan["rows"][0]["auto_apply"] is False
 
 
 def test_evidence_quality_block_marks_gate_review_when_blocked_outperforms():

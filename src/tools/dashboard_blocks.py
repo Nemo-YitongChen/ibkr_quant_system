@@ -82,6 +82,132 @@ def _int(value: Any) -> int:
         return 0
 
 
+def _float(value: Any) -> float:
+    try:
+        return float(value or 0.0)
+    except Exception:
+        return 0.0
+
+
+def _build_outcome_trial_gate_plan(
+    trial_rows: List[Dict[str, Any]],
+    readiness_rows: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Map outcome-supported paper trial contracts to the current submit gates."""
+    readiness_by_key = {
+        (
+            str(row.get("market") or "").strip().upper(),
+            str(row.get("portfolio_id") or "").strip(),
+        ): dict(row)
+        for row in readiness_rows
+        if str(row.get("market") or "").strip() and str(row.get("portfolio_id") or "").strip()
+    }
+    rows: List[Dict[str, Any]] = []
+    for raw in trial_rows:
+        trial = dict(raw or {})
+        trial_status = str(trial.get("trial_status") or "").strip().upper()
+        if trial_status and trial_status != "READY_FOR_MANUAL_REVIEW":
+            continue
+        market = str(trial.get("market") or "").strip().upper()
+        portfolio_id = str(trial.get("portfolio_id") or "").strip()
+        if not market or not portfolio_id:
+            continue
+        readiness = readiness_by_key.get((market, portfolio_id), {})
+        hard_blocks = [
+            str(value).strip()
+            for value in list(readiness.get("hard_blocks") or [])
+            if str(value).strip()
+        ]
+        gate_blockers: List[str] = []
+        if not readiness:
+            gate_blockers.append("market_readiness_row_missing")
+        if bool(trial.get("requires_gateway_budget_ok", True)) and "gateway_budget_degraded" in hard_blocks:
+            gate_blockers.append("gateway_budget_degraded")
+        readiness_status = str(readiness.get("market_readiness_status") or "").strip().upper()
+        artifact_status = str(readiness.get("market_readiness_artifact_health_status") or "").strip().upper()
+        if bool(trial.get("requires_fresh_buy_plan", True)):
+            if readiness_status != "READY_FOR_PAPER_REVIEW" or artifact_status == "STALE":
+                gate_blockers.append("fresh_buy_plan_required")
+            order_count = _int(readiness.get("market_readiness_order_count"))
+            buy_value = _float(readiness.get("market_readiness_planned_buy_order_value"))
+            if order_count <= 0 or buy_value <= 0.0:
+                gate_blockers.append("buy_plan_missing")
+        if bool(trial.get("requires_submit_quality_pass", True)):
+            submit_quality = str(readiness.get("submit_quality_status") or "").strip().upper()
+            if submit_quality != "PASS":
+                gate_blockers.append("submit_quality_not_pass")
+        if "strategy_suggestion_stale" in hard_blocks:
+            gate_blockers.append("strategy_suggestion_stale")
+        unique_blockers = list(dict.fromkeys(gate_blockers))
+        ready = not unique_blockers
+        rows.append(
+            {
+                "market": market,
+                "portfolio_id": portfolio_id,
+                "priority": str(trial.get("priority") or ""),
+                "trial_type": str(trial.get("trial_type") or ""),
+                "primary_field": str(trial.get("primary_field") or ""),
+                "suggested_value": trial.get("suggested_value", ""),
+                "suggested_value_unit": str(trial.get("suggested_value_unit") or ""),
+                "candidate_symbols": str(trial.get("candidate_symbols") or ""),
+                "status": "READY_FOR_OPERATOR_PAPER_TRIAL" if ready else "BLOCKED_BY_CURRENT_GATES",
+                "primary_blocker": unique_blockers[0] if unique_blockers else "",
+                "gate_blockers": unique_blockers,
+                "current_readiness_status": readiness_status,
+                "current_readiness_reason": str(readiness.get("market_readiness_reason") or ""),
+                "current_submit_quality_status": str(readiness.get("submit_quality_status") or ""),
+                "current_submit_quality_reason": str(readiness.get("submit_quality_reason") or ""),
+                "current_order_count": _int(readiness.get("market_readiness_order_count")),
+                "current_planned_buy_order_value": _float(readiness.get("market_readiness_planned_buy_order_value")),
+                "paper_only": True,
+                "auto_apply": False,
+                "submit_orders": False,
+                "does_not_relax_submit_gates": True,
+            }
+        )
+    priority_rank = {"P1": 0, "P2": 1, "P3": 2}
+    rows.sort(
+        key=lambda row: (
+            0 if str(row.get("status") or "") == "READY_FOR_OPERATOR_PAPER_TRIAL" else 1,
+            priority_rank.get(str(row.get("priority") or ""), 9),
+            str(row.get("market") or ""),
+            str(row.get("portfolio_id") or ""),
+            str(row.get("trial_type") or ""),
+        )
+    )
+    ready_rows = [row for row in rows if str(row.get("status") or "") == "READY_FOR_OPERATOR_PAPER_TRIAL"]
+    primary = dict(rows[0]) if rows else {}
+    if ready_rows:
+        status = "READY_FOR_OPERATOR_PAPER_TRIAL"
+        reason = "outcome_trial_gates_pass"
+        primary_action = "review_and_run_one_paper_trial_without_relaxing_gates"
+    elif rows:
+        status = "BLOCKED_BY_CURRENT_GATES"
+        reason = str(primary.get("primary_blocker") or "trial_gate_blocked")
+        primary_action = "resolve_trial_gate_blockers_before_paper_trial"
+    else:
+        status = "NO_OUTCOME_TRIALS"
+        reason = "no_ready_manual_trial_contracts"
+        primary_action = "collect_more_outcome_evidence"
+    return {
+        "status": status,
+        "reason": reason,
+        "primary_action": primary_action,
+        "trial_count": int(len(rows)),
+        "ready_trial_count": int(len(ready_rows)),
+        "blocked_trial_count": int(len(rows) - len(ready_rows)),
+        "primary_market": str(primary.get("market") or ""),
+        "primary_portfolio_id": str(primary.get("portfolio_id") or ""),
+        "primary_trial_type": str(primary.get("trial_type") or ""),
+        "primary_blocker": str(primary.get("primary_blocker") or ""),
+        "paper_only": True,
+        "auto_apply": False,
+        "submit_orders": False,
+        "does_not_relax_submit_gates": True,
+        "rows": rows[:20],
+    }
+
+
 def _blocked_review_label(row: Dict[str, Any]) -> str:
     return str(row.get("review_label") or "").strip().upper()
 
@@ -332,6 +458,7 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
         opportunity_outcome_validation.get("calibration_trial_plan"),
         limit=20,
     )
+    outcome_trial_gate_plan = _build_outcome_trial_gate_plan(calibration_trial_plan, rows)
     remediation_plan = _rows(summary.get("remediation_plan"), limit=20)
     post_cost_rows = [
         {
@@ -601,6 +728,17 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "opportunity_calibration_trial_auto_apply_count": sum(
                 1 for row in calibration_trial_plan if bool(row.get("auto_apply", False))
             ),
+            "outcome_trial_gate_status": str(outcome_trial_gate_plan.get("status") or ""),
+            "outcome_trial_gate_trial_count": _int(outcome_trial_gate_plan.get("trial_count")),
+            "outcome_trial_gate_ready_count": _int(outcome_trial_gate_plan.get("ready_trial_count")),
+            "outcome_trial_gate_blocked_count": _int(outcome_trial_gate_plan.get("blocked_trial_count")),
+            "outcome_trial_gate_primary_market": str(outcome_trial_gate_plan.get("primary_market") or ""),
+            "outcome_trial_gate_primary_portfolio_id": str(
+                outcome_trial_gate_plan.get("primary_portfolio_id") or ""
+            ),
+            "outcome_trial_gate_primary_trial_type": str(outcome_trial_gate_plan.get("primary_trial_type") or ""),
+            "outcome_trial_gate_primary_blocker": str(outcome_trial_gate_plan.get("primary_blocker") or ""),
+            "outcome_trial_gate_submit_orders": int(bool(outcome_trial_gate_plan.get("submit_orders", False))),
             "candidate_count": _int(submit_plan.get("candidate_count")),
             "frontier_candidate_count": _int(submit_plan.get("frontier_candidate_count"))
             or len(frontier_candidates),
@@ -641,6 +779,7 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "opportunity_outcome_validation": opportunity_outcome_validation,
             "opportunity_calibration_suggestions": calibration_suggestions,
             "opportunity_calibration_trial_plan": calibration_trial_plan,
+            "outcome_trial_gate_plan": outcome_trial_gate_plan,
             "post_cost_calibration": post_cost_rows,
             "wait_pullback_calibration": wait_pullback_rows,
             "frontier_candidates": frontier_candidates,

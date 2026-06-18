@@ -636,3 +636,12 @@
 - Dashboard ops overview 现在会对 `supervisor_shutdown_status.status=running` 做 PID liveness 校验；如果 PID 已不存在，会把 `supervisor_shutdown_health_status` 标为 `degraded` 并产生 `SUPERVISOR` 告警。
 - 当前实际 dashboard 刷新后：`status=running`、`reason=ignored_signal:SIGHUP`、`pid=77976`、`liveness_status=unknown`、`health=ready`。`unknown` 表示当前环境不允许可靠 PID 探测，不会误报；明确 dead PID 才会降级。
 - 全量验证通过：`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider` -> `744 passed`。
+
+## 45. 2026-06-18 Outcome-supported trial gate plan
+
+- Dashboard Auto Order block 新增只读 `outcome_trial_gate_plan`，把 opportunity outcome 产生的 paper trial contracts 映射到当前 auto-order readiness gate。
+- 该计划只消费现有 artifacts，不增加 IBKR 请求，不提交订单，不改 YAML，也不放宽任何 gate；每条 row 固定 `paper_only=true`、`auto_apply=false`、`submit_orders=false`、`does_not_relax_submit_gates=true`。
+- 当前实际 dashboard：`outcome_trial_gate_status=BLOCKED_BY_CURRENT_GATES`、`trial_count=8`、`ready_count=0`、`blocked_count=8`。
+- 当前 primary trial 是 `HK:resolved_hk_top100_bluechip / HK_POST_COST_THRESHOLD_PAPER_TRIAL`，primary blocker 是 `fresh_buy_plan_required`。
+- 8 条 trial blocker 分布：`fresh_buy_plan_required=7`、`buy_plan_missing=8`、`submit_quality_not_pass=8`、`strategy_suggestion_stale=4`、`gateway_budget_degraded=2`。
+- 交易含义：HK outcome evidence 支持继续准备 paper trial，但当前没有任何 trial 满足自动下单前置条件；下一步必须先刷新 stale execution artifact、产生 fresh BUY plan、通过 submit-quality 和 Gateway budget，再考虑一次小额 paper-only limit trial。
