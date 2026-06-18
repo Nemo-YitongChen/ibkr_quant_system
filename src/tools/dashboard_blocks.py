@@ -282,6 +282,11 @@ def build_ops_health_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "auto_order_offline_recovery_required_count": _int(
                 ops.get("auto_order_offline_recovery_required_count")
             ),
+            "supervisor_shutdown_status": str(ops.get("supervisor_shutdown_status") or ""),
+            "supervisor_shutdown_health_status": str(ops.get("supervisor_shutdown_health_status") or ""),
+            "supervisor_shutdown_reason": str(ops.get("supervisor_shutdown_reason") or ""),
+            "supervisor_shutdown_last_signal_name": str(ops.get("supervisor_shutdown_last_signal_name") or ""),
+            "supervisor_shutdown_event_count": _int(ops.get("supervisor_shutdown_event_count")),
         },
         "rows": alert_rows,
     }

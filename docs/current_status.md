@@ -608,3 +608,12 @@
 - Supervisor 当前运行态显示 `running / ignored_signal:SIGHUP`，说明最近一次可见事件是终端/会话断开类信号且已被忽略，不是当前进程崩溃。
 - Supervisor 现在会同时写最新 `supervisor_shutdown_status.json` 和追加式 `supervisor_shutdown_events.jsonl`；异常退出最终状态保持 `crashed`，不会再被 `finally` 清理阶段覆盖成 `stopped`。
 - 针对性验证通过：`tests/test_supervisor_shutdown_status.py`、`tests/test_review_opportunity_outcomes.py`。
+
+## 42. 2026-06-18 Dashboard shutdown visibility
+
+- Dashboard 现在读取 `supervisor_shutdown_status.json` 与最近 20 条 `supervisor_shutdown_events.jsonl`，并在顶层 payload 输出 `supervisor_shutdown_status` / `supervisor_shutdown_events`。
+- `ops_overview` 和现有 Ops Health v2 block 现在暴露 `supervisor_shutdown_status`、`supervisor_shutdown_health_status`、`supervisor_shutdown_reason`、`supervisor_shutdown_last_signal_name`、`supervisor_shutdown_event_count`。
+- 简单模式运维表新增 `Supervisor` 行；如果状态是 `crashed/stopped/stopping` 会进入 Ops alert，`running / ignored_signal:SIGHUP` 只显示为可见状态，不作为自动下单阻断。
+- 实际 scoped dashboard 已刷新，当前显示 `supervisor_shutdown_status.status=running`、`reason=ignored_signal:SIGHUP`、`ops_overview.supervisor_shutdown_health_status=ready`、`event_count=0`。
+- `event_count=0` 是因为当前正在运行的 Supervisor 进程早于 event-history 代码启动；重启后会开始追加事件历史。
+- 本步骤不新增 IBKR 请求，不修改 YAML，不提交订单，也不放宽 risk、edge、cost、liquidity、market-rule、Gateway budget 或 submit-quality gate；它只让意外 shutdown 成为 dashboard 可见的运维证据。

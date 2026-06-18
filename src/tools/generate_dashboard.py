@@ -6,6 +6,7 @@ import html
 import json
 import re
 import sqlite3
+from collections import deque
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List
@@ -520,6 +521,27 @@ def _load_json(path: Path) -> Dict[str, Any]:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return {}
+
+
+def _load_jsonl_tail(path: Path, *, limit: int = 20) -> List[Dict[str, Any]]:
+    if not path.exists() or int(limit or 0) <= 0:
+        return []
+    rows: deque[Dict[str, Any]] = deque(maxlen=int(limit))
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                text = line.strip()
+                if not text:
+                    continue
+                try:
+                    row = json.loads(text)
+                except Exception:
+                    continue
+                if isinstance(row, dict):
+                    rows.append(dict(row))
+    except Exception:
+        return []
+    return list(rows)
 
 
 def _path_size_bytes(path: Path) -> int:
@@ -5999,6 +6021,8 @@ def _build_ops_overview(
     auto_order_readiness: Dict[str, Any] | None = None,
     auto_order_readiness_health: Dict[str, Any] | None = None,
     open_market_analysis_summary: Dict[str, Any] | None = None,
+    supervisor_shutdown_status: Dict[str, Any] | None = None,
+    supervisor_shutdown_events: List[Dict[str, Any]] | None = None,
 ) -> Dict[str, Any]:
     # 运维总览只聚合“现在最值得先处理”的信号：preflight、报告新鲜度、组合健康度和执行模式偏差。
     checks = [dict(row) for row in list(preflight_summary.get("checks", []) or []) if isinstance(row, dict)]
@@ -6114,6 +6138,24 @@ def _build_ops_overview(
     open_market_auto_missing_count = int(open_market_analysis.get("auto_missing_open_count", 0) or 0)
     open_market_data_attention_count = int(open_market_analysis.get("data_attention_open_count", 0) or 0)
     open_market_primary_reason = str(open_market_analysis.get("primary_reason") or "").strip()
+    shutdown_status = dict(supervisor_shutdown_status or {})
+    shutdown_events = [dict(row) for row in list(supervisor_shutdown_events or []) if isinstance(row, dict)]
+    supervisor_shutdown_state = str(shutdown_status.get("status") or "").strip().lower()
+    supervisor_shutdown_reason = str(shutdown_status.get("reason") or "").strip()
+    supervisor_shutdown_written_at = str(shutdown_status.get("written_at") or "").strip()
+    supervisor_shutdown_last_signal = str(shutdown_status.get("last_signal_name") or "").strip()
+    if supervisor_shutdown_state == "crashed":
+        supervisor_shutdown_health_status = "degraded"
+        supervisor_shutdown_status_label = "Supervisor 异常退出"
+    elif supervisor_shutdown_state in {"stopping", "stopped"}:
+        supervisor_shutdown_health_status = "warning"
+        supervisor_shutdown_status_label = "Supervisor 已停止"
+    elif supervisor_shutdown_state == "running":
+        supervisor_shutdown_health_status = "ready"
+        supervisor_shutdown_status_label = "Supervisor 运行中"
+    else:
+        supervisor_shutdown_health_status = "missing"
+        supervisor_shutdown_status_label = "未记录"
     gateway_runtime_summary = _build_gateway_runtime_summary(preflight_summary, control_payload)
     alert_rows: List[Dict[str, Any]] = []
     for row in warning_rows[:8]:
@@ -6232,6 +6274,15 @@ def _build_ops_overview(
                 open_market_summary_text or open_market_primary_reason or "open_market_analysis_not_ready",
             )
         )
+    if supervisor_shutdown_health_status in {"warning", "degraded"}:
+        alert_rows.append(
+            _ops_alert_row(
+                "SUPERVISOR",
+                "shutdown_status",
+                "FAIL" if supervisor_shutdown_health_status == "degraded" else "WARN",
+                supervisor_shutdown_reason or supervisor_shutdown_state or "supervisor_not_running",
+            )
+        )
     alert_class_counts: Dict[str, int] = {}
     alert_severity_counts: Dict[str, int] = {"fail": 0, "warn": 0, "ok": 0}
     for row in alert_rows:
@@ -6281,6 +6332,7 @@ def _build_ops_overview(
         f"auto_submit_plan={auto_order_submit_plan_status or 'missing'} | "
         f"open_market_analysis={open_market_status or 'missing'} | "
         f"offline_recovery={auto_order_offline_recovery_required_count} | "
+        f"supervisor_shutdown={supervisor_shutdown_state or 'missing'} | "
         f"mode_mismatch={execution_mismatch_count} | "
         f"gateway_runtime={gateway_runtime_summary.get('status', 'unknown')} | "
         f"governance={governance_status} | "
@@ -6359,6 +6411,13 @@ def _build_ops_overview(
         "open_market_auto_missing_count": open_market_auto_missing_count,
         "open_market_data_attention_count": open_market_data_attention_count,
         "open_market_primary_reason": open_market_primary_reason,
+        "supervisor_shutdown_status": supervisor_shutdown_state,
+        "supervisor_shutdown_status_label": supervisor_shutdown_status_label,
+        "supervisor_shutdown_health_status": supervisor_shutdown_health_status,
+        "supervisor_shutdown_reason": supervisor_shutdown_reason,
+        "supervisor_shutdown_written_at": supervisor_shutdown_written_at,
+        "supervisor_shutdown_last_signal_name": supervisor_shutdown_last_signal,
+        "supervisor_shutdown_event_count": int(len(shutdown_events)),
         "control_service_status": str(service_state.get("status", "disabled") or "disabled"),
         "gateway_runtime_summary": gateway_runtime_summary,
         "gateway_runtime_status": str(gateway_runtime_summary.get("status", "") or ""),
@@ -7980,6 +8039,8 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
     _attach_dashboard_control(cards, dashboard_control)
     auto_order_readiness = _load_json(summary_dir / "auto_order_readiness.json")
     opportunity_outcome_validation = _load_json(summary_dir / "opportunity_outcome_validation.json")
+    supervisor_shutdown_status = _load_json(summary_dir / "supervisor_shutdown_status.json")
+    supervisor_shutdown_events = _load_jsonl_tail(summary_dir / "supervisor_shutdown_events.jsonl", limit=20)
     auto_order_policy = dict(cfg.get("auto_order_readiness") or {})
     auto_order_readiness_max_age_hours = float(
         auto_order_policy.get(
@@ -8126,6 +8187,8 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
         auto_order_readiness=auto_order_readiness,
         auto_order_readiness_health=auto_order_readiness_health,
         open_market_analysis_summary=open_market_analysis_summary,
+        supervisor_shutdown_status=supervisor_shutdown_status,
+        supervisor_shutdown_events=supervisor_shutdown_events,
     )
     gateway_runtime_summary = dict(ops_overview.get("gateway_runtime_summary", {}) or {})
     for card in list(trade_cards) + list(dry_run_cards):
@@ -8139,6 +8202,8 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
         "auto_order_readiness": auto_order_readiness,
         "auto_order_readiness_health": auto_order_readiness_health,
         "opportunity_outcome_validation": opportunity_outcome_validation,
+        "supervisor_shutdown_status": supervisor_shutdown_status,
+        "supervisor_shutdown_events": supervisor_shutdown_events,
         "open_market_analysis_summary": open_market_analysis_summary,
         "watchlist_expansion_summary": watchlist_expansion_summary,
         "ibkr_gateway_budget": weekly_ibkr_gateway_budget_payload,
@@ -8348,6 +8413,19 @@ def _simple_ops_overview_rows(ops_overview: Dict[str, Any]) -> List[List[str]]:
     if auto_health_status in {"warning", "degraded"}:
         auto_order_label = f"证据过旧 | {auto_health_reason or auto_health_status}"
 
+    supervisor_status_label = str(ops_overview.get("supervisor_shutdown_status_label") or "").strip()
+    supervisor_status = str(ops_overview.get("supervisor_shutdown_status") or "").strip()
+    supervisor_reason = str(ops_overview.get("supervisor_shutdown_reason") or "").strip()
+    supervisor_signal = str(ops_overview.get("supervisor_shutdown_last_signal_name") or "").strip()
+    if supervisor_status_label and supervisor_status_label != "未记录":
+        supervisor_label = supervisor_status_label
+        if supervisor_reason:
+            supervisor_label += f" | {supervisor_reason}"
+        elif supervisor_signal:
+            supervisor_label += f" | {supervisor_signal}"
+    else:
+        supervisor_label = "未记录 | supervisor_shutdown_status"
+
     open_market_status = str(ops_overview.get("open_market_analysis_status_label") or "").strip()
     if not open_market_status:
         open_market_status = str(ops_overview.get("open_market_analysis_status") or "missing").strip()
@@ -8380,6 +8458,10 @@ def _simple_ops_overview_rows(ops_overview: Dict[str, Any]) -> List[List[str]]:
                 or ops_overview.get("gateway_runtime_status_label")
                 or "-"
             ),
+        ],
+        [
+            "Supervisor",
+            supervisor_label,
         ],
         [
             "自动下单",
