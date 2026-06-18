@@ -597,3 +597,14 @@
 - WAIT_PULLBACK 纸面试验合同：字段 `opportunity_entry.near_entry_gap_pct`，当前值 `1.0%`，P1 市场建议审查 `2.0%`，ASX P2 审查 `1.5%`，最大 `3.0%`；只允许小额 whole-share feasible、post-cost positive、limit paper trial。
 - Dashboard v2 Auto Order block 已显示 trial plan metrics：trial=9、ready=8、P1 ready=7、auto_apply=0。
 - 本步骤仍不修改 YAML、不提交真实订单、不放宽 risk/edge/liquidity/market-rule/Gateway budget/submit-quality gate；它只是把下一步人工 paper calibration 变成可审计合同。
+
+## 41. 2026-06-18 HK outcome validation and shutdown event history
+
+- 已用当前 `market_readiness.json` 与 `weekly_unified_evidence.csv` 刷新 HK-only outcome validation，输出到 `/private/tmp/ibkr_hk_outcome_validation/`，没有覆盖 Supervisor dashboard 正在使用的 all-market artifact。
+- 最新 HK 正 post-cost candidate evidence：`HK:resolved_hk_top100_bluechip` 平均 5d `+138.32bps`、20d `+307.90bps`；`HK:resolved_hk_top100_tech_growth` 平均 5d `+138.69bps`、20d `+313.60bps`。
+- 最新 HK close `WAIT_PULLBACK` evidence：bluechip 平均 5d `+125.96bps`、20d `+212.07bps`；tech growth 平均 5d `+126.74bps`、20d `+222.09bps`。
+- 解释边界：HK group outcome 支持继续 paper-only calibration review，但 `1288.HK` 与 `2359.HK` 的 close `WAIT_PULLBACK` 单票 outcome 为负，因此不能无差别放宽 near-entry anchor；任何试验仍必须 symbol-aware、limit-only、whole-share feasible、post-cost positive。
+- 当前 HK 自动提交仍被非 outcome gate 阻断：execution artifact stale、当前 execution plan 无 BUY 单、strategy suggestion stale、Gateway research budget degraded；本轮不修改 YAML、不提交订单、不放宽任何 submit gate。
+- Supervisor 当前运行态显示 `running / ignored_signal:SIGHUP`，说明最近一次可见事件是终端/会话断开类信号且已被忽略，不是当前进程崩溃。
+- Supervisor 现在会同时写最新 `supervisor_shutdown_status.json` 和追加式 `supervisor_shutdown_events.jsonl`；异常退出最终状态保持 `crashed`，不会再被 `finally` 清理阶段覆盖成 `stopped`。
+- 针对性验证通过：`tests/test_supervisor_shutdown_status.py`、`tests/test_review_opportunity_outcomes.py`。

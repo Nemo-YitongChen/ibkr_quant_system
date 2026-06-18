@@ -394,6 +394,9 @@ class Supervisor:
     def _shutdown_status_path(self) -> Path:
         return self._summary_output_dir() / "supervisor_shutdown_status.json"
 
+    def _shutdown_events_path(self) -> Path:
+        return self._summary_output_dir() / "supervisor_shutdown_events.jsonl"
+
     def _write_shutdown_status(self, *, status: str, reason: str) -> None:
         try:
             path = self._shutdown_status_path()
@@ -408,8 +411,14 @@ class Supervisor:
                 "written_at": datetime.now(timezone.utc).isoformat(),
             }
             path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            events_path = self._shutdown_events_path()
+            with events_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
         except Exception as exc:
             log.debug("Unable to write Supervisor shutdown status: %s: %s", type(exc).__name__, exc)
+
+    def _final_shutdown_status(self) -> str:
+        return "crashed" if str(self._shutdown_reason or "").startswith("exception:") else "stopped"
 
     def _acquire_instance_lock(self) -> bool:
         if self._instance_lock_handle is not None:
@@ -6561,7 +6570,7 @@ class Supervisor:
         finally:
             self._stop_dashboard_control_service()
             self.trade_proc.stop()
-            self._write_shutdown_status(status="stopped", reason=self._shutdown_reason or "stopped")
+            self._write_shutdown_status(status=self._final_shutdown_status(), reason=self._shutdown_reason or "stopped")
             self._release_instance_lock()
 
 
