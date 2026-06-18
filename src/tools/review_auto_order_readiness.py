@@ -171,6 +171,7 @@ def _write_markdown(path: Path, payload: Dict[str, Any]) -> None:
         )
     submit_plan = dict(summary.get("submit_plan") or {})
     frequency_plan = dict(summary.get("frequency_plan") or {})
+    stale_execution_refresh_plan = dict(summary.get("stale_execution_refresh_plan") or {})
     recovery_plan = dict(summary.get("recovery_plan") or {})
     recovery_eligibility = dict(summary.get("recovery_eligibility") or {})
     frontier_candidates = [
@@ -197,6 +198,42 @@ def _write_markdown(path: Path, payload: Dict[str, Any]) -> None:
                 ]
             )
             + " |",
+            "",
+            "## Stale Execution Refresh Plan",
+            "",
+            f"- Status: {stale_execution_refresh_plan.get('status', '-')}",
+            f"- Primary action: {stale_execution_refresh_plan.get('primary_action', '-')}",
+            f"- Target: {stale_execution_refresh_plan.get('primary_market', '-')}/"
+            f"{stale_execution_refresh_plan.get('primary_portfolio_id', '-')}",
+            f"- Request policy: {stale_execution_refresh_plan.get('request_policy', '-')}",
+            f"- Submit orders: {stale_execution_refresh_plan.get('submit_orders', False)}",
+            "",
+            "| rank | market | portfolio | score | age_hours | post_cost_positive | close_wait_pullback | action |",
+            "| ---: | --- | --- | ---: | ---: | ---: | ---: | --- |",
+            *[
+                "| "
+                + " | ".join(
+                    [
+                        str(idx),
+                        str(row.get("market") or "-"),
+                        str(row.get("portfolio_id") or "-"),
+                        f"{float(row.get('refresh_rank_score', 0.0) or 0.0):.2f}",
+                        f"{float(row.get('artifact_age_hours', 0.0) or 0.0):.2f}",
+                        str(int(row.get("post_cost_positive_edge_count", 0) or 0)),
+                        str(int(row.get("wait_pullback_close_count", 0) or 0)),
+                        str(row.get("action") or "-"),
+                    ]
+                )
+                + " |"
+                for idx, row in enumerate(
+                    [
+                        dict(item)
+                        for item in list(stale_execution_refresh_plan.get("rows") or [])[:10]
+                        if isinstance(item, dict)
+                    ],
+                    start=1,
+                )
+            ],
             "",
             "## Minimum-Request Recovery Plan",
             "",

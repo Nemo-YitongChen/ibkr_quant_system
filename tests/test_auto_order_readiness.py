@@ -14,6 +14,7 @@ from src.common.auto_order_readiness import (
     build_auto_order_submit_capacity_plan,
     build_auto_order_submit_plan,
     build_auto_order_readiness_summary,
+    build_stale_execution_refresh_plan,
     evaluate_auto_order_readiness,
     evaluate_auto_order_recovery_eligibility,
 )
@@ -1449,6 +1450,112 @@ def test_auto_order_readiness_summary_counts_rows() -> None:
     assert summary["offline_recovery_reason_counts"]["preflight_stale_after_offline_gap"] == 1
     assert summary["remediation_plan"][0]["reason"] == "preflight_stale"
     assert summary["remediation_plan"][1]["reason"] == "market_readiness_not_ready"
+
+
+def test_stale_execution_refresh_plan_ranks_no_submit_target() -> None:
+    plan = build_stale_execution_refresh_plan(
+        [
+            {
+                "status": BLOCKED_STATUS,
+                "market": "HK",
+                "portfolio_id": "HK:bluechip",
+                "market_readiness_status": "NEEDS_REFRESH",
+                "market_readiness_reason": "STALE_EXECUTION_ARTIFACT",
+                "market_readiness_artifact_health_status": "STALE",
+                "market_readiness_artifact_age_hours": 42,
+                "offline_recovery_max_gap_hours": 24,
+                "post_cost_positive_edge_count": 5,
+                "post_cost_high_cost_positive_edge_count": 2,
+                "wait_pullback_close_count": 8,
+                "market_readiness_order_count": 1,
+                "market_readiness_planned_buy_order_value": 0,
+                "market_readiness_planned_order_symbols": "3988.HK",
+                "hard_blocks": ["market_readiness_not_ready"],
+            },
+            {
+                "status": BLOCKED_STATUS,
+                "market": "ASX",
+                "portfolio_id": "ASX:quality",
+                "market_readiness_status": "NEEDS_REFRESH",
+                "market_readiness_reason": "STALE_EXECUTION_ARTIFACT",
+                "market_readiness_artifact_health_status": "STALE",
+                "market_readiness_artifact_age_hours": 48,
+                "offline_recovery_max_gap_hours": 24,
+                "post_cost_positive_edge_count": 1,
+                "wait_pullback_close_count": 1,
+            },
+            {
+                "status": DISABLED_STATUS,
+                "market": "CN",
+                "portfolio_id": "CN:research",
+                "market_readiness_status": "RESEARCH_ONLY",
+                "market_readiness_artifact_health_status": "STALE",
+            },
+        ]
+    )
+
+    assert plan["status"] == "READY_FOR_TARGETED_NO_SUBMIT_REFRESH"
+    assert plan["primary_market"] == "HK"
+    assert plan["primary_portfolio_id"] == "HK:bluechip"
+    assert plan["target_count"] == 2
+    assert plan["submit_orders"] is False
+    assert plan["does_not_relax_submit_gates"] is True
+    assert plan["rows"][0]["action"] == "refresh_report_and_execution_no_submit"
+
+
+def test_stale_execution_refresh_plan_waits_for_gateway_budget() -> None:
+    plan = build_auto_order_readiness_summary(
+        [
+            {
+                "status": BLOCKED_STATUS,
+                "market": "US",
+                "portfolio_id": "US:watchlist",
+                "market_readiness_status": "NEEDS_REFRESH",
+                "market_readiness_reason": "STALE_EXECUTION_ARTIFACT",
+                "market_readiness_artifact_health_status": "STALE",
+                "market_readiness_artifact_age_hours": 40,
+                "post_cost_positive_edge_count": 3,
+                "wait_pullback_close_count": 2,
+                "hard_blocks": ["gateway_budget_degraded", "market_readiness_not_ready"],
+            }
+        ]
+    )["stale_execution_refresh_plan"]
+
+    assert plan["status"] == "WAIT_GATEWAY_BUDGET"
+    assert plan["primary_action"] == "wait_gateway_budget_then_refresh_stale_execution"
+    assert plan["rows"][0]["gateway_budget_blocked"] is True
+
+
+def test_stale_execution_refresh_plan_does_not_wait_for_lower_rank_gateway_block() -> None:
+    plan = build_stale_execution_refresh_plan(
+        [
+            {
+                "status": BLOCKED_STATUS,
+                "market": "HK",
+                "portfolio_id": "HK:bluechip",
+                "market_readiness_status": "NEEDS_REFRESH",
+                "market_readiness_reason": "STALE_EXECUTION_ARTIFACT",
+                "market_readiness_artifact_health_status": "STALE",
+                "post_cost_positive_edge_count": 8,
+                "wait_pullback_close_count": 8,
+                "hard_blocks": ["market_readiness_not_ready"],
+            },
+            {
+                "status": BLOCKED_STATUS,
+                "market": "US",
+                "portfolio_id": "US:watchlist",
+                "market_readiness_status": "NEEDS_REFRESH",
+                "market_readiness_reason": "STALE_EXECUTION_ARTIFACT",
+                "market_readiness_artifact_health_status": "STALE",
+                "post_cost_positive_edge_count": 1,
+                "hard_blocks": ["gateway_budget_degraded", "market_readiness_not_ready"],
+            },
+        ]
+    )
+
+    assert plan["status"] == "READY_FOR_TARGETED_NO_SUBMIT_REFRESH"
+    assert plan["primary_market"] == "HK"
+    assert plan["rows"][1]["gateway_budget_blocked"] is True
 
 
 def test_auto_order_frequency_plan_surfaces_seed_proposals_without_changing_submit_decision() -> None:

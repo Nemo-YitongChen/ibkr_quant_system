@@ -4,6 +4,7 @@ import argparse
 import csv
 import html
 import json
+import os
 import re
 import sqlite3
 from collections import deque
@@ -5913,6 +5914,22 @@ def _ops_alert_row(category: str, name: str, status: str, detail: str) -> Dict[s
     return row
 
 
+def _supervisor_pid_alive(pid_value: Any) -> bool | None:
+    try:
+        pid = int(pid_value or 0)
+    except (TypeError, ValueError):
+        return None
+    if pid <= 0:
+        return None
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except (PermissionError, OSError):
+        return None
+    return True
+
+
 def _with_ops_alert_classification(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     for raw in list(rows or []):
@@ -6144,9 +6161,26 @@ def _build_ops_overview(
     supervisor_shutdown_reason = str(shutdown_status.get("reason") or "").strip()
     supervisor_shutdown_written_at = str(shutdown_status.get("written_at") or "").strip()
     supervisor_shutdown_last_signal = str(shutdown_status.get("last_signal_name") or "").strip()
+    supervisor_shutdown_pid = int(_safe_float(shutdown_status.get("pid"), 0.0) or 0.0)
+    supervisor_shutdown_pid_alive = _supervisor_pid_alive(supervisor_shutdown_pid)
+    supervisor_shutdown_liveness_status = (
+        "alive"
+        if supervisor_shutdown_pid_alive is True
+        else "dead"
+        if supervisor_shutdown_pid_alive is False
+        else "unknown"
+    )
     if supervisor_shutdown_state == "crashed":
         supervisor_shutdown_health_status = "degraded"
         supervisor_shutdown_status_label = "Supervisor 异常退出"
+    elif supervisor_shutdown_state == "running" and supervisor_shutdown_pid_alive is False:
+        supervisor_shutdown_health_status = "degraded"
+        supervisor_shutdown_status_label = "Supervisor 状态失效"
+        supervisor_shutdown_reason = (
+            f"running_status_pid_not_alive:{supervisor_shutdown_pid}"
+            if supervisor_shutdown_pid > 0
+            else "running_status_pid_not_alive"
+        )
     elif supervisor_shutdown_state in {"stopping", "stopped"}:
         supervisor_shutdown_health_status = "warning"
         supervisor_shutdown_status_label = "Supervisor 已停止"
@@ -6417,6 +6451,9 @@ def _build_ops_overview(
         "supervisor_shutdown_reason": supervisor_shutdown_reason,
         "supervisor_shutdown_written_at": supervisor_shutdown_written_at,
         "supervisor_shutdown_last_signal_name": supervisor_shutdown_last_signal,
+        "supervisor_shutdown_pid": supervisor_shutdown_pid,
+        "supervisor_shutdown_pid_alive": supervisor_shutdown_pid_alive,
+        "supervisor_shutdown_liveness_status": supervisor_shutdown_liveness_status,
         "supervisor_shutdown_event_count": int(len(shutdown_events)),
         "control_service_status": str(service_state.get("status", "disabled") or "disabled"),
         "gateway_runtime_summary": gateway_runtime_summary,

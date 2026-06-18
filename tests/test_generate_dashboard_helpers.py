@@ -970,6 +970,66 @@ def test_build_ops_overview_surfaces_open_market_analysis_alert() -> None:
     assert "auto_missing=1" in categories["OPEN_MARKET"]["detail"]
 
 
+def test_build_ops_overview_marks_running_supervisor_with_dead_pid_as_degraded(monkeypatch) -> None:
+    monkeypatch.setattr(generate_dashboard, "_supervisor_pid_alive", lambda pid: False)
+    overview = _build_ops_overview(
+        [],
+        preflight_summary={"pass_count": 1, "warn_count": 0, "fail_count": 0, "checks": []},
+        control_payload={"service": {"status": "configured"}, "actions": {}},
+        execution_mode_summary={"mismatch_count": 0},
+        status_rollout_summary={
+            "market_state_missing_count": 0,
+            "data_attention_count": 0,
+            "data_research_fallback_count": 0,
+            "market_rows": [],
+        },
+        artifact_health_summary={"warning_count": 0, "degraded_count": 0},
+        governance_health_summary={"status": "ready"},
+        supervisor_shutdown_status={
+            "status": "running",
+            "reason": "started",
+            "pid": 999999,
+            "written_at": "2026-06-18T00:00:00+00:00",
+        },
+    )
+
+    categories = {row["category"]: row for row in overview["alert_rows"]}
+    assert overview["supervisor_shutdown_health_status"] == "degraded"
+    assert overview["supervisor_shutdown_status_label"] == "Supervisor 状态失效"
+    assert overview["supervisor_shutdown_liveness_status"] == "dead"
+    assert overview["supervisor_shutdown_reason"] == "running_status_pid_not_alive:999999"
+    assert categories["SUPERVISOR"]["status"] == "FAIL"
+
+
+def test_build_ops_overview_keeps_running_supervisor_with_live_pid_ready(monkeypatch) -> None:
+    monkeypatch.setattr(generate_dashboard, "_supervisor_pid_alive", lambda pid: True)
+    overview = _build_ops_overview(
+        [],
+        preflight_summary={"pass_count": 1, "warn_count": 0, "fail_count": 0, "checks": []},
+        control_payload={"service": {"status": "configured"}, "actions": {}},
+        execution_mode_summary={"mismatch_count": 0},
+        status_rollout_summary={
+            "market_state_missing_count": 0,
+            "data_attention_count": 0,
+            "data_research_fallback_count": 0,
+            "market_rows": [],
+        },
+        artifact_health_summary={"warning_count": 0, "degraded_count": 0},
+        governance_health_summary={"status": "ready"},
+        supervisor_shutdown_status={
+            "status": "running",
+            "reason": "ignored_signal:SIGHUP",
+            "pid": 123,
+            "last_signal_name": "SIGHUP",
+        },
+    )
+
+    assert overview["supervisor_shutdown_health_status"] == "ready"
+    assert overview["supervisor_shutdown_status_label"] == "Supervisor 运行中"
+    assert overview["supervisor_shutdown_liveness_status"] == "alive"
+    assert all(row["category"] != "SUPERVISOR" for row in overview["alert_rows"])
+
+
 def test_build_ops_overview_classifies_preflight_gateway_port_alerts() -> None:
     overview = _build_ops_overview(
         [],

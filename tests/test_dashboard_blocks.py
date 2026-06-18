@@ -117,6 +117,24 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
                     "seed_intake_external_source_count": 0,
                     "does_not_change_submit_decision": True,
                 },
+                "stale_execution_refresh_plan": {
+                    "status": "WAIT_GATEWAY_BUDGET",
+                    "reason": "gateway_budget_degraded_before_no_submit_refresh",
+                    "primary_action": "wait_gateway_budget_then_refresh_stale_execution",
+                    "target_count": 2,
+                    "primary_market": "HK",
+                    "primary_portfolio_id": "HK:resolved_hk_top100_bluechip",
+                    "primary_score": 88.0,
+                    "submit_orders": False,
+                    "does_not_relax_submit_gates": True,
+                    "rows": [
+                        {
+                            "market": "HK",
+                            "portfolio_id": "HK:resolved_hk_top100_bluechip",
+                            "refresh_rank_score": 88.0,
+                        }
+                    ],
+                },
                 "candidate_supply_status": "candidate_supply_gap",
                 "candidate_supply_reason": "no_safe_submit_candidate_with_seed_proposals",
                 "candidate_supply_primary_action": "create_or_refresh_preferred_asset_seed_watchlist",
@@ -582,6 +600,15 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
     assert by_id["auto_order_readiness"]["metrics"]["frequency_seed_source_markets"] == ["US"]
     assert by_id["auto_order_readiness"]["metrics"]["frequency_plan_does_not_change_submit_decision"] == 1
     assert by_id["auto_order_readiness"]["rows"]["frequency_plan"]["seed_proposal_markets"] == ["US"]
+    assert by_id["auto_order_readiness"]["metrics"]["stale_execution_refresh_status"] == "WAIT_GATEWAY_BUDGET"
+    assert by_id["auto_order_readiness"]["metrics"]["stale_execution_refresh_target_count"] == 2
+    assert by_id["auto_order_readiness"]["metrics"]["stale_execution_refresh_primary_market"] == "HK"
+    assert (
+        by_id["auto_order_readiness"]["metrics"]["stale_execution_refresh_primary_portfolio_id"]
+        == "HK:resolved_hk_top100_bluechip"
+    )
+    assert by_id["auto_order_readiness"]["metrics"]["stale_execution_refresh_submit_orders"] == 0
+    assert by_id["auto_order_readiness"]["rows"]["stale_execution_refresh_plan"]["rows"][0]["market"] == "HK"
     assert by_id["auto_order_readiness"]["metrics"]["post_cost_calibration_portfolio_count"] == 1
     assert by_id["auto_order_readiness"]["metrics"]["post_cost_review_portfolio_count"] == 1
     assert by_id["auto_order_readiness"]["metrics"]["post_cost_high_cost_candidate_count"] == 2

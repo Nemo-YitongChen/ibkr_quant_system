@@ -2252,6 +2252,117 @@ def evaluate_auto_order_recovery_eligibility(
     }
 
 
+def build_stale_execution_refresh_plan(rows: Iterable[Mapping[str, Any]]) -> Dict[str, Any]:
+    """Rank stale execution artifacts for the next no-submit evidence refresh."""
+    candidates: List[Dict[str, Any]] = []
+    for raw in list(rows or []):
+        if not isinstance(raw, Mapping):
+            continue
+        row = dict(raw)
+        market = _market(row.get("market"))
+        portfolio_id = str(row.get("portfolio_id") or "").strip()
+        if not market or not portfolio_id:
+            continue
+        status = str(row.get("status") or "").strip().upper()
+        readiness_status = str(row.get("market_readiness_status") or "").strip().upper()
+        if status == DISABLED_STATUS or readiness_status == "RESEARCH_ONLY":
+            continue
+        artifact_status = str(row.get("market_readiness_artifact_health_status") or "").strip().upper()
+        readiness_reason = str(row.get("market_readiness_reason") or "").strip().upper()
+        offline_reasons = {
+            str(reason or "").strip().lower()
+            for reason in list(row.get("offline_recovery_reasons") or [])
+            if str(reason or "").strip()
+        }
+        stale_execution = bool(
+            artifact_status == "STALE"
+            or readiness_reason == "STALE_EXECUTION_ARTIFACT"
+            or "market_readiness_artifact_stale" in offline_reasons
+        )
+        if not stale_execution:
+            continue
+        age_hours = _float(row.get("market_readiness_artifact_age_hours"), 0.0)
+        max_age_hours = _float(row.get("offline_recovery_max_gap_hours"), 0.0) or 24.0
+        stale_gap_hours = max(0.0, age_hours - max_age_hours)
+        post_cost_positive = _int(row.get("post_cost_positive_edge_count"), 0)
+        high_cost_positive = _int(row.get("post_cost_high_cost_positive_edge_count"), 0)
+        close_wait_pullback = _int(row.get("wait_pullback_close_count"), 0)
+        order_count = _int(row.get("market_readiness_order_count"), 0)
+        buy_value = _float(row.get("market_readiness_planned_buy_order_value"), 0.0)
+        hard_blocks = {
+            str(reason or "").strip()
+            for reason in list(row.get("hard_blocks") or [])
+            if str(reason or "").strip()
+        }
+        gateway_budget_blocked = "gateway_budget_degraded" in hard_blocks
+        evidence_score = (
+            post_cost_positive * 10.0
+            + high_cost_positive * 4.0
+            + close_wait_pullback * 3.0
+            + min(stale_gap_hours, 72.0) * 0.5
+            + order_count * 2.0
+            + (5.0 if buy_value > 0 else 0.0)
+        )
+        candidates.append(
+            {
+                "market": market,
+                "portfolio_id": portfolio_id,
+                "refresh_rank_score": round(evidence_score, 4),
+                "artifact_health_status": artifact_status,
+                "artifact_age_hours": round(age_hours, 2),
+                "stale_gap_hours": round(stale_gap_hours, 2),
+                "primary_reason": readiness_reason,
+                "post_cost_positive_edge_count": post_cost_positive,
+                "post_cost_high_cost_positive_edge_count": high_cost_positive,
+                "wait_pullback_close_count": close_wait_pullback,
+                "order_count": order_count,
+                "planned_buy_order_value": round(buy_value, 2),
+                "planned_order_symbols": str(row.get("market_readiness_planned_order_symbols") or ""),
+                "submit_quality_status": str(row.get("submit_quality_status") or ""),
+                "submit_quality_reason": str(row.get("submit_quality_reason") or ""),
+                "gateway_budget_blocked": bool(gateway_budget_blocked),
+                "action": "refresh_report_and_execution_no_submit",
+                "submit_orders": False,
+                "does_not_relax_submit_gates": True,
+            }
+        )
+    candidates.sort(
+        key=lambda item: (
+            -float(item.get("refresh_rank_score", 0.0) or 0.0),
+            str(item.get("market") or ""),
+            str(item.get("portfolio_id") or ""),
+        )
+    )
+    primary = dict(candidates[0]) if candidates else {}
+    primary_gateway_blocked = bool(primary.get("gateway_budget_blocked", False))
+    if not candidates:
+        status = "NO_STALE_EXECUTION_TARGETS"
+        primary_action = "none"
+        reason = "no_stale_execution_artifacts"
+    elif primary_gateway_blocked:
+        status = "WAIT_GATEWAY_BUDGET"
+        primary_action = "wait_gateway_budget_then_refresh_stale_execution"
+        reason = "gateway_budget_degraded_before_no_submit_refresh"
+    else:
+        status = "READY_FOR_TARGETED_NO_SUBMIT_REFRESH"
+        primary_action = "refresh_primary_stale_execution_no_submit"
+        reason = "stale_execution_artifact_refresh_target_ranked"
+    return {
+        "status": status,
+        "reason": reason,
+        "primary_action": primary_action,
+        "target_count": int(len(candidates)),
+        "primary_market": str(primary.get("market") or ""),
+        "primary_portfolio_id": str(primary.get("portfolio_id") or ""),
+        "primary_score": float(primary.get("refresh_rank_score", 0.0) or 0.0),
+        "request_policy": "one_stale_execution_portfolio_after_gateway_budget_ok",
+        "paper_only": True,
+        "submit_orders": False,
+        "does_not_relax_submit_gates": True,
+        "rows": candidates[:20],
+    }
+
+
 def build_auto_order_readiness_summary(
     rows: Iterable[Mapping[str, Any]],
     *,
@@ -2384,6 +2495,7 @@ def build_auto_order_readiness_summary(
         clean_rows,
         submit_plan=submit_plan,
     )
+    stale_execution_refresh_plan = build_stale_execution_refresh_plan(clean_rows)
     return {
         "status": status,
         "summary_text": (
@@ -2411,6 +2523,7 @@ def build_auto_order_readiness_summary(
         "submit_plan": submit_plan,
         "frequency_plan": frequency_plan,
         "recovery_plan": recovery_plan,
+        "stale_execution_refresh_plan": stale_execution_refresh_plan,
         "candidate_supply_status": str(frequency_plan.get("status") or ""),
         "candidate_supply_reason": str(frequency_plan.get("reason") or ""),
         "candidate_supply_primary_action": str(frequency_plan.get("primary_action") or ""),

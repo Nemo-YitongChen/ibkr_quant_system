@@ -617,3 +617,22 @@
 - 实际 scoped dashboard 已刷新，当前显示 `supervisor_shutdown_status.status=running`、`reason=ignored_signal:SIGHUP`、`ops_overview.supervisor_shutdown_health_status=ready`、`event_count=0`。
 - `event_count=0` 是因为当前正在运行的 Supervisor 进程早于 event-history 代码启动；重启后会开始追加事件历史。
 - 本步骤不新增 IBKR 请求，不修改 YAML，不提交订单，也不放宽 risk、edge、cost、liquidity、market-rule、Gateway budget 或 submit-quality gate；它只让意外 shutdown 成为 dashboard 可见的运维证据。
+
+## 43. 2026-06-18 Stale execution refresh priority plan
+
+- `auto_order_readiness` summary 新增只读 `stale_execution_refresh_plan`，用于在 execution artifact stale 且无法自动提交时，排序下一次 no-submit evidence refresh 的目标组合。
+- 排序依据包括 stale artifact 状态、post-cost positive candidate 数量、high-cost positive candidate 数量、close `WAIT_PULLBACK` 数量、artifact stale gap 和已有 order evidence；disabled / research-only 行被排除。
+- 该计划固定输出 `paper_only=true`、`submit_orders=false`、`does_not_relax_submit_gates=true`，并使用 `request_policy=one_stale_execution_portfolio_after_gateway_budget_ok`。
+- `auto_order_readiness.md` 新增 `Stale Execution Refresh Plan` section；dashboard Auto Order block 也显示 stale refresh plan metrics 与 rows。
+- 最新本地刷新结果：`status=WAIT_GATEWAY_BUDGET`、`primary_market=US`、`primary_portfolio_id=US:watchlist`、`target_count=4`、`submit_orders=false`；top rows 依次包含 `US:watchlist`、`HK:resolved_hk_top100_tech_growth`、`HK:resolved_hk_top100_bluechip`、`ASX:asx_top_quality`。
+- 交易含义：当前仍需等待 Gateway budget 恢复，不能刷新高请求路径，更不能提交订单；该计划只是在预算恢复后把下一次最小请求 no-submit refresh 目标明确化。
+
+## 44. 2026-06-18 HK outcome verification and Supervisor liveness check
+
+- 已用 `--market HK` 单独刷新 opportunity outcome validation 到 `runtime_data/paper_investment_only_duq152001/reports_supervisor/hk_opportunity_outcome_validation/`，没有覆盖 dashboard 使用的全市场 artifact。
+- HK 正 post-cost candidates 当前仍为 outcome-supported：bluechip 平均 5d `+138.32bps`、20d `+307.90bps`；tech growth 平均 5d `+138.69bps`、20d `+313.60bps`。
+- HK close `WAIT_PULLBACK` 当前也为 outcome-supported：bluechip 平均 5d `+125.96bps`、20d `+212.07bps`；tech growth 平均 5d `+126.74bps`、20d `+222.09bps`。
+- 解释边界：这支持 paper-only calibration/trial review，不支持直接放宽 risk、edge、cost、liquidity、market-rule、Gateway budget 或 submit-quality gate；当前 HK execution artifact 仍 stale，且没有 BUY plan。
+- Dashboard ops overview 现在会对 `supervisor_shutdown_status.status=running` 做 PID liveness 校验；如果 PID 已不存在，会把 `supervisor_shutdown_health_status` 标为 `degraded` 并产生 `SUPERVISOR` 告警。
+- 当前实际 dashboard 刷新后：`status=running`、`reason=ignored_signal:SIGHUP`、`pid=77976`、`liveness_status=unknown`、`health=ready`。`unknown` 表示当前环境不允许可靠 PID 探测，不会误报；明确 dead PID 才会降级。
+- 全量验证通过：`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider` -> `744 passed`。

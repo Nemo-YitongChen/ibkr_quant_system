@@ -286,6 +286,8 @@ def build_ops_health_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "supervisor_shutdown_health_status": str(ops.get("supervisor_shutdown_health_status") or ""),
             "supervisor_shutdown_reason": str(ops.get("supervisor_shutdown_reason") or ""),
             "supervisor_shutdown_last_signal_name": str(ops.get("supervisor_shutdown_last_signal_name") or ""),
+            "supervisor_shutdown_pid": _int(ops.get("supervisor_shutdown_pid")),
+            "supervisor_shutdown_liveness_status": str(ops.get("supervisor_shutdown_liveness_status") or ""),
             "supervisor_shutdown_event_count": _int(ops.get("supervisor_shutdown_event_count")),
         },
         "rows": alert_rows,
@@ -302,6 +304,7 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
         _dict(summary.get("frequency_plan")),
         payload,
     )
+    stale_execution_refresh_plan = _dict(summary.get("stale_execution_refresh_plan"))
     rows = _rows(auto_order.get("rows"), limit=50)
     recovery_plan = _dict(summary.get("recovery_plan")) or build_auto_order_recovery_plan(
         rows,
@@ -456,6 +459,18 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             ),
             "frequency_plan_does_not_change_submit_decision": int(
                 bool(frequency_plan.get("does_not_change_submit_decision", False))
+            ),
+            "stale_execution_refresh_status": str(stale_execution_refresh_plan.get("status") or ""),
+            "stale_execution_refresh_target_count": _int(stale_execution_refresh_plan.get("target_count")),
+            "stale_execution_refresh_primary_market": str(stale_execution_refresh_plan.get("primary_market") or ""),
+            "stale_execution_refresh_primary_portfolio_id": str(
+                stale_execution_refresh_plan.get("primary_portfolio_id") or ""
+            ),
+            "stale_execution_refresh_primary_score": float(
+                stale_execution_refresh_plan.get("primary_score", 0.0) or 0.0
+            ),
+            "stale_execution_refresh_submit_orders": int(
+                bool(stale_execution_refresh_plan.get("submit_orders", False))
             ),
             "submit_capacity_status": str(submit_capacity_plan.get("status") or ""),
             "submit_capacity_reason": str(submit_capacity_plan.get("reason") or ""),
@@ -619,6 +634,7 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "submit_capacity_plan": submit_capacity_plan,
             "remediation_plan": remediation_plan,
             "frequency_plan": frequency_plan,
+            "stale_execution_refresh_plan": stale_execution_refresh_plan,
             "recovery_plan": recovery_plan,
             "recovery_eligibility": recovery_eligibility,
             "execution_evidence_maintenance": execution_evidence_maintenance,
