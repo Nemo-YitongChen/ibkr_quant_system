@@ -232,6 +232,62 @@ class SupervisorCliTests(unittest.TestCase):
             self.assertFalse(waiting["allowed"])
             self.assertEqual(waiting["reason"], "auto_order_recovery:gateway_budget_recovery_not_reached")
 
+    def test_auto_order_recovery_action_forces_stale_execution_no_submit_target(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = Path(tmp) / "supervisor.yaml"
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        "markets:",
+                        '  - name: "hk"',
+                        '    market: "HK"',
+                        "    enabled: true",
+                        "    watchlists: []",
+                        "    reports:",
+                        '      - kind: "investment"',
+                        '        watchlist_yaml: "config/resolved_hk_top100_tech_growth.yaml"',
+                        "    short_safety_sync:",
+                        "      enabled: false",
+                        "    trading:",
+                        "      enabled: false",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(cfg_path))
+            item = supervisor.markets[0].reports[0]
+            recovery_context = {
+                "eligibility": {
+                    "active": True,
+                    "eligible": True,
+                    "reason": "eligible_stale_execution_no_submit_refresh",
+                    "status": "stale_execution_refresh_required",
+                    "target_market": "HK",
+                    "target_portfolio_id": "HK:resolved_hk_top100_tech_growth",
+                    "target_submit_quality_status": "NO_ORDERS",
+                }
+            }
+
+            report = supervisor._auto_order_recovery_action_decision(
+                item,
+                "HK",
+                action="report",
+                recovery_context=recovery_context,
+            )
+            execution = supervisor._auto_order_recovery_action_decision(
+                item,
+                "HK",
+                action="execution",
+                recovery_context=recovery_context,
+            )
+
+            self.assertTrue(report["allowed"])
+            self.assertTrue(report["force_run"])
+            self.assertTrue(execution["allowed"])
+            self.assertTrue(execution["force_run"])
+            self.assertTrue(execution["force_no_submit"])
+
     def test_prepare_auto_order_recovery_refreshes_budget_and_creates_checkpoint(self):
         with tempfile.TemporaryDirectory() as tmp:
             cfg_path = Path(tmp) / "supervisor.yaml"
@@ -299,6 +355,57 @@ class SupervisorCliTests(unittest.TestCase):
             )
             self.assertEqual(checkpoint["status"], "PENDING")
             self.assertEqual(checkpoint["target_portfolio_id"], "US:watchlist")
+            self.assertFalse(checkpoint["submit_orders"])
+
+    def test_prepare_auto_order_recovery_creates_checkpoint_for_stale_execution_refresh(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = Path(tmp) / "supervisor.yaml"
+            summary_dir = Path(tmp) / "reports_supervisor"
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        f'summary_out_dir: "{summary_dir}"',
+                        "markets: []",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(cfg_path))
+            stale_context = {
+                "plan": {
+                    "status": "stale_execution_refresh_required",
+                    "target_market": "HK",
+                    "target_portfolio_id": "HK:resolved_hk_top100_tech_growth",
+                    "target_symbols": "3988.HK,2388.HK",
+                    "target_submit_quality_status": "NO_ORDERS",
+                    "gateway_refresh_portfolio_limit": 1,
+                    "estimated_gateway_refresh_count": 1,
+                    "paper_only": True,
+                    "does_not_submit_orders": True,
+                    "does_not_relax_submit_gates": True,
+                },
+                "eligibility": {
+                    "active": True,
+                    "eligible": True,
+                    "reason": "eligible_stale_execution_no_submit_refresh",
+                    "status": "stale_execution_refresh_required",
+                    "target_market": "HK",
+                    "target_portfolio_id": "HK:resolved_hk_top100_tech_growth",
+                },
+            }
+            now = datetime(2026, 6, 14, 10, 0, tzinfo=supervisor.tz)
+
+            prepared = supervisor._prepare_auto_order_recovery_context(now, stale_context)
+
+            self.assertTrue(prepared["eligibility"]["eligible"])
+            self.assertTrue(prepared["eligibility"]["force_target_refresh"])
+            checkpoint = json.loads(
+                (summary_dir / "auto_order_recovery_checkpoint.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(checkpoint["status"], "PENDING")
+            self.assertEqual(checkpoint["target_market"], "HK")
+            self.assertEqual(checkpoint["target_portfolio_id"], "HK:resolved_hk_top100_tech_growth")
             self.assertFalse(checkpoint["submit_orders"])
 
     def test_targeted_recovery_force_run_bypasses_schedule_and_previous_dry_run(self):

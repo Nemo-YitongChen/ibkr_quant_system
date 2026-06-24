@@ -1940,10 +1940,12 @@ def build_auto_order_recovery_plan(
     rows: Iterable[Mapping[str, Any]],
     *,
     submit_plan: Mapping[str, Any] | None = None,
+    stale_execution_refresh_plan: Mapping[str, Any] | None = None,
 ) -> Dict[str, Any]:
     """Build the minimum-request recovery path for the highest-quality paper frontier."""
     clean_rows = [dict(row) for row in list(rows or []) if isinstance(row, Mapping)]
     plan = dict(submit_plan or {})
+    stale_plan = dict(stale_execution_refresh_plan or {})
     frontier_candidates = [
         dict(row)
         for row in list(plan.get("frontier_candidates") or [])
@@ -1987,6 +1989,25 @@ def build_auto_order_recovery_plan(
     target_portfolio_id = str(top_frontier.get("portfolio_id") or "").strip()
     target_market = _market(top_frontier.get("market"))
     actionable_target = bool(target_portfolio_id and target_quality == "PASS")
+    stale_primary_market = _market(stale_plan.get("primary_market"))
+    stale_primary_portfolio_id = str(stale_plan.get("primary_portfolio_id") or "").strip()
+    stale_primary = next(
+        (
+            dict(row)
+            for row in list(stale_plan.get("rows") or [])
+            if isinstance(row, Mapping)
+            and _market(row.get("market")) == stale_primary_market
+            and str(row.get("portfolio_id") or "").strip() == stale_primary_portfolio_id
+        ),
+        {},
+    )
+    stale_target_available = bool(
+        not actionable_target
+        and str(stale_plan.get("status") or "").strip().upper() == "READY_FOR_TARGETED_NO_SUBMIT_REFRESH"
+        and stale_primary_market
+        and stale_primary_portfolio_id
+        and not bool(stale_primary.get("gateway_budget_blocked", False))
+    )
     target_hard_blocks = {
         str(reason or "").strip()
         for reason in list(top_frontier.get("hard_blocks") or [])
@@ -2111,6 +2132,31 @@ def build_auto_order_recovery_plan(
             market=target_market,
             condition="after the targeted no-submit execution refresh",
         )
+    elif stale_target_available:
+        add_step(
+            "refresh_stale_execution_report",
+            phase="targeted_stale_execution_refresh",
+            requires_gateway=True,
+            portfolio_id=stale_primary_portfolio_id,
+            market=stale_primary_market,
+            condition="single growth-aware stale artifact target; no submit",
+        )
+        add_step(
+            "refresh_stale_execution_no_submit",
+            phase="targeted_stale_execution_refresh",
+            requires_gateway=True,
+            portfolio_id=stale_primary_portfolio_id,
+            market=stale_primary_market,
+            condition="dry-run execution only; submit_orders=false",
+        )
+        add_step(
+            "rebuild_market_readiness_auto_order_readiness_and_dashboard",
+            phase="local_evidence",
+            requires_gateway=False,
+            portfolio_id=stale_primary_portfolio_id,
+            market=stale_primary_market,
+            condition="after stale report and no-submit execution refresh",
+        )
     elif not steps:
         add_step(
             "review_submit_frontier_and_candidate_evidence",
@@ -2131,27 +2177,57 @@ def build_auto_order_recovery_plan(
     elif actionable_target:
         status = "evidence_maintenance_required"
         primary_action = "refresh_frontier_evidence_no_submit"
+    elif stale_target_available:
+        status = "stale_execution_refresh_required"
+        primary_action = "refresh_stale_execution_target_no_submit"
     else:
         status = "manual_review_required"
         primary_action = "review_submit_frontier_and_candidate_evidence"
 
+    active_target_market = target_market if actionable_target else stale_primary_market if stale_target_available else ""
+    active_target_portfolio_id = (
+        target_portfolio_id
+        if actionable_target
+        else stale_primary_portfolio_id if stale_target_available else ""
+    )
+    active_target_symbols = (
+        str(top_frontier.get("planned_order_symbols") or "")
+        if actionable_target
+        else str(stale_primary.get("planned_order_symbols") or "") if stale_target_available else ""
+    )
+    active_target_quality = (
+        target_quality
+        if actionable_target
+        else str(stale_primary.get("submit_quality_status") or "").strip().upper()
+        if stale_target_available
+        else target_quality
+    )
+
     return {
         "status": status,
         "primary_action": primary_action,
-        "target_market": target_market if actionable_target else "",
-        "target_portfolio_id": target_portfolio_id if actionable_target else "",
-        "target_symbols": str(top_frontier.get("planned_order_symbols") or "") if actionable_target else "",
-        "target_submit_quality_status": target_quality,
+        "target_market": active_target_market,
+        "target_portfolio_id": active_target_portfolio_id,
+        "target_symbols": active_target_symbols,
+        "target_submit_quality_status": active_target_quality,
         "target_net_edge_bps": _float(top_frontier.get("submit_quality_min_net_edge_bps"), 0.0),
         "target_edge_margin_bps": _float(top_frontier.get("submit_quality_min_edge_margin_bps"), 0.0),
+        "target_ranking_bucket": str(stale_primary.get("ranking_bucket") or "") if stale_target_available else "",
+        "target_gateway_budget_blocked": bool(stale_primary.get("gateway_budget_blocked", False)) if stale_target_available else False,
         "gateway_budget_projected_recovery_at": (
             sorted_recovery_times[-1]
             if "gateway_budget_degraded" in operational_blocks and sorted_recovery_times
             else ""
         ),
-        "gateway_refresh_portfolio_limit": 1 if actionable_target else 0,
-        "estimated_gateway_refresh_count": 1 if actionable_target else 0,
-        "request_policy": "single_highest_quality_frontier_only",
+        "gateway_refresh_portfolio_limit": 1 if actionable_target or stale_target_available else 0,
+        "estimated_gateway_refresh_count": 1 if actionable_target or stale_target_available else 0,
+        "request_policy": (
+            "single_highest_quality_frontier_only"
+            if actionable_target
+            else str(stale_plan.get("request_policy") or "one_stale_execution_portfolio_after_gateway_budget_ok")
+            if stale_target_available
+            else "single_highest_quality_frontier_only"
+        ),
         "step_count": len(steps),
         "steps": steps,
         "paper_only": True,
@@ -2187,6 +2263,7 @@ def evaluate_auto_order_recovery_eligibility(
         "wait_gateway_budget",
         "local_preflight_refresh_required",
         "targeted_frontier_refresh_required",
+        "stale_execution_refresh_required",
     }
     maintenance_status = status == "evidence_maintenance_required"
     maintenance_eligible = bool(
@@ -2211,7 +2288,7 @@ def evaluate_auto_order_recovery_eligibility(
         reason = "recovery_target_missing" if status in active_statuses else "recovery_plan_not_active"
     elif not contract_safe:
         reason = "unsafe_recovery_contract"
-    elif target_quality != "PASS":
+    elif status != "stale_execution_refresh_required" and target_quality != "PASS":
         reason = "target_quality_not_pass"
     elif status == "gateway_restore_required":
         reason = "ibkr_gateway_unavailable"
@@ -2226,6 +2303,9 @@ def evaluate_auto_order_recovery_eligibility(
     elif status == "targeted_frontier_refresh_required":
         eligible = True
         reason = "eligible_targeted_no_submit_refresh"
+    elif status == "stale_execution_refresh_required":
+        eligible = True
+        reason = "eligible_stale_execution_no_submit_refresh"
 
     return {
         "active": bool(active),
@@ -2508,11 +2588,12 @@ def build_auto_order_readiness_summary(
         submit_plan=submit_plan,
         watchlist_expansion_summary=watchlist_expansion_summary,
     )
+    stale_execution_refresh_plan = build_stale_execution_refresh_plan(clean_rows)
     recovery_plan = build_auto_order_recovery_plan(
         clean_rows,
         submit_plan=submit_plan,
+        stale_execution_refresh_plan=stale_execution_refresh_plan,
     )
-    stale_execution_refresh_plan = build_stale_execution_refresh_plan(clean_rows)
     return {
         "status": status,
         "summary_text": (

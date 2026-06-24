@@ -29,6 +29,7 @@ from ..common.adaptive_strategy import (
 from ..common.auto_order_readiness import (
     build_auto_order_readiness_summary,
     build_auto_order_recovery_plan,
+    build_stale_execution_refresh_plan,
     build_auto_order_submit_plan,
     evaluate_auto_order_readiness,
     evaluate_auto_order_recovery_eligibility,
@@ -3728,9 +3729,15 @@ class Supervisor:
             policy=common["policy"],
             weekly_summary=common["weekly_summary"],
         )
-        recovery_plan = build_auto_order_recovery_plan(rows, submit_plan=submit_plan)
+        stale_execution_refresh_plan = build_stale_execution_refresh_plan(rows)
+        recovery_plan = build_auto_order_recovery_plan(
+            rows,
+            submit_plan=submit_plan,
+            stale_execution_refresh_plan=stale_execution_refresh_plan,
+        )
         return {
             "plan": recovery_plan,
+            "stale_execution_refresh_plan": stale_execution_refresh_plan,
             "eligibility": evaluate_auto_order_recovery_eligibility(recovery_plan, now=now),
         }
 
@@ -3854,6 +3861,28 @@ class Supervisor:
             return checkpoint_context
 
         eligibility = dict((recovery_context or {}).get("eligibility") or {})
+        if str(eligibility.get("reason") or "") == "eligible_stale_execution_no_submit_refresh":
+            source_plan = dict((recovery_context or {}).get("plan") or {})
+            checkpoint = build_pending_recovery_checkpoint(
+                source_plan,
+                now=now,
+                retry_interval_min=max(
+                    1,
+                    int(self.cfg.get("auto_order_recovery_target_retry_interval_min", 60) or 60),
+                ),
+            )
+            write_recovery_checkpoint(checkpoint_path, checkpoint)
+            log.info(
+                "Auto-order stale execution refresh checkpoint started: market=%s portfolio=%s",
+                str(checkpoint.get("target_market") or ""),
+                str(checkpoint.get("target_portfolio_id") or ""),
+            )
+            return recovery_checkpoint_context(
+                checkpoint,
+                now=now,
+                report_refreshed=False,
+                execution_refreshed=False,
+            )
         if str(eligibility.get("reason") or "") != "gateway_budget_evidence_refresh_required":
             return recovery_context
         if not self._refresh_auto_order_gateway_budget_evidence(now):
@@ -4015,7 +4044,7 @@ class Supervisor:
             "force_no_submit": action == "execution",
             "force_run": bool(eligibility.get("force_target_refresh", False)) or str(
                 eligibility.get("status") or ""
-            ) == "targeted_frontier_refresh_required",
+            ) in {"targeted_frontier_refresh_required", "stale_execution_refresh_required"},
             "target_market": target_market,
             "target_portfolio_id": target_portfolio_id,
         }

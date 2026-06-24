@@ -1741,6 +1741,56 @@ def test_auto_order_recovery_plan_does_not_refresh_when_submit_plan_is_ready() -
     assert plan["steps"][0]["submit_orders"] is False
 
 
+def test_auto_order_recovery_plan_targets_stale_execution_refresh_when_no_quality_frontier() -> None:
+    stale_plan = {
+        "status": "READY_FOR_TARGETED_NO_SUBMIT_REFRESH",
+        "primary_market": "HK",
+        "primary_portfolio_id": "HK:bluechip",
+        "request_policy": "one_stale_execution_portfolio_after_gateway_budget_ok",
+        "paper_only": True,
+        "submit_orders": False,
+        "does_not_relax_submit_gates": True,
+        "rows": [
+            {
+                "market": "HK",
+                "portfolio_id": "HK:bluechip",
+                "ranking_bucket": "growth_refresh_candidate",
+                "gateway_budget_blocked": False,
+                "planned_order_symbols": "3988.HK,2388.HK",
+                "submit_quality_status": "NO_ORDERS",
+            }
+        ],
+    }
+
+    plan = build_auto_order_recovery_plan(
+        [],
+        submit_plan={
+            "ready": False,
+            "status": "BLOCKED",
+            "frontier_candidates": [],
+        },
+        stale_execution_refresh_plan=stale_plan,
+    )
+
+    assert plan["status"] == "stale_execution_refresh_required"
+    assert plan["primary_action"] == "refresh_stale_execution_target_no_submit"
+    assert plan["target_market"] == "HK"
+    assert plan["target_portfolio_id"] == "HK:bluechip"
+    assert plan["target_submit_quality_status"] == "NO_ORDERS"
+    assert plan["target_ranking_bucket"] == "growth_refresh_candidate"
+    assert plan["gateway_refresh_portfolio_limit"] == 1
+    assert plan["estimated_gateway_refresh_count"] == 1
+    assert plan["request_policy"] == "one_stale_execution_portfolio_after_gateway_budget_ok"
+    assert plan["does_not_submit_orders"] is True
+    assert plan["does_not_relax_submit_gates"] is True
+    assert [step["action"] for step in plan["steps"]] == [
+        "refresh_stale_execution_report",
+        "refresh_stale_execution_no_submit",
+        "rebuild_market_readiness_auto_order_readiness_and_dashboard",
+    ]
+    assert all(step["submit_orders"] is False for step in plan["steps"])
+
+
 def test_auto_order_recovery_eligibility_waits_for_fresh_budget_evidence() -> None:
     plan = {
         "status": "wait_gateway_budget",
@@ -1793,6 +1843,34 @@ def test_auto_order_recovery_eligibility_allows_only_targeted_no_submit_refresh(
     assert result["active"] is True
     assert result["eligible"] is True
     assert result["reason"] == "eligible_targeted_no_submit_refresh"
+    assert result["allowed_actions"] == [
+        "generate_investment_report",
+        "run_investment_execution_no_submit",
+    ]
+    assert result["submit_orders"] is False
+
+
+def test_auto_order_recovery_eligibility_allows_stale_no_submit_refresh_without_pass_quality() -> None:
+    result = evaluate_auto_order_recovery_eligibility(
+        {
+            "status": "stale_execution_refresh_required",
+            "target_market": "HK",
+            "target_portfolio_id": "HK:bluechip",
+            "target_symbols": "3988.HK",
+            "target_submit_quality_status": "NO_ORDERS",
+            "gateway_refresh_portfolio_limit": 1,
+            "estimated_gateway_refresh_count": 1,
+            "request_policy": "one_stale_execution_portfolio_after_gateway_budget_ok",
+            "paper_only": True,
+            "does_not_submit_orders": True,
+            "does_not_relax_submit_gates": True,
+        },
+        now=datetime(2026, 6, 13, 1, 0, tzinfo=timezone.utc),
+    )
+
+    assert result["active"] is True
+    assert result["eligible"] is True
+    assert result["reason"] == "eligible_stale_execution_no_submit_refresh"
     assert result["allowed_actions"] == [
         "generate_investment_report",
         "run_investment_execution_no_submit",

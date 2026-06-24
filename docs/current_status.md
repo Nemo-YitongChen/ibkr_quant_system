@@ -697,3 +697,13 @@
 - 刷新只读 `auto_order_readiness` 后，当前 `stale_execution_refresh_plan.status=READY_FOR_TARGETED_NO_SUBMIT_REFRESH`，primary target 从 US 切到 `HK:resolved_hk_top100_tech_growth`，score `144`，`submit_orders=false`。
 - US `US:watchlist` 仍有更高 raw score `208`，但 `gateway_budget_blocked=true` 且当前 plan 是 sell-only，因此排在 non-blocked HK / ASX / XETRA 后面；这避免把有限请求预算继续浪费在当前不可刷新目标上。
 - 交易边界不变：该计划只允许单目标 report + execution no-submit evidence refresh，不提交订单，不放宽 risk、edge、cost、liquidity、market-rule、Gateway budget 或 submit-quality gate。
+
+## 51. 2026-06-24 Stale refresh plan wired into Supervisor recovery
+
+- 之前 `stale_execution_refresh_plan` 已经能选出 HK primary target，但 Supervisor 只消费 `recovery_plan`，导致排序结果可能停留在 dashboard/artifact，不能自动进入单目标 no-submit refresh。
+- `build_auto_order_recovery_plan` 现在接收 `stale_execution_refresh_plan`；当没有 quality-passing frontier 且 stale plan 为 `READY_FOR_TARGETED_NO_SUBMIT_REFRESH` 时，会生成 `status=stale_execution_refresh_required`。
+- `evaluate_auto_order_recovery_eligibility` 现在允许 `stale_execution_refresh_required` 在 `NO_ORDERS` / `NO_BUY_ORDERS` 状态下运行，因为它只用于生成 fresh report + execution dry-run evidence，不用于提交订单。
+- Supervisor `_auto_order_recovery_context` 现在从同一批 readiness rows 构建 stale refresh plan 并传给 recovery plan；`_prepare_auto_order_recovery_context` 会把 eligible stale refresh 转成现有 checkpoint，避免每个 poll 周期重复跑同一目标。
+- `_auto_order_recovery_action_decision` 已识别 `stale_execution_refresh_required`，只对目标组合强制 report + execution no-submit；非目标组合被 recovery scope 阻断，opportunity 仍被 suppressed。
+- 刷新只读 `auto_order_readiness` 后，当前 `recovery_plan.status=stale_execution_refresh_required`，target=`HK/HK:resolved_hk_top100_tech_growth`，`recovery_eligibility.eligible=true`，allowed actions=`generate_investment_report, run_investment_execution_no_submit`。
+- 安全边界不变：`submit_orders=false`、`gateway_refresh_portfolio_limit=1`、`estimated_gateway_refresh_count=1`、`does_not_relax_submit_gates=true`；不会绕过 risk、edge、cost、liquidity、market-rule、Gateway budget 或 submit-quality gate。
