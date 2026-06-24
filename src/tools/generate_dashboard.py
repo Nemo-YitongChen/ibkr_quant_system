@@ -7,6 +7,7 @@ import json
 import os
 import re
 import sqlite3
+import subprocess
 from collections import deque
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -5930,6 +5931,23 @@ def _supervisor_pid_alive(pid_value: Any) -> bool | None:
     return True
 
 
+def _current_git_revision() -> str:
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(BASE_DIR),
+            text=True,
+            capture_output=True,
+            timeout=2,
+            check=False,
+        )
+    except Exception:
+        return ""
+    if completed.returncode != 0:
+        return ""
+    return str(completed.stdout or "").strip()
+
+
 def _with_ops_alert_classification(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     for raw in list(rows or []):
@@ -6170,6 +6188,18 @@ def _build_ops_overview(
         if supervisor_shutdown_pid_alive is False
         else "unknown"
     )
+    supervisor_code_revision = str(shutdown_status.get("code_revision") or "").strip()
+    dashboard_code_revision = _current_git_revision()
+    if supervisor_shutdown_state != "running":
+        supervisor_code_revision_status = ""
+    elif supervisor_code_revision and dashboard_code_revision:
+        supervisor_code_revision_status = (
+            "match" if supervisor_code_revision == dashboard_code_revision else "mismatch"
+        )
+    elif not supervisor_code_revision:
+        supervisor_code_revision_status = "missing"
+    else:
+        supervisor_code_revision_status = "unknown"
     if supervisor_shutdown_state == "crashed":
         supervisor_shutdown_health_status = "degraded"
         supervisor_shutdown_status_label = "Supervisor 异常退出"
@@ -6181,6 +6211,16 @@ def _build_ops_overview(
             if supervisor_shutdown_pid > 0
             else "running_status_pid_not_alive"
         )
+    elif supervisor_shutdown_state == "running" and supervisor_code_revision_status == "mismatch":
+        supervisor_shutdown_health_status = "degraded"
+        supervisor_shutdown_status_label = "Supervisor 代码版本不一致"
+        supervisor_shutdown_reason = (
+            f"running_code_revision_mismatch:{supervisor_code_revision[:12]}!={dashboard_code_revision[:12]}"
+        )
+    elif supervisor_shutdown_state == "running" and supervisor_code_revision_status == "missing":
+        supervisor_shutdown_health_status = "warning"
+        supervisor_shutdown_status_label = "Supervisor 代码版本未记录"
+        supervisor_shutdown_reason = "running_code_revision_missing"
     elif supervisor_shutdown_state in {"stopping", "stopped"}:
         supervisor_shutdown_health_status = "warning"
         supervisor_shutdown_status_label = "Supervisor 已停止"
@@ -6367,6 +6407,7 @@ def _build_ops_overview(
         f"open_market_analysis={open_market_status or 'missing'} | "
         f"offline_recovery={auto_order_offline_recovery_required_count} | "
         f"supervisor_shutdown={supervisor_shutdown_state or 'missing'} | "
+        f"supervisor_code={supervisor_code_revision_status or 'n/a'} | "
         f"mode_mismatch={execution_mismatch_count} | "
         f"gateway_runtime={gateway_runtime_summary.get('status', 'unknown')} | "
         f"governance={governance_status} | "
@@ -6454,6 +6495,9 @@ def _build_ops_overview(
         "supervisor_shutdown_pid": supervisor_shutdown_pid,
         "supervisor_shutdown_pid_alive": supervisor_shutdown_pid_alive,
         "supervisor_shutdown_liveness_status": supervisor_shutdown_liveness_status,
+        "supervisor_code_revision": supervisor_code_revision,
+        "dashboard_code_revision": dashboard_code_revision,
+        "supervisor_code_revision_status": supervisor_code_revision_status,
         "supervisor_shutdown_event_count": int(len(shutdown_events)),
         "control_service_status": str(service_state.get("status", "disabled") or "disabled"),
         "gateway_runtime_summary": gateway_runtime_summary,

@@ -397,6 +397,22 @@ class Supervisor:
     def _shutdown_events_path(self) -> Path:
         return self._summary_output_dir() / "supervisor_shutdown_events.jsonl"
 
+    def _code_revision(self) -> str:
+        try:
+            completed = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=str(BASE_DIR),
+                text=True,
+                capture_output=True,
+                timeout=2,
+                check=False,
+            )
+        except Exception:
+            return ""
+        if completed.returncode != 0:
+            return ""
+        return str(completed.stdout or "").strip()
+
     def _write_shutdown_status(self, *, status: str, reason: str) -> None:
         try:
             path = self._shutdown_status_path()
@@ -407,6 +423,7 @@ class Supervisor:
                 "reason": str(reason or ""),
                 "pid": os.getpid(),
                 "config_path": str(_resolve_path(self.config_path)),
+                "code_revision": self._code_revision(),
                 "last_signal_name": str(self._last_signal_name or ""),
                 "written_at": datetime.now(timezone.utc).isoformat(),
             }

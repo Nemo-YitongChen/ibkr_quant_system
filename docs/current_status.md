@@ -645,3 +645,24 @@
 - 当前 primary trial 是 `HK:resolved_hk_top100_bluechip / HK_POST_COST_THRESHOLD_PAPER_TRIAL`，primary blocker 是 `fresh_buy_plan_required`。
 - 8 条 trial blocker 分布：`fresh_buy_plan_required=7`、`buy_plan_missing=8`、`submit_quality_not_pass=8`、`strategy_suggestion_stale=4`、`gateway_budget_degraded=2`。
 - 交易含义：HK outcome evidence 支持继续准备 paper trial，但当前没有任何 trial 满足自动下单前置条件；下一步必须先刷新 stale execution artifact、产生 fresh BUY plan、通过 submit-quality 和 Gateway budget，再考虑一次小额 paper-only limit trial。
+
+## 46. 2026-06-24 Supervisor code revision health
+
+- 发现 6 月 24 日 runtime artifacts 已更新，但 active Supervisor 仍可能是旧进程：`auto_order_readiness.json` 缺少近期新增的 stale execution refresh plan 字段，说明长运行进程可能没有加载最新代码。
+- Supervisor status payload 现在写入 `code_revision`；dashboard 会读取当前 repo `HEAD` 并比较运行中 Supervisor revision。
+- Dashboard / Ops Health 新增 `supervisor_code_revision`、`dashboard_code_revision`、`supervisor_code_revision_status`。
+- `match` 表示运行中 Supervisor 与 dashboard 代码一致；`missing` 表示旧进程没有上报 revision，会产生 warning；`mismatch` 表示运行中进程与当前代码不同，会产生 degraded alert。
+- 当前实际刷新结果：`supervisor_shutdown_status=running`、`pid=77976`、`supervisor_code_revision_status=missing`、`supervisor_shutdown_health_status=warning`、`reason=running_code_revision_missing`。
+- 交易含义：在重启 Supervisor 让其加载最新代码前，不应把缺少新 schema 字段的 auto-order artifact 当作最终自动下单证据；本步骤不新增 IBKR 请求、不提交订单、不改 YAML、不放宽任何 gate。
+
+## 47. 2026-06-24 HK outcome-qualified trial symbols and shutdown diagnosis
+
+- 已用当前 `market_readiness.json` 与 `reports_investment_weekly/weekly_unified_evidence.csv` 刷新 HK-only `opportunity_outcome_validation`，输出到 `runtime_data/paper_investment_only_duq152001/reports_supervisor/hk_opportunity_outcome_validation/`。
+- HK 正 post-cost candidates 仍为 `OUTCOME_SUPPORTS_GROUP`：bluechip 5d `+122.89bps`、20d `+253.84bps`；tech growth 5d `+125.19bps`、20d `+264.69bps`。
+- 正 post-cost trial 现在只使用单符号 5d/20d 都为正且样本成熟的 `outcome_qualified_symbols=3988.HK,0005.HK,0939.HK,2388.HK`；剔除 `2359.HK,0992.HK`，其中 `0992.HK` 当前缺成熟 outcome，`2359.HK` 当前 20d outcome 弱。
+- HK close `WAIT_PULLBACK` 仍为组级 `OUTCOME_SUPPORTS_GROUP`：bluechip 5d `+125.96bps`、20d `+212.07bps`；tech growth 5d `+126.74bps`、20d `+222.09bps`。
+- close `WAIT_PULLBACK` near-entry trial 现在只使用 `outcome_qualified_symbols=3988.HK,2388.HK,1398.HK,0939.HK,0005.HK,3328.HK`；剔除 `1288.HK,2359.HK`，因为这两只的单符号 5d/20d outcome 为负。
+- `review_opportunity_outcomes` 已把 trial plan 的 `candidate_symbols` 改为 outcome-qualified 子集，并保留 `source_candidate_symbols`、`outcome_qualified_symbols`、`outcome_excluded_symbols` 供审计；不会自动修改配置，不提交订单，不放宽 risk/edge/cost/liquidity/market-rule/Gateway budget/submit-quality gate。
+- 主程序“自动 shutdown”的当前证据更像三类情况：第二个 Supervisor 实例因 `supervisor.lock` 被 PID `77976` 持有而退出；使用 `--once` 时设计上只跑一轮就退出；收到 `SIGINT/SIGTERM` 或未捕获异常时会写入 shutdown status 并退出。
+- 当前实际运行的 Supervisor 是 `python -m src.app.supervisor`，PID `77976`，父进程为 `1`，说明它已经从原终端脱离后继续运行；最近 shutdown status 是 `running / ignored_signal:SIGHUP`，不是崩溃。
+- 当前 active Supervisor 缺少 `code_revision` 字段，说明它是旧代码启动的长运行进程；建议在合适窗口优雅重启一次 Supervisor，让事件历史、code revision health、outcome-qualified trial schema 全部由主进程持续生成。

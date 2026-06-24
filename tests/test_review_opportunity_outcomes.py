@@ -111,8 +111,139 @@ def test_opportunity_outcome_validation_payload_filters_hk_groups(tmp_path: Path
     assert trial_plan[0]["trial_type"] == "WAIT_PULLBACK_NEAR_ENTRY_LIMIT_TRIAL"
     assert trial_plan[0]["primary_field"] == "opportunity_entry.near_entry_gap_pct"
     assert trial_plan[0]["suggested_value"] == 1.5
+    assert trial_plan[0]["candidate_symbols"] == "3988.HK"
+    assert trial_plan[0]["source_candidate_symbols"] == "3988.HK"
+    assert trial_plan[0]["outcome_qualified_symbols"] == "3988.HK"
     assert trial_plan[0]["auto_apply"] is False
     assert payload["calibration_trial_plan_summary"]["trial_count"] == 1
+
+
+def test_wait_pullback_trial_filters_symbol_level_negative_outcomes(tmp_path: Path) -> None:
+    readiness_path = tmp_path / "market_readiness.json"
+    weekly_path = tmp_path / "weekly_unified_evidence.csv"
+    readiness_path.write_text(
+        json.dumps(
+            {
+                "opportunity_calibration": {
+                    "post_cost_rows": [],
+                    "wait_pullback_rows": [
+                        {
+                            "market": "HK",
+                            "portfolio_id": "HK:resolved_hk_top100_bluechip",
+                            "close_wait_pullback_count": 2,
+                            "close_wait_pullback_rows": [
+                                {"symbol": "3988.HK"},
+                                {"symbol": "1288.HK"},
+                            ],
+                        }
+                    ],
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    _write_csv(
+        weekly_path,
+        (
+            [
+                {
+                    "market": "HK",
+                    "portfolio_id": "HK:resolved_hk_top100_bluechip",
+                    "symbol": "3988.HK",
+                    "outcome_5d_bps": "120",
+                    "outcome_20d_bps": "220",
+                },
+                {
+                    "market": "HK",
+                    "portfolio_id": "HK:resolved_hk_top100_bluechip",
+                    "symbol": "1288.HK",
+                    "outcome_5d_bps": "-30",
+                    "outcome_20d_bps": "-80",
+                },
+            ]
+            * 5
+        ),
+    )
+
+    payload = build_opportunity_outcome_validation_payload(
+        market_readiness_path=readiness_path,
+        weekly_unified_evidence_path=weekly_path,
+        market="HK",
+    )
+
+    suggestion = payload["calibration_suggestions"][0]
+    assert suggestion["suggestion_type"] == "WAIT_PULLBACK_ANCHOR_REVIEW"
+    assert suggestion["candidate_symbols"] == "3988.HK,1288.HK"
+    assert suggestion["outcome_qualified_symbols"] == "3988.HK"
+    assert suggestion["outcome_excluded_symbols"] == "1288.HK"
+    trial = payload["calibration_trial_plan"][0]
+    assert trial["trial_type"] == "WAIT_PULLBACK_NEAR_ENTRY_LIMIT_TRIAL"
+    assert trial["candidate_symbols"] == "3988.HK"
+    assert trial["source_candidate_symbols"] == "3988.HK,1288.HK"
+    assert trial["outcome_qualified_symbols"] == "3988.HK"
+    assert trial["outcome_excluded_symbols"] == "1288.HK"
+
+
+def test_wait_pullback_trial_blocks_when_no_symbol_level_outcome_support(tmp_path: Path) -> None:
+    readiness_path = tmp_path / "market_readiness.json"
+    weekly_path = tmp_path / "weekly_unified_evidence.csv"
+    readiness_path.write_text(
+        json.dumps(
+            {
+                "opportunity_calibration": {
+                    "post_cost_rows": [],
+                    "wait_pullback_rows": [
+                        {
+                            "market": "HK",
+                            "portfolio_id": "HK:resolved_hk_top100_bluechip",
+                            "close_wait_pullback_count": 2,
+                            "close_wait_pullback_rows": [
+                                {"symbol": "1288.HK"},
+                                {"symbol": "2359.HK"},
+                            ],
+                        }
+                    ],
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    _write_csv(
+        weekly_path,
+        (
+            [
+                {
+                    "market": "HK",
+                    "portfolio_id": "HK:resolved_hk_top100_bluechip",
+                    "symbol": "1288.HK",
+                    "outcome_5d_bps": "-30",
+                    "outcome_20d_bps": "-80",
+                },
+                {
+                    "market": "HK",
+                    "portfolio_id": "HK:resolved_hk_top100_bluechip",
+                    "symbol": "2359.HK",
+                    "outcome_5d_bps": "-60",
+                    "outcome_20d_bps": "-120",
+                },
+            ]
+            * 5
+        ),
+    )
+
+    payload = build_opportunity_outcome_validation_payload(
+        market_readiness_path=readiness_path,
+        weekly_unified_evidence_path=weekly_path,
+        market="HK",
+    )
+
+    suggestion = payload["calibration_suggestions"][0]
+    assert suggestion["suggestion_type"] == "COLLECT_MORE_OUTCOMES"
+    assert suggestion["outcome_qualified_symbols"] == ""
+    assert suggestion["outcome_excluded_symbols"] == "1288.HK,2359.HK"
+    assert payload["calibration_trial_plan"] == []
 
 
 def test_opportunity_outcome_validation_suggests_hk_post_cost_review(tmp_path: Path) -> None:

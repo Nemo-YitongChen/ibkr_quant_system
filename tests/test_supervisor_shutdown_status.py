@@ -20,6 +20,7 @@ def test_supervisor_writes_shutdown_status(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     supervisor = Supervisor(str(cfg_path))
+    supervisor._code_revision = lambda: "abc123"
 
     supervisor._last_signal_name = "SIGTERM"
     supervisor._write_shutdown_status(status="stopping", reason="signal:SIGTERM")
@@ -27,6 +28,7 @@ def test_supervisor_writes_shutdown_status(tmp_path: Path) -> None:
     payload = json.loads((summary_dir / "supervisor_shutdown_status.json").read_text(encoding="utf-8"))
     assert payload["status"] == "stopping"
     assert payload["reason"] == "signal:SIGTERM"
+    assert payload["code_revision"] == "abc123"
     assert payload["last_signal_name"] == "SIGTERM"
 
     events = [
@@ -37,6 +39,7 @@ def test_supervisor_writes_shutdown_status(tmp_path: Path) -> None:
     assert len(events) == 1
     assert events[0]["status"] == "stopping"
     assert events[0]["reason"] == "signal:SIGTERM"
+    assert events[0]["code_revision"] == "abc123"
     assert events[0]["last_signal_name"] == "SIGTERM"
 
 

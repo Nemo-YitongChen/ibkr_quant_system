@@ -83,6 +83,34 @@ def _int(value: Any, default: int = 0) -> int:
         return int(default)
 
 
+def _split_outcome_qualified_symbols(
+    validation_row: Mapping[str, Any],
+    *,
+    min_5d_samples: int = 5,
+    min_20d_samples: int = 5,
+) -> Dict[str, Any]:
+    qualified: List[str] = []
+    excluded: List[str] = []
+    for row in _rows(validation_row.get("symbol_rows")):
+        symbol = str(row.get("symbol") or "").strip()
+        if not symbol:
+            continue
+        count_5d = _int(row.get("outcome_5d_sample_count"), 0)
+        count_20d = _int(row.get("outcome_20d_sample_count"), 0)
+        avg_5d = _float(row.get("avg_outcome_5d_bps"), 0.0)
+        avg_20d = _float(row.get("avg_outcome_20d_bps"), 0.0)
+        if count_5d >= min_5d_samples and count_20d >= min_20d_samples and avg_5d >= 0.0 and avg_20d >= 0.0:
+            qualified.append(symbol)
+        else:
+            excluded.append(symbol)
+    return {
+        "outcome_qualified_symbol_count": int(len(qualified)),
+        "outcome_qualified_symbols": ",".join(qualified),
+        "outcome_excluded_symbol_count": int(len(excluded)),
+        "outcome_excluded_symbols": ",".join(excluded),
+    }
+
+
 def _suggestion_id(row: Mapping[str, Any], suffix: str) -> str:
     raw = ":".join(
         [
@@ -120,6 +148,7 @@ def _build_calibration_suggestion(
         "auto_apply": False,
         "read_only": True,
         "paper_only": True,
+        **_split_outcome_qualified_symbols(validation_row),
     }
 
     if group_name == "positive_post_cost_candidates":
@@ -169,7 +198,8 @@ def _build_calibration_suggestion(
 
     if group_name == "close_wait_pullback":
         close_wait_count = _int(calibration_row.get("close_wait_pullback_count"), 0)
-        if validation_status == "OUTCOME_SUPPORTS_GROUP" and close_wait_count > 0:
+        outcome_qualified_count = _int(base.get("outcome_qualified_symbol_count"), 0)
+        if validation_status == "OUTCOME_SUPPORTS_GROUP" and close_wait_count > 0 and outcome_qualified_count > 0:
             priority = "P1" if avg_20d >= 250.0 else "P2"
             return {
                 **base,
@@ -189,6 +219,25 @@ def _build_calibration_suggestion(
                 "rollback_note": (
                     "Revert near-entry trial settings if fill slippage or 5/20d outcomes deteriorate versus the close WAIT_PULLBACK group."
                 ),
+                "close_wait_pullback_count": close_wait_count,
+                "avg_entry_anchor_gap_pct": _float(calibration_row.get("avg_entry_anchor_gap_pct"), 0.0),
+                "min_entry_anchor_gap_pct": _float(calibration_row.get("min_entry_anchor_gap_pct"), 0.0),
+                "dominant_anchor_component": str(calibration_row.get("dominant_anchor_component") or ""),
+            }
+        if validation_status == "OUTCOME_SUPPORTS_GROUP" and close_wait_count > 0:
+            return {
+                **base,
+                "suggestion_id": _suggestion_id(validation_row, "wait_pullback_symbol_filter"),
+                "suggestion_type": "WAIT_PULLBACK_SYMBOL_FILTER",
+                "priority": "P3",
+                "primary_field": "opportunity_entry.near_entry_gap_pct",
+                "direction": "no_symbol_level_5d_20d_support_for_near_entry_trial",
+                "primary_action": "keep_wait_pullback_anchor_and_collect_symbol_outcomes",
+                "rationale": (
+                    "Close WAIT_PULLBACK group is positive in aggregate, but no member has both mature positive 5d and 20d outcomes."
+                ),
+                "acceptance_rule": "Do not run near-entry trial until symbol-level 5d and 20d outcomes support at least one member.",
+                "rollback_note": "No config change to roll back.",
                 "close_wait_pullback_count": close_wait_count,
                 "avg_entry_anchor_gap_pct": _float(calibration_row.get("avg_entry_anchor_gap_pct"), 0.0),
                 "min_entry_anchor_gap_pct": _float(calibration_row.get("min_entry_anchor_gap_pct"), 0.0),
@@ -291,7 +340,10 @@ def _trial_for_suggestion(suggestion: Mapping[str, Any]) -> Dict[str, Any] | Non
         "requires_limit_order": True,
         "requires_whole_share_feasible": True,
         "unchanged_gates": "risk,edge,liquidity,market_rule,gateway_budget,submit_quality",
-        "candidate_symbols": str(suggestion.get("candidate_symbols") or ""),
+        "candidate_symbols": str(suggestion.get("outcome_qualified_symbols") or suggestion.get("candidate_symbols") or ""),
+        "source_candidate_symbols": str(suggestion.get("candidate_symbols") or ""),
+        "outcome_qualified_symbols": str(suggestion.get("outcome_qualified_symbols") or ""),
+        "outcome_excluded_symbols": str(suggestion.get("outcome_excluded_symbols") or ""),
     }
     if suggestion_type == "HK_POST_COST_THRESHOLD_REVIEW":
         return {
@@ -536,6 +588,10 @@ def _write_suggestions_csv(path: Path, rows: List[Mapping[str, Any]]) -> None:
         "read_only",
         "paper_only",
         "candidate_symbols",
+        "outcome_qualified_symbol_count",
+        "outcome_qualified_symbols",
+        "outcome_excluded_symbol_count",
+        "outcome_excluded_symbols",
         "rationale",
         "acceptance_rule",
         "rollback_note",
@@ -575,6 +631,9 @@ def _write_trial_plan_csv(path: Path, rows: List[Mapping[str, Any]]) -> None:
         "paper_only",
         "unchanged_gates",
         "candidate_symbols",
+        "source_candidate_symbols",
+        "outcome_qualified_symbols",
+        "outcome_excluded_symbols",
         "trial_action",
         "acceptance_rule",
         "rollback_rule",
