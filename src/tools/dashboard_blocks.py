@@ -5,6 +5,7 @@ from typing import Any, Dict, List
 from ..common.alert_classification import summarize_error_classes
 from ..common.auto_order_readiness import (
     build_auto_order_recovery_plan,
+    build_stale_execution_refresh_plan,
     evaluate_auto_order_recovery_eligibility,
 )
 from ..common.dashboard_control_audit import summarize_evidence_action_audit_links
@@ -433,8 +434,11 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
         _dict(summary.get("frequency_plan")),
         payload,
     )
-    stale_execution_refresh_plan = _dict(summary.get("stale_execution_refresh_plan"))
     rows = _rows(auto_order.get("rows"), limit=50)
+    stale_execution_refresh_plan = _dict(summary.get("stale_execution_refresh_plan"))
+    if not stale_execution_refresh_plan and rows:
+        stale_execution_refresh_plan = build_stale_execution_refresh_plan(rows)
+        stale_execution_refresh_plan["source"] = "dashboard_legacy_readiness_fallback"
     recovery_plan = _dict(summary.get("recovery_plan")) or build_auto_order_recovery_plan(
         rows,
         submit_plan=submit_plan,

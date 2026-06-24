@@ -1167,6 +1167,64 @@ def test_auto_order_readiness_block_warns_when_submit_plan_not_ready():
     assert block["metrics"]["frequency_seed_proposal_markets"] == ["US"]
 
 
+def test_auto_order_readiness_block_fallback_ranks_legacy_stale_execution_rows():
+    payload = {
+        "auto_order_readiness": {
+            "summary": {
+                "status": "blocked",
+                "blocked_count": 2,
+                "primary_block_reason": "market_readiness_not_ready",
+                "submit_plan": {
+                    "status": "BLOCKED",
+                    "ready": False,
+                    "reason": "no_single_safe_submit_candidate",
+                },
+            },
+            "rows": [
+                {
+                    "market": "HK",
+                    "portfolio_id": "HK:bluechip",
+                    "status": "BLOCKED",
+                    "market_readiness_status": "NEEDS_REFRESH",
+                    "market_readiness_reason": "STALE_EXECUTION_ARTIFACT",
+                    "market_readiness_artifact_health_status": "STALE",
+                    "market_readiness_artifact_age_hours": 48,
+                    "offline_recovery_max_gap_hours": 24,
+                    "post_cost_positive_edge_count": 6,
+                    "wait_pullback_close_count": 8,
+                    "market_readiness_order_count": 1,
+                    "market_readiness_planned_buy_order_value": 0,
+                    "hard_blocks": ["market_readiness_not_ready"],
+                },
+                {
+                    "market": "ASX",
+                    "portfolio_id": "ASX:core",
+                    "status": "BLOCKED",
+                    "market_readiness_status": "NEEDS_REFRESH",
+                    "market_readiness_reason": "STALE_EXECUTION_ARTIFACT",
+                    "market_readiness_artifact_health_status": "STALE",
+                    "market_readiness_artifact_age_hours": 36,
+                    "post_cost_positive_edge_count": 2,
+                    "wait_pullback_close_count": 1,
+                    "hard_blocks": ["market_readiness_not_ready"],
+                },
+            ],
+        }
+    }
+
+    block = _by_id(build_dashboard_v2_blocks(payload))["auto_order_readiness"]
+
+    assert block["metrics"]["stale_execution_refresh_status"] == "READY_FOR_TARGETED_NO_SUBMIT_REFRESH"
+    assert block["metrics"]["stale_execution_refresh_target_count"] == 2
+    assert block["metrics"]["stale_execution_refresh_primary_market"] == "HK"
+    assert block["metrics"]["stale_execution_refresh_primary_portfolio_id"] == "HK:bluechip"
+    assert block["metrics"]["stale_execution_refresh_submit_orders"] == 0
+    plan = block["rows"]["stale_execution_refresh_plan"]
+    assert plan["source"] == "dashboard_legacy_readiness_fallback"
+    assert plan["rows"][0]["market"] == "HK"
+    assert plan["rows"][0]["submit_orders"] is False
+
+
 def test_auto_order_readiness_block_warns_on_stale_readiness_health():
     payload = {
         "auto_order_readiness": {

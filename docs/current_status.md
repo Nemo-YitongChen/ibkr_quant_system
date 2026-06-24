@@ -666,3 +666,12 @@
 - 主程序“自动 shutdown”的当前证据更像三类情况：第二个 Supervisor 实例因 `supervisor.lock` 被 PID `77976` 持有而退出；使用 `--once` 时设计上只跑一轮就退出；收到 `SIGINT/SIGTERM` 或未捕获异常时会写入 shutdown status 并退出。
 - 当前实际运行的 Supervisor 是 `python -m src.app.supervisor`，PID `77976`，父进程为 `1`，说明它已经从原终端脱离后继续运行；最近 shutdown status 是 `running / ignored_signal:SIGHUP`，不是崩溃。
 - 当前 active Supervisor 缺少 `code_revision` 字段，说明它是旧代码启动的长运行进程；建议在合适窗口优雅重启一次 Supervisor，让事件历史、code revision health、outcome-qualified trial schema 全部由主进程持续生成。
+
+## 48. 2026-06-24 Legacy auto-order readiness fallback and current submit blocker
+
+- Dashboard Auto Order block 现在对 legacy `auto_order_readiness.json` 做只读 fallback：如果旧 artifact 缺少 `stale_execution_refresh_plan`，dashboard 会从当前 readiness rows 重新计算 no-submit stale execution refresh ranking。
+- fallback 固定继承 `paper_only=true`、`submit_orders=false`、`does_not_relax_submit_gates=true`；它只用于恢复排序可见性，不会改变 submit decision。
+- 已用最新代码手动刷新 `runtime_data/paper_investment_only_duq152001/reports_supervisor/auto_order_readiness.json`，现在 artifact 自身已包含 `summary.stale_execution_refresh_plan`，dashboard 不再依赖 fallback source。
+- 当前 auto-order primary block 是 `gateway_budget_degraded`，不是 outcome evidence；`stale_execution_refresh_plan.status=WAIT_GATEWAY_BUDGET`。
+- 当前排序的下一次 no-submit stale execution refresh top target 是 `US:watchlist`，score `214`，target_count `6`；前几位还包括 `HK:resolved_hk_top100_bluechip`、`HK:resolved_hk_top100_tech_growth`、`US:us_overnight_core`、`ASX:asx_top_quality`、`XETRA:xetra_top_quality`。
+- Dashboard 当前 `ibkr_gateway_budget_status=degraded`，最大使用率约 `784%`；这意味着现在不应提交订单，也不应触发高请求刷新，应等待 Gateway budget 恢复或继续削减高请求 broker snapshot / positions 路径。
