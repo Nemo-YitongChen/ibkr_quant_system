@@ -1558,6 +1558,54 @@ def test_stale_execution_refresh_plan_does_not_wait_for_lower_rank_gateway_block
     assert plan["rows"][1]["gateway_budget_blocked"] is True
 
 
+def test_stale_execution_refresh_plan_prefers_unblocked_growth_target_over_gateway_blocked_score() -> None:
+    plan = build_stale_execution_refresh_plan(
+        [
+            {
+                "status": BLOCKED_STATUS,
+                "market": "US",
+                "portfolio_id": "US:watchlist",
+                "market_readiness_status": "NEEDS_REFRESH",
+                "market_readiness_reason": "STALE_EXECUTION_ARTIFACT",
+                "market_readiness_artifact_health_status": "STALE",
+                "market_readiness_artifact_age_hours": 72,
+                "offline_recovery_max_gap_hours": 24,
+                "post_cost_positive_edge_count": 20,
+                "post_cost_high_cost_positive_edge_count": 10,
+                "wait_pullback_close_count": 5,
+                "market_readiness_order_count": 1,
+                "market_readiness_planned_buy_order_value": 0,
+                "market_readiness_planned_sell_order_value": 30,
+                "hard_blocks": ["gateway_budget_degraded", "market_readiness_not_ready"],
+            },
+            {
+                "status": BLOCKED_STATUS,
+                "market": "HK",
+                "portfolio_id": "HK:bluechip",
+                "market_readiness_status": "NEEDS_REFRESH",
+                "market_readiness_reason": "STALE_EXECUTION_ARTIFACT",
+                "market_readiness_artifact_health_status": "STALE",
+                "market_readiness_artifact_age_hours": 36,
+                "offline_recovery_max_gap_hours": 24,
+                "post_cost_positive_edge_count": 4,
+                "post_cost_high_cost_positive_edge_count": 2,
+                "wait_pullback_close_count": 6,
+                "market_readiness_planned_buy_order_value": 0,
+                "market_readiness_planned_sell_order_value": 0,
+                "hard_blocks": ["market_readiness_not_ready"],
+            },
+        ]
+    )
+
+    assert plan["status"] == "READY_FOR_TARGETED_NO_SUBMIT_REFRESH"
+    assert plan["primary_market"] == "HK"
+    assert plan["primary_portfolio_id"] == "HK:bluechip"
+    assert plan["rows"][0]["growth_candidate_supply"] is True
+    assert plan["rows"][0]["gateway_budget_blocked"] is False
+    assert plan["rows"][1]["gateway_budget_blocked"] is True
+    assert plan["rows"][1]["sell_only_current_plan"] is True
+
+
 def test_auto_order_frequency_plan_surfaces_seed_proposals_without_changing_submit_decision() -> None:
     submit_plan = {
         "status": "BLOCKED",

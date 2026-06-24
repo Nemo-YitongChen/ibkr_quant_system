@@ -2289,24 +2289,35 @@ def build_stale_execution_refresh_plan(rows: Iterable[Mapping[str, Any]]) -> Dic
         close_wait_pullback = _int(row.get("wait_pullback_close_count"), 0)
         order_count = _int(row.get("market_readiness_order_count"), 0)
         buy_value = _float(row.get("market_readiness_planned_buy_order_value"), 0.0)
+        sell_value = _float(row.get("market_readiness_planned_sell_order_value"), 0.0)
+        has_current_buy_plan = buy_value > 0.0
+        sell_only_current_plan = sell_value > 0.0 and not has_current_buy_plan
+        growth_candidate_supply = (post_cost_positive + high_cost_positive + close_wait_pullback) > 0
         hard_blocks = {
             str(reason or "").strip()
             for reason in list(row.get("hard_blocks") or [])
             if str(reason or "").strip()
         }
         gateway_budget_blocked = "gateway_budget_degraded" in hard_blocks
+        ranking_bucket = (
+            "growth_refresh_candidate"
+            if growth_candidate_supply or has_current_buy_plan
+            else "stale_artifact_only"
+        )
         evidence_score = (
             post_cost_positive * 10.0
             + high_cost_positive * 4.0
             + close_wait_pullback * 3.0
             + min(stale_gap_hours, 72.0) * 0.5
             + order_count * 2.0
-            + (5.0 if buy_value > 0 else 0.0)
+            + (20.0 if has_current_buy_plan else 0.0)
+            - (6.0 if sell_only_current_plan else 0.0)
         )
         candidates.append(
             {
                 "market": market,
                 "portfolio_id": portfolio_id,
+                "ranking_bucket": ranking_bucket,
                 "refresh_rank_score": round(evidence_score, 4),
                 "artifact_health_status": artifact_status,
                 "artifact_age_hours": round(age_hours, 2),
@@ -2317,6 +2328,10 @@ def build_stale_execution_refresh_plan(rows: Iterable[Mapping[str, Any]]) -> Dic
                 "wait_pullback_close_count": close_wait_pullback,
                 "order_count": order_count,
                 "planned_buy_order_value": round(buy_value, 2),
+                "planned_sell_order_value": round(sell_value, 2),
+                "has_current_buy_plan": bool(has_current_buy_plan),
+                "sell_only_current_plan": bool(sell_only_current_plan),
+                "growth_candidate_supply": bool(growth_candidate_supply),
                 "planned_order_symbols": str(row.get("market_readiness_planned_order_symbols") or ""),
                 "submit_quality_status": str(row.get("submit_quality_status") or ""),
                 "submit_quality_reason": str(row.get("submit_quality_reason") or ""),
@@ -2328,6 +2343,8 @@ def build_stale_execution_refresh_plan(rows: Iterable[Mapping[str, Any]]) -> Dic
         )
     candidates.sort(
         key=lambda item: (
+            1 if bool(item.get("gateway_budget_blocked", False)) else 0,
+            0 if str(item.get("ranking_bucket") or "") == "growth_refresh_candidate" else 1,
             -float(item.get("refresh_rank_score", 0.0) or 0.0),
             str(item.get("market") or ""),
             str(item.get("portfolio_id") or ""),

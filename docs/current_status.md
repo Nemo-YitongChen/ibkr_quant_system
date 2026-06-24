@@ -687,3 +687,13 @@
 - `supervisor_cycle_summary.json/md` 新增顶层 `trade_engine` 状态；当没有 active live market 时会明确写入 `status=stopped`、`reason=no_active_live_market`，用于解释 `src.main` 主交易进程按市场时段被 Supervisor 主动停掉，而不是随机崩溃。
 - 当前可见 shutdown status 仍是 `running / ignored_signal:SIGHUP`；这说明最近一次记录是终端/会话断开类信号被忽略。若看到主交易进程退出，应先检查 cycle summary 的 `trade_engine.reason`、instance lock、`SIGTERM/SIGINT` 和 exception status。
 - 全量验证通过：`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider` -> `754 passed`。
+
+## 50. 2026-06-24 Growth-aware stale execution refresh ranking
+
+- 发现 `stale_execution_refresh_plan` 之前会让高分但 `gateway_budget_degraded` 的 US 组合成为 primary target，从而把整个 no-submit refresh plan 卡成 `WAIT_GATEWAY_BUDGET`。
+- `build_stale_execution_refresh_plan` 现在先按 `gateway_budget_blocked=false` 排序，再优先 `growth_refresh_candidate`，最后才按 evidence score 排序；这让可刷新且有 post-cost / close `WAIT_PULLBACK` 候选供给的组合优先。
+- 每条 refresh row 新增 `ranking_bucket`、`planned_sell_order_value`、`has_current_buy_plan`、`sell_only_current_plan`、`growth_candidate_supply`，便于解释为何 SELL-only stale artifact 被降权。
+- `auto_order_readiness.md` 的 stale refresh 表新增 bucket、Gateway blocked、buy/sell 列，operator 可以直接看到 primary target 是否因为 Gateway 或 SELL-only 被降权。
+- 刷新只读 `auto_order_readiness` 后，当前 `stale_execution_refresh_plan.status=READY_FOR_TARGETED_NO_SUBMIT_REFRESH`，primary target 从 US 切到 `HK:resolved_hk_top100_tech_growth`，score `144`，`submit_orders=false`。
+- US `US:watchlist` 仍有更高 raw score `208`，但 `gateway_budget_blocked=true` 且当前 plan 是 sell-only，因此排在 non-blocked HK / ASX / XETRA 后面；这避免把有限请求预算继续浪费在当前不可刷新目标上。
+- 交易边界不变：该计划只允许单目标 report + execution no-submit evidence refresh，不提交订单，不放宽 risk、edge、cost、liquidity、market-rule、Gateway budget 或 submit-quality gate。

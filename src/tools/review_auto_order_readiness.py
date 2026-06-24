@@ -208,8 +208,8 @@ def _write_markdown(path: Path, payload: Dict[str, Any]) -> None:
             f"- Request policy: {stale_execution_refresh_plan.get('request_policy', '-')}",
             f"- Submit orders: {stale_execution_refresh_plan.get('submit_orders', False)}",
             "",
-            "| rank | market | portfolio | score | age_hours | post_cost_positive | close_wait_pullback | action |",
-            "| ---: | --- | --- | ---: | ---: | ---: | ---: | --- |",
+            "| rank | market | portfolio | bucket | Gateway blocked | score | age_hours | post_cost_positive | close_wait_pullback | buy | sell | action |",
+            "| ---: | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
             *[
                 "| "
                 + " | ".join(
@@ -217,10 +217,14 @@ def _write_markdown(path: Path, payload: Dict[str, Any]) -> None:
                         str(idx),
                         str(row.get("market") or "-"),
                         str(row.get("portfolio_id") or "-"),
+                        str(row.get("ranking_bucket") or "-"),
+                        "yes" if bool(row.get("gateway_budget_blocked", False)) else "no",
                         f"{float(row.get('refresh_rank_score', 0.0) or 0.0):.2f}",
                         f"{float(row.get('artifact_age_hours', 0.0) or 0.0):.2f}",
                         str(int(row.get("post_cost_positive_edge_count", 0) or 0)),
                         str(int(row.get("wait_pullback_close_count", 0) or 0)),
+                        f"{float(row.get('planned_buy_order_value', 0.0) or 0.0):.2f}",
+                        f"{float(row.get('planned_sell_order_value', 0.0) or 0.0):.2f}",
                         str(row.get("action") or "-"),
                     ]
                 )
