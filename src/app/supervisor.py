@@ -2588,9 +2588,20 @@ class Supervisor:
             "fresh_reason": fresh_reason,
         }
 
-    def _write_cycle_summary(self, now: datetime, market_summaries: List[Dict[str, Any]]) -> bool:
+    def _write_cycle_summary(
+        self,
+        now: datetime,
+        market_summaries: List[Dict[str, Any]],
+        *,
+        trade_engine_status: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        trade_engine_payload = dict(trade_engine_status or {})
+        signature_payload = {
+            "markets": self._summary_signature_payload(market_summaries),
+            "trade_engine": trade_engine_payload,
+        }
         signature = hashlib.sha1(
-            json.dumps(self._summary_signature_payload(market_summaries), ensure_ascii=False, sort_keys=True).encode("utf-8")
+            json.dumps(signature_payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
         ).hexdigest()
         if signature == self._last_cycle_summary_signature:
             return False
@@ -2600,6 +2611,7 @@ class Supervisor:
         payload = {
             "ts": now.isoformat(),
             "markets": market_summaries,
+            "trade_engine": trade_engine_payload,
         }
         json_path = out_dir / "supervisor_cycle_summary.json"
         md_path = out_dir / "supervisor_cycle_summary.md"
@@ -2611,6 +2623,13 @@ class Supervisor:
             f"- Generated: {now.isoformat()}",
             "",
         ]
+        if trade_engine_payload:
+            lines.append("## Trade Engine")
+            lines.append(f"- Status: {trade_engine_payload.get('status', '')}")
+            lines.append(f"- Reason: {trade_engine_payload.get('reason', '')}")
+            lines.append(f"- Active market: {trade_engine_payload.get('active_market', '')}")
+            lines.append(f"- Previous market: {trade_engine_payload.get('previous_market', '')}")
+            lines.append("")
         for row in market_summaries:
             lines.append(f"## {row['market_name']} ({row['market']})")
             lines.append(f"- Priority order: {int(row.get('priority_order', 0) or 0)}")
@@ -4160,6 +4179,34 @@ class Supervisor:
             status = str(row.get("status") or "ok").strip().lower()
             if status in suppress_statuses:
                 return True, f"gateway_budget_{status}", row
+            return False, "", row
+        return False, "", {}
+
+    def _broker_snapshot_gateway_budget_skip(self, report_market: str) -> tuple[bool, str, Dict[str, Any]]:
+        cfg = dict(self.cfg.get("ibkr_gateway_budgets") or {})
+        if not cfg:
+            return False, "", {}
+        if not bool(cfg.get("enabled", True)):
+            return False, "", {}
+        if not bool(cfg.get("suppress_broker_snapshot_when_degraded", True)):
+            return False, "", {}
+        raw_statuses = cfg.get("suppress_broker_snapshot_statuses", ["degraded"])
+        if isinstance(raw_statuses, str):
+            raw_statuses = [part.strip() for part in raw_statuses.split(",")]
+        suppress_statuses = {
+            str(value or "").strip().lower()
+            for value in list(raw_statuses or [])
+            if str(value or "").strip()
+        } or {"degraded"}
+        weekly = self._auto_order_weekly_summary_payload()
+        market_code = resolve_market_code(report_market)
+        for raw in list(weekly.get("ibkr_gateway_budget_rows") or []):
+            row = dict(raw or {})
+            if resolve_market_code(str(row.get("market") or "")) != market_code:
+                continue
+            status = str(row.get("status") or "ok").strip().lower()
+            if status in suppress_statuses:
+                return True, f"broker_snapshot_gateway_budget_{status}", row
             return False, "", row
         return False, "", {}
 
@@ -6087,6 +6134,18 @@ class Supervisor:
                         self._add_reason(market_summary["broker_snapshot_skip_reasons"], "disabled")
                         continue
                     report_market = resolve_market_code(str(item.get("market", market.market_code)))
+                    skip_budget, budget_reason, budget_row = self._broker_snapshot_gateway_budget_skip(report_market)
+                    if skip_budget:
+                        self._add_reason(market_summary["broker_snapshot_skip_reasons"], budget_reason)
+                        log.info(
+                            "Skip broker snapshot sync: market=%s watchlist=%s reason=%s top_tool=%s projected_recovery_at=%s",
+                            market.market_code,
+                            Path(str(item.get("watchlist_yaml", "") or report_market)).stem,
+                            budget_reason,
+                            str(budget_row.get("top_tool") or ""),
+                            str(budget_row.get("projected_recovery_at") or ""),
+                        )
+                        continue
                     item["_local_timezone"] = market.local_timezone
                     self._restore_report_state(item, report_market)
                     interval_min = max(1, int(item.get("broker_snapshot_interval_min", self.cfg.get("broker_snapshot_interval_min", 60)) or 60))
@@ -6461,6 +6520,7 @@ class Supervisor:
                     self._last_market_summary_signatures[market.market_code] = market_signature
 
             live_market = self._active_live_market(now)
+            trade_engine_status: Dict[str, Any]
             if live_market:
                 if bool(dict(live_market.short_safety_sync or {}).get("run_before_live", True)):
                     self._sync_short_safety(live_market, now, reason="pre_live")
@@ -6473,9 +6533,24 @@ class Supervisor:
                     self._active_market = live_market.name
                     log.info(f"Switched live market -> {live_market.name} market={live_market.market_code} config={live_market.ibkr_config}")
                 self.trade_proc.ensure_running()
+                trade_engine_status = {
+                    "status": "running",
+                    "reason": "active_live_market",
+                    "active_market": live_market.name,
+                    "active_market_code": live_market.market_code,
+                    "previous_market": "",
+                }
             else:
+                previous_market = str(self._active_market or "")
                 self.trade_proc.stop()
                 self._active_market = None
+                trade_engine_status = {
+                    "status": "stopped",
+                    "reason": "no_active_live_market",
+                    "active_market": "",
+                    "active_market_code": "",
+                    "previous_market": previous_market,
+                }
             execution_evidence_maintenance_ran = self._run_execution_evidence_maintenance(
                 now,
                 cycle_summary,
@@ -6514,7 +6589,11 @@ class Supervisor:
                 now,
                 force=execution_evidence_changed,
             )
-            summary_changed = self._write_cycle_summary(now, cycle_summary)
+            summary_changed = self._write_cycle_summary(
+                now,
+                cycle_summary,
+                trade_engine_status=trade_engine_status,
+            )
             auto_order_readiness_changed = self._write_auto_order_readiness_summary(now)
             if (
                 summary_changed

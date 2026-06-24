@@ -32,6 +32,8 @@ ibkr_gateway_budgets:
   suppress_research_when_throttled: true
   suppress_opportunity_when_degraded: true
   suppress_opportunity_statuses: ["degraded"]
+  suppress_broker_snapshot_when_degraded: true
+  suppress_broker_snapshot_statuses: ["degraded"]
   markets:
     US:
       weekly_gateway_request_budget: 2000

@@ -675,3 +675,15 @@
 - 当前 auto-order primary block 是 `gateway_budget_degraded`，不是 outcome evidence；`stale_execution_refresh_plan.status=WAIT_GATEWAY_BUDGET`。
 - 当前排序的下一次 no-submit stale execution refresh top target 是 `US:watchlist`，score `214`，target_count `6`；前几位还包括 `HK:resolved_hk_top100_bluechip`、`HK:resolved_hk_top100_tech_growth`、`US:us_overnight_core`、`ASX:asx_top_quality`、`XETRA:xetra_top_quality`。
 - Dashboard 当前 `ibkr_gateway_budget_status=degraded`，最大使用率约 `784%`；这意味着现在不应提交订单，也不应触发高请求刷新，应等待 Gateway budget 恢复或继续削减高请求 broker snapshot / positions 路径。
+
+## 49. 2026-06-24 Broker snapshot budget suppression and trade engine stop diagnosis
+
+- 已重新验证 HK outcome：正 post-cost candidates 组级仍为 `OUTCOME_SUPPORTS_GROUP`，bluechip 5d `+122.89bps`、20d `+253.84bps`；tech growth 5d `+125.19bps`、20d `+264.69bps`。
+- HK close `WAIT_PULLBACK` 组级也仍为 `OUTCOME_SUPPORTS_GROUP`，bluechip 5d `+125.96bps`、20d `+212.07bps`；tech growth 5d `+126.74bps`、20d `+222.09bps`。
+- 交易边界不变：trial plan 只保留 outcome-qualified 子集；`2359.HK`、`1288.HK` 等单票 5d/20d 为负或缺样本的标的不会进入 paper trial candidate 子集。
+- Gateway budget degraded 的主要高请求来源是例行 `sync_investment_broker_snapshot:*` positions/protective 查询，而不是 outcome evidence 本身。
+- Supervisor 现在支持 `ibkr_gateway_budgets.suppress_broker_snapshot_when_degraded=true`；对应市场 budget status 命中 `suppress_broker_snapshot_statuses` 时，跳过例行 broker snapshot sync，并在 cycle summary 写入 `broker_snapshot_gateway_budget_degraded`。
+- 该 suppression 只影响例行 broker snapshot，不影响 guard/execution 的必要安全路径，不提交订单，不放宽 risk、edge、cost、liquidity、market-rule、Gateway budget 或 submit-quality gate。
+- `supervisor_cycle_summary.json/md` 新增顶层 `trade_engine` 状态；当没有 active live market 时会明确写入 `status=stopped`、`reason=no_active_live_market`，用于解释 `src.main` 主交易进程按市场时段被 Supervisor 主动停掉，而不是随机崩溃。
+- 当前可见 shutdown status 仍是 `running / ignored_signal:SIGHUP`；这说明最近一次记录是终端/会话断开类信号被忽略。若看到主交易进程退出，应先检查 cycle summary 的 `trade_engine.reason`、instance lock、`SIGTERM/SIGINT` 和 exception status。
+- 全量验证通过：`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider` -> `754 passed`。

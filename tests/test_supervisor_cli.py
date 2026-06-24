@@ -892,6 +892,94 @@ class SupervisorCliTests(unittest.TestCase):
             self.assertEqual(reason, "")
             self.assertEqual(row, {})
 
+    def test_broker_snapshot_gateway_budget_skip_blocks_degraded_market(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            weekly_dir = base / "reports_investment_weekly"
+            weekly_dir.mkdir(parents=True, exist_ok=True)
+            (weekly_dir / "weekly_ibkr_gateway_budget_status.json").write_text(
+                json.dumps(
+                    {
+                        "summary": {"status": "degraded"},
+                        "rows": [
+                            {
+                                "market": "HK",
+                                "status": "degraded",
+                                "top_tool": "sync_investment_broker_snapshot:hk:resolved_hk_top100_bluechip",
+                                "projected_recovery_at": "2026-06-30T23:59:59+00:00",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            cfg_path = base / "supervisor.yaml"
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        f'dashboard_weekly_review_dir: "{weekly_dir}"',
+                        "ibkr_gateway_budgets:",
+                        "  enabled: true",
+                        "  suppress_broker_snapshot_when_degraded: true",
+                        "  suppress_broker_snapshot_statuses: [degraded]",
+                        "markets:",
+                        '  - name: "hk"',
+                        '    market: "HK"',
+                        "    enabled: true",
+                        "    reports: []",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(cfg_path))
+
+            skip, reason, row = supervisor._broker_snapshot_gateway_budget_skip("HK")
+
+            self.assertTrue(skip)
+            self.assertEqual(reason, "broker_snapshot_gateway_budget_degraded")
+            self.assertEqual(row["top_tool"], "sync_investment_broker_snapshot:hk:resolved_hk_top100_bluechip")
+
+    def test_broker_snapshot_gateway_budget_skip_respects_policy_disable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            weekly_dir = base / "reports_investment_weekly"
+            weekly_dir.mkdir(parents=True, exist_ok=True)
+            (weekly_dir / "weekly_ibkr_gateway_budget_status.json").write_text(
+                json.dumps(
+                    {
+                        "summary": {"status": "degraded"},
+                        "rows": [{"market": "HK", "status": "degraded"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            cfg_path = base / "supervisor.yaml"
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        f'dashboard_weekly_review_dir: "{weekly_dir}"',
+                        "ibkr_gateway_budgets:",
+                        "  enabled: true",
+                        "  suppress_broker_snapshot_when_degraded: false",
+                        "markets:",
+                        '  - name: "hk"',
+                        '    market: "HK"',
+                        "    enabled: true",
+                        "    reports: []",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(cfg_path))
+
+            skip, reason, row = supervisor._broker_snapshot_gateway_budget_skip("HK")
+
+            self.assertFalse(skip)
+            self.assertEqual(reason, "")
+            self.assertEqual(row, {})
+
     def test_gateway_task_budget_decision_throttles_research_but_preserves_execution_and_protection(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -3480,6 +3568,82 @@ class SupervisorCliTests(unittest.TestCase):
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["portfolio_id"], "US:us_beta")
             self.assertEqual(rows[0]["source"], "after")
+
+    def test_supervisor_skips_broker_snapshot_when_gateway_budget_degraded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            cfg_path = base / "supervisor.yaml"
+            summary_dir = base / "reports_supervisor"
+            weekly_dir = base / "reports_investment_weekly"
+            weekly_dir.mkdir(parents=True, exist_ok=True)
+            report_root = base / "reports_investment"
+            (weekly_dir / "weekly_ibkr_gateway_budget_status.json").write_text(
+                json.dumps(
+                    {
+                        "summary": {"status": "degraded"},
+                        "rows": [
+                            {
+                                "market": "HK",
+                                "status": "degraded",
+                                "top_tool": "sync_investment_broker_snapshot:hk:resolved_hk_top100_bluechip",
+                                "projected_recovery_at": "2026-06-30T23:59:59+00:00",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        f'summary_out_dir: "{summary_dir}"',
+                        f'dashboard_weekly_review_dir: "{weekly_dir}"',
+                        "dashboard_enabled: false",
+                        "run_investment_labeling: false",
+                        "run_investment_weekly_review: false",
+                        "ibkr_gateway_budgets:",
+                        "  enabled: true",
+                        "  suppress_broker_snapshot_when_degraded: true",
+                        "  suppress_broker_snapshot_statuses: [degraded]",
+                        "poll_sec: 30",
+                        "markets:",
+                        '  - name: "hk"',
+                        '    market: "HK"',
+                        '    local_timezone: "Asia/Hong_Kong"',
+                        "    enabled: true",
+                        '    report_time: "23:59"',
+                        "    watchlists: []",
+                        "    reports:",
+                        '      - kind: "investment"',
+                        f'        out_dir: "{report_root}"',
+                        '        watchlist_yaml: "config/watchlists/resolved_hk_top100_bluechip.yaml"',
+                        "        run_broker_snapshot_sync: true",
+                        "    short_safety_sync:",
+                        "      enabled: false",
+                        "    trading:",
+                        "      enabled: false",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(cfg_path))
+            now = datetime(2026, 6, 24, 18, 0, 0, tzinfo=supervisor.tz)
+            with patch.object(supervisor, "_refresh_ibkr_gateway_budget_evidence", return_value=False), patch.object(
+                supervisor,
+                "_run_investment_broker_snapshot_sync",
+                return_value=True,
+            ) as mock_sync:
+                supervisor.run_cycle(now)
+
+            mock_sync.assert_not_called()
+            payload = json.loads((summary_dir / "supervisor_cycle_summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(
+                payload["markets"][0]["broker_snapshot_skip_reasons"],
+                {"broker_snapshot_gateway_budget_degraded": 1},
+            )
+            self.assertEqual(payload["trade_engine"]["status"], "stopped")
+            self.assertEqual(payload["trade_engine"]["reason"], "no_active_live_market")
 
     def test_dashboard_control_run_weekly_review_forces_review_and_refreshes_dashboard(self):
         with tempfile.TemporaryDirectory() as tmp:
