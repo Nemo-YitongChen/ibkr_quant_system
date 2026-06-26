@@ -578,6 +578,46 @@ def test_watchlist_seed_promotion_review_requires_mapping_before_manual_promotio
     assert review[0]["auto_apply"] is False
 
 
+def test_watchlist_seed_promotion_review_requires_candidate_report_for_source_only_row() -> None:
+    review = build_watchlist_seed_promotion_review(
+        [
+            {
+                "market": "ASX",
+                "source_candidates": [
+                    {
+                        "symbol": "BGBL.AX",
+                        "asset_class": "etf",
+                        "source_verified_at": "2026-06-11",
+                        "broker_mapping_status": "VERIFIED",
+                        "reference_price": 83.42,
+                        "reference_price_currency": "AUD",
+                    }
+                ],
+            }
+        ],
+        [
+            {
+                "market": "ASX",
+                "symbol": "BGBL.AX",
+                "asset_class": "etf",
+                "source_verified_at": "2026-06-11",
+                "reference_price": 83.42,
+                "reference_price_currency": "AUD",
+            }
+        ],
+        policy=WatchlistExpansionPolicy(max_last_close=100.0, preferred_asset_classes=("etf",)),
+        now=datetime(2026, 6, 14, tzinfo=timezone.utc),
+    )
+
+    assert review[0]["promotion_status"] == "CANDIDATE_REPORT_REQUIRED"
+    assert review[0]["next_action"] == "run_candidate_report_for_seed"
+    assert review[0]["candidate_evidence_present"] is True
+    assert review[0]["candidate_report_evidence_present"] is False
+    assert review[0]["quality_reasons"] == []
+    assert review[0]["auto_apply"] is False
+    assert review[0]["does_not_change_symbol_master"] is True
+
+
 def test_watchlist_seed_promotion_review_marks_quality_pass_as_review_ready() -> None:
     review = build_watchlist_seed_promotion_review(
         [

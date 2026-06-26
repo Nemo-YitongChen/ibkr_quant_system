@@ -148,6 +148,26 @@ def _selection_reasons(row: Mapping[str, Any], policy: WatchlistExpansionPolicy)
     return reasons
 
 
+def _has_candidate_report_evidence(row: Mapping[str, Any]) -> bool:
+    """Separate source-registry rows from actual candidate-report evidence."""
+    candidate_fields = (
+        "score",
+        "score_before_cost",
+        "expected_edge_bps",
+        "whole_share_expected_edge_bps",
+        "expected_cost_bps",
+        "data_quality_score",
+        "liquidity_score",
+        "whole_share_edge_margin_bps",
+        "whole_share_tradability_reason",
+        "action",
+        "review_seed_original_action",
+        "execution_ready",
+        "review_seed_original_execution_ready",
+    )
+    return any(field in row for field in candidate_fields)
+
+
 def _asset_class_rank(asset_class: Any, policy: WatchlistExpansionPolicy) -> int:
     normalized = str(asset_class or "").strip().lower()
     preferred = [str(item).strip().lower() for item in list(policy.preferred_asset_classes or [])]
@@ -431,6 +451,7 @@ def build_watchlist_seed_promotion_review(
             source_fresh = source_age_days is not None and source_age_days <= max(0.0, float(max_source_age_days))
             broker_mapping_status = str(source.get("broker_mapping_status") or "TO_VERIFY").strip().upper()
             candidate = dict(candidate_by_key.get((market, symbol)) or candidate_by_key.get(("", symbol)) or {})
+            candidate_report_present = bool(candidate and _has_candidate_report_evidence(candidate))
             evaluation = dict(candidate)
             if candidate:
                 evaluation["action"] = str(
@@ -440,11 +461,11 @@ def build_watchlist_seed_promotion_review(
                     "review_seed_original_execution_ready",
                     candidate.get("execution_ready"),
                 )
-            quality_reasons = _selection_reasons(evaluation, effective_policy) if candidate else []
+            quality_reasons = _selection_reasons(evaluation, effective_policy) if candidate_report_present else []
             if not source_fresh:
                 status = "SOURCE_REFRESH_REQUIRED"
                 next_action = "refresh_official_source_evidence"
-            elif not candidate:
+            elif not candidate_report_present:
                 status = "CANDIDATE_REPORT_REQUIRED"
                 next_action = "run_candidate_report_for_seed"
             elif quality_reasons:
@@ -468,6 +489,7 @@ def build_watchlist_seed_promotion_review(
                     "source_fresh": bool(source_fresh),
                     "broker_mapping_status": broker_mapping_status,
                     "candidate_evidence_present": bool(candidate),
+                    "candidate_report_evidence_present": bool(candidate_report_present),
                     "candidate_original_action": str(evaluation.get("action") or ""),
                     "candidate_original_execution_ready": int(_boolish(evaluation.get("execution_ready"))),
                     "quality_reasons": quality_reasons,

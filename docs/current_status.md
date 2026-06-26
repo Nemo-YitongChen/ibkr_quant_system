@@ -716,3 +716,14 @@
 - `build_auto_order_readiness_summary` 会从 watchlist expansion summary 自动传递 `account_growth_tier_plan`；Supervisor 的 submit plan/recovery context 也使用同一份 account-tier context。
 - Dashboard Auto Order block 新增 `account_growth_profile`、`account_growth_primary_action`、`account_growth_submit_frequency_mode`、`account_growth_max_orders_per_run`、`account_growth_max_order_value`，operator 不用跳转到 watchlist expansion block 也能看到小账户 submit cap。
 - 小账户目标仍是 `whole_share_tradable_etf_first` / 单笔小额限价 / 先 paper fill-quality evidence；该改动不提交订单，不放宽 risk、edge、cost、liquidity、market-rule、Gateway budget 或 submit-quality gate。
+
+## 53. 2026-06-26 Seed source-only evidence queue and shutdown check
+
+- 已复核 HK opportunity outcome artifact：正 post-cost candidates 组级仍为 `OUTCOME_SUPPORTS_GROUP`，bluechip 5d `+122.89bps`、20d `+253.84bps`；tech growth 5d `+125.19bps`、20d `+264.69bps`。
+- HK close `WAIT_PULLBACK` 也仍为 `OUTCOME_SUPPORTS_GROUP`，bluechip 5d `+125.96bps`、20d `+212.07bps`；tech growth 5d `+126.74bps`、20d `+222.09bps`。
+- 当前 HK 结论不变：可以准备 paper-only HK post-cost threshold / WAIT_PULLBACK near-entry 小额限价 trial，但必须继续要求 fresh BUY plan、submit-quality PASS、Gateway budget OK、whole-share feasible、post-cost positive；不得放宽 risk/edge/cost/liquidity/market-rule gate。
+- 修复 watchlist seed promotion review：source registry 里的 ETF source-only row 现在不会因为缺少 score/cost/liquidity/whole-share 字段被误判为 `QUALITY_REJECTED`。
+- 新增 `candidate_report_evidence_present`，明确区分“有来源和参考价”与“已有完整 candidate report 证据”；source-only row 会进入 `CANDIDATE_REPORT_REQUIRED / run_candidate_report_for_seed`，供下次 watchlist expansion 刷新生成 seed evidence queue。
+- 这会让 `BGBL.AX`、`DHHF.AX` 这类价格低于小账户单笔上限且来源可验证的 ETF 进入候选报告验证路径，而不是直接污染质量失败统计；不会自动改 watchlist、symbol master 或 submit policy。
+- 主程序 shutdown 分析：当前 status 是 `running / ignored_signal:SIGHUP`，没有本地 shutdown event trail 显示崩溃；真正会退出的路径主要是 `SIGINT/SIGTERM`、未捕获异常、`--once` 正常结束、或第二个 Supervisor 因 instance lock 被占用退出。
+- 如果只是 intraday trade engine 停止，应优先看 `supervisor_cycle_summary.json -> trade_engine.reason`；这通常是市场窗口关闭或交易窗口 disabled，不是 Supervisor 主进程崩溃。
