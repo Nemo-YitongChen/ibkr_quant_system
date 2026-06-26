@@ -3735,7 +3735,7 @@ class SupervisorCliTests(unittest.TestCase):
                 encoding="utf-8",
             )
             supervisor = Supervisor(str(cfg_path))
-            now = datetime(2026, 6, 24, 18, 0, 0, tzinfo=supervisor.tz)
+            now = datetime(2026, 6, 24, 20, 0, 0, tzinfo=supervisor.tz)
             with patch.object(supervisor, "_refresh_ibkr_gateway_budget_evidence", return_value=False), patch.object(
                 supervisor,
                 "_run_investment_broker_snapshot_sync",
@@ -3750,7 +3750,51 @@ class SupervisorCliTests(unittest.TestCase):
                 {"broker_snapshot_gateway_budget_degraded": 1},
             )
             self.assertEqual(payload["trade_engine"]["status"], "stopped")
-            self.assertEqual(payload["trade_engine"]["reason"], "no_active_live_market")
+            self.assertEqual(payload["trade_engine"]["reason"], "all_market_trading_windows_disabled")
+            self.assertEqual(payload["trade_engine"]["live_trading_enabled_count"], 0)
+
+    def test_supervisor_trade_engine_status_marks_closed_trading_window(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            cfg_path = base / "supervisor.yaml"
+            summary_dir = base / "reports_supervisor"
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        f'summary_out_dir: "{summary_dir}"',
+                        "dashboard_enabled: false",
+                        "run_investment_labeling: false",
+                        "run_investment_weekly_review: false",
+                        "poll_sec: 30",
+                        "markets:",
+                        '  - name: "hk"',
+                        '    market: "HK"',
+                        '    local_timezone: "Asia/Hong_Kong"',
+                        "    enabled: true",
+                        "    watchlists: []",
+                        "    reports: []",
+                        "    short_safety_sync:",
+                        "      enabled: false",
+                        "    trading:",
+                        "      enabled: true",
+                        "      weekdays: [0,1,2,3,4]",
+                        '      start: "09:30"',
+                        '      end: "16:00"',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(cfg_path))
+            now = datetime(2026, 6, 24, 20, 0, 0, tzinfo=supervisor.tz)
+            with patch.object(supervisor, "_refresh_ibkr_gateway_budget_evidence", return_value=False):
+                supervisor.run_cycle(now)
+
+            payload = json.loads((summary_dir / "supervisor_cycle_summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(payload["trade_engine"]["status"], "stopped")
+            self.assertEqual(payload["trade_engine"]["reason"], "no_market_trading_window_open")
+            self.assertEqual(payload["trade_engine"]["live_trading_enabled_count"], 1)
+            self.assertEqual(payload["trade_engine"]["live_window_count"], 0)
 
     def test_dashboard_control_run_weekly_review_forces_review_and_refreshes_dashboard(self):
         with tempfile.TemporaryDirectory() as tmp:

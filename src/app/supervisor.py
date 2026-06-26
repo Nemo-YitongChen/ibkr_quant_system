@@ -5988,6 +5988,29 @@ class Supervisor:
             )
         return active[0]
 
+    def _inactive_live_market_status(self, now: datetime) -> Dict[str, Any]:
+        enabled_markets = [market for market in self.markets if market.enabled]
+        trading_enabled_markets = [
+            market for market in enabled_markets if bool(market.trading.get("enabled", True))
+        ]
+        live_window_markets = [
+            market.name for market in trading_enabled_markets if self._market_live(market, now)
+        ]
+        if not enabled_markets:
+            reason = "no_enabled_markets"
+        elif not trading_enabled_markets:
+            reason = "all_market_trading_windows_disabled"
+        else:
+            reason = "no_market_trading_window_open"
+        return {
+            "reason": reason,
+            "enabled_market_count": int(len(enabled_markets)),
+            "live_trading_enabled_count": int(len(trading_enabled_markets)),
+            "live_window_count": int(len(live_window_markets)),
+            "live_trading_enabled_markets": ",".join(market.name for market in trading_enabled_markets),
+            "live_window_markets": ",".join(live_window_markets),
+        }
+
     def _setup_signal_handlers(self) -> None:
         def _signal_name(signum: int) -> str:
             try:
@@ -6573,12 +6596,20 @@ class Supervisor:
                 previous_market = str(self._active_market or "")
                 self.trade_proc.stop()
                 self._active_market = None
+                inactive_status = self._inactive_live_market_status(now)
                 trade_engine_status = {
                     "status": "stopped",
-                    "reason": "no_active_live_market",
+                    "reason": str(inactive_status.get("reason") or "no_active_live_market"),
                     "active_market": "",
                     "active_market_code": "",
                     "previous_market": previous_market,
+                    "enabled_market_count": int(inactive_status.get("enabled_market_count", 0) or 0),
+                    "live_trading_enabled_count": int(inactive_status.get("live_trading_enabled_count", 0) or 0),
+                    "live_window_count": int(inactive_status.get("live_window_count", 0) or 0),
+                    "live_trading_enabled_markets": str(
+                        inactive_status.get("live_trading_enabled_markets") or ""
+                    ),
+                    "live_window_markets": str(inactive_status.get("live_window_markets") or ""),
                 }
             execution_evidence_maintenance_ran = self._run_execution_evidence_maintenance(
                 now,
