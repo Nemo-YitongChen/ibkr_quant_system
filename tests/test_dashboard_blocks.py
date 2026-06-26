@@ -74,6 +74,13 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
                     "candidate_count": 0,
                     "frontier_candidate_count": 1,
                     "selected_portfolio_id": "",
+                    "policy": {
+                        "account_growth_profile": "small",
+                        "account_growth_primary_action": "verify_one_share_etf_paper_frontier",
+                        "account_growth_submit_frequency_mode": "single_small_limit_order_until_fill_quality_passes",
+                        "account_growth_max_orders_per_run": 1,
+                        "account_growth_max_order_value": 100.0,
+                    },
                     "submit_capacity_plan": {
                         "status": "TRIAL_SCALE_ALLOWED",
                         "reason": "trial_quality_pass_full_scale_pending",
@@ -586,6 +593,9 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
     assert by_id["auto_order_readiness"]["metrics"]["frontier_quality_pass_count"] == 1
     assert by_id["auto_order_readiness"]["metrics"]["frontier_high_quality_count"] == 1
     assert by_id["auto_order_readiness"]["metrics"]["frontier_top_submit_quality_tier"] == "HIGH"
+    assert by_id["auto_order_readiness"]["metrics"]["account_growth_profile"] == "small"
+    assert by_id["auto_order_readiness"]["metrics"]["account_growth_max_orders_per_run"] == 1
+    assert by_id["auto_order_readiness"]["metrics"]["account_growth_max_order_value"] == 100.0
     assert by_id["auto_order_readiness"]["metrics"]["rejected_candidate_count"] == 1
     assert by_id["auto_order_readiness"]["metrics"]["submit_capacity_scale_stage"] == "trial"
     assert by_id["auto_order_readiness"]["metrics"]["submit_capacity_evidence_market_count"] == 1

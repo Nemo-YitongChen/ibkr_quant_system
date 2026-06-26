@@ -826,6 +826,92 @@ def test_auto_order_submit_plan_prioritizes_high_quality_candidates() -> None:
     assert plan["frontier_candidates"][0]["portfolio_id"] == "ASX:high"
 
 
+def test_auto_order_submit_plan_applies_account_growth_tier_caps() -> None:
+    plan = build_auto_order_submit_plan(
+        [
+            {
+                "ready": True,
+                "account_mode": "paper",
+                "market": "US",
+                "portfolio_id": "US:watchlist",
+                "market_readiness_status": "READY_FOR_PAPER_REVIEW",
+                "market_readiness_order_count": 1,
+                "market_readiness_planned_gross_order_value": 120.0,
+                "market_readiness_planned_buy_order_value": 120.0,
+                "market_readiness_planned_order_symbols": "SPLG",
+                "submit_quality_status": "PASS",
+                "submit_quality_tier": "PASS",
+            }
+        ],
+        policy={
+            "enabled": True,
+            "max_submit_portfolios_per_run": 1,
+            "max_submit_orders_per_portfolio": 3,
+            "max_submit_gross_order_value": 200.0,
+            "require_buy_order_for_submit": True,
+        },
+        account_growth_tier_plan={
+            "profile": "small",
+            "label": "Small account",
+            "equity": 1000.0,
+            "max_orders_per_run": 1,
+            "max_order_value": 100.0,
+            "primary_action": "verify_one_share_etf_paper_frontier",
+            "submit_frequency_mode": "single_small_limit_order_until_fill_quality_passes",
+        },
+    )
+
+    assert plan["ready"] is False
+    assert plan["status"] == "BLOCKED"
+    assert plan["policy"]["configured_max_submit_gross_order_value"] == 200.0
+    assert plan["policy"]["max_submit_gross_order_value"] == 100.0
+    assert plan["policy"]["account_growth_profile"] == "small"
+    assert plan["rejected_candidates"][0]["account_growth_profile"] == "small"
+    assert "account_growth_order_value_exceeds_profile" in plan["rejected_candidates"][0]["reject_reasons"]
+    assert "account_growth_order_value_exceeds_profile" in plan["frontier_candidates"][0]["policy_reject_reasons"]
+
+
+def test_auto_order_readiness_summary_passes_account_growth_tier_to_submit_plan() -> None:
+    summary = build_auto_order_readiness_summary(
+        [
+            {
+                "ready": True,
+                "account_mode": "paper",
+                "market": "US",
+                "portfolio_id": "US:watchlist",
+                "market_readiness_status": "READY_FOR_PAPER_REVIEW",
+                "market_readiness_order_count": 2,
+                "market_readiness_planned_gross_order_value": 80.0,
+                "market_readiness_planned_buy_order_value": 80.0,
+                "market_readiness_planned_order_symbols": "SPLG,SCHB",
+                "submit_quality_status": "PASS",
+            }
+        ],
+        policy={
+            "enabled": True,
+            "max_submit_portfolios_per_run": 1,
+            "max_submit_orders_per_portfolio": 3,
+            "max_submit_gross_order_value": 100.0,
+            "require_buy_order_for_submit": True,
+        },
+        watchlist_expansion_summary={
+            "account_growth_tier_plan": {
+                "profile": "small",
+                "equity": 1000.0,
+                "max_orders_per_run": 1,
+                "max_order_value": 100.0,
+                "primary_action": "verify_one_share_etf_paper_frontier",
+            }
+        },
+    )
+
+    submit_plan = summary["submit_plan"]
+    assert submit_plan["ready"] is False
+    assert submit_plan["policy"]["account_growth_profile"] == "small"
+    assert submit_plan["policy"]["max_submit_orders_per_portfolio"] == 1
+    assert "account_growth_order_count_exceeds_profile" in submit_plan["rejected_candidates"][0]["reject_reasons"]
+
+
 def test_auto_order_submit_plan_surfaces_blocked_frontier_candidates() -> None:
     plan = build_auto_order_submit_plan(
         [

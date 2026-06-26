@@ -3710,6 +3710,9 @@ class Supervisor:
             self._auto_order_readiness_rows(common_inputs=common),
             policy=common["policy"],
             weekly_summary=common["weekly_summary"],
+            account_growth_tier_plan=dict(common.get("watchlist_expansion_summary") or {}).get(
+                "account_growth_tier_plan"
+            ),
         )
 
     def _auto_order_recovery_context(self, now: datetime) -> Dict[str, Any]:
@@ -3728,6 +3731,9 @@ class Supervisor:
             rows,
             policy=common["policy"],
             weekly_summary=common["weekly_summary"],
+            account_growth_tier_plan=dict(common.get("watchlist_expansion_summary") or {}).get(
+                "account_growth_tier_plan"
+            ),
         )
         stale_execution_refresh_plan = build_stale_execution_refresh_plan(rows)
         recovery_plan = build_auto_order_recovery_plan(

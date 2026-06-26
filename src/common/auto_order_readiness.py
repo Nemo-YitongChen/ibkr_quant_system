@@ -572,7 +572,9 @@ def _submit_plan_policy_snapshot(
     max_value: float,
     max_total_value: float,
     require_buy: bool,
+    account_growth_context: Mapping[str, Any] | None = None,
 ) -> Dict[str, Any]:
+    account_context = dict(account_growth_context or {})
     return {
         "max_submit_portfolios_per_run": int(max_portfolios),
         "configured_max_submit_portfolios_per_run": max(
@@ -582,6 +584,10 @@ def _submit_plan_policy_snapshot(
         "max_submit_portfolios_per_market": int(max_per_market),
         "max_submit_orders_per_portfolio": int(max_orders),
         "max_submit_gross_order_value": float(max_value),
+        "configured_max_submit_gross_order_value": max(
+            0.0,
+            _float(normalized_policy.get("max_submit_gross_order_value"), 100.0),
+        ),
         "max_submit_total_gross_order_value": float(max_total_value),
         "configured_max_submit_total_gross_order_value": max(
             0.0,
@@ -599,6 +605,14 @@ def _submit_plan_policy_snapshot(
             0,
             _int(normalized_policy.get("max_submit_unevidenced_markets_per_run"), 1),
         ),
+        "account_growth_profile": str(account_context.get("profile") or ""),
+        "account_growth_label": str(account_context.get("label") or ""),
+        "account_growth_equity": _float(account_context.get("equity"), 0.0),
+        "account_growth_expansion_mode": str(account_context.get("expansion_mode") or ""),
+        "account_growth_submit_frequency_mode": str(account_context.get("submit_frequency_mode") or ""),
+        "account_growth_primary_action": str(account_context.get("primary_action") or ""),
+        "account_growth_max_orders_per_run": _int(account_context.get("max_orders_per_run"), 0),
+        "account_growth_max_order_value": _float(account_context.get("max_order_value"), 0.0),
     }
 
 
@@ -936,6 +950,33 @@ def _strategy_followup_rows_for_portfolio(
     return matched
 
 
+def _account_growth_submit_context(account_growth_tier_plan: Mapping[str, Any] | None) -> Dict[str, Any]:
+    plan = dict(account_growth_tier_plan or {})
+    if not plan:
+        return {}
+    max_orders = _int(plan.get("max_orders_per_run"), 0)
+    max_value = _float(plan.get("max_order_value"), 0.0)
+    return {
+        "profile": str(plan.get("profile") or "").strip().lower(),
+        "label": str(plan.get("label") or ""),
+        "equity": _float(plan.get("equity"), 0.0),
+        "equity_band": str(plan.get("equity_band") or ""),
+        "preferred_instruments": [
+            str(value).strip()
+            for value in list(plan.get("preferred_instruments") or [])
+            if str(value).strip()
+        ],
+        "max_orders_per_run": max_orders,
+        "max_order_value": max_value,
+        "min_trade_value": _float(plan.get("min_trade_value"), 0.0),
+        "expansion_mode": str(plan.get("expansion_mode") or ""),
+        "submit_frequency_mode": str(plan.get("submit_frequency_mode") or ""),
+        "primary_action": str(plan.get("primary_action") or ""),
+        "quality_gate_policy": str(plan.get("quality_gate_policy") or "do_not_relax_submit_gates"),
+        "read_only": bool(plan.get("read_only", True)),
+    }
+
+
 def _submit_policy_reject_reasons(
     order_count: int,
     planned_gross: float,
@@ -944,8 +985,12 @@ def _submit_policy_reject_reasons(
     max_value: float,
     planned_buy: float = 0.0,
     require_buy: bool = False,
+    account_growth_context: Mapping[str, Any] | None = None,
 ) -> List[str]:
     reject_reasons: List[str] = []
+    account_context = dict(account_growth_context or {})
+    account_max_orders = _int(account_context.get("max_orders_per_run"), 0)
+    account_max_value = _float(account_context.get("max_order_value"), 0.0)
     if order_count <= 0:
         reject_reasons.append("no_planned_orders")
     if bool(require_buy) and float(planned_buy) <= 0.0:
@@ -954,10 +999,21 @@ def _submit_policy_reject_reasons(
         reject_reasons.append("order_count_exceeds_policy")
     if float(max_value) > 0.0 and float(planned_gross) > float(max_value) + 1e-9:
         reject_reasons.append("planned_gross_value_exceeds_policy")
+    if account_max_orders > 0 and order_count > account_max_orders:
+        reject_reasons.append("account_growth_order_count_exceeds_profile")
+    if account_max_value > 0.0 and float(planned_gross) > account_max_value + 1e-9:
+        reject_reasons.append("account_growth_order_value_exceeds_profile")
     return reject_reasons
 
 
-def _submit_candidate_base(row: Mapping[str, Any], *, order_count: int, planned_gross: float) -> Dict[str, Any]:
+def _submit_candidate_base(
+    row: Mapping[str, Any],
+    *,
+    order_count: int,
+    planned_gross: float,
+    account_growth_context: Mapping[str, Any] | None = None,
+) -> Dict[str, Any]:
+    account_context = dict(account_growth_context or {})
     return {
         "market": str(row.get("market") or ""),
         "portfolio_id": str(row.get("portfolio_id") or ""),
@@ -975,6 +1031,11 @@ def _submit_candidate_base(row: Mapping[str, Any], *, order_count: int, planned_
         "submit_quality_min_edge_margin_bps": _float(row.get("submit_quality_min_edge_margin_bps"), 0.0),
         "submit_quality_max_expected_cost_bps": _float(row.get("submit_quality_max_expected_cost_bps"), 0.0),
         "submit_quality_order_types": str(row.get("submit_quality_order_types") or ""),
+        "account_growth_profile": str(account_context.get("profile") or ""),
+        "account_growth_max_orders_per_run": _int(account_context.get("max_orders_per_run"), 0),
+        "account_growth_max_order_value": _float(account_context.get("max_order_value"), 0.0),
+        "account_growth_primary_action": str(account_context.get("primary_action") or ""),
+        "account_growth_submit_frequency_mode": str(account_context.get("submit_frequency_mode") or ""),
     }
 
 
@@ -1028,6 +1089,7 @@ def _build_submit_frontier_candidates(
     max_orders: int,
     max_value: float,
     require_buy: bool = False,
+    account_growth_context: Mapping[str, Any] | None = None,
     limit: int = 10,
 ) -> List[Dict[str, Any]]:
     frontier: List[Dict[str, Any]] = []
@@ -1047,6 +1109,7 @@ def _build_submit_frontier_candidates(
             max_value=max_value,
             planned_buy=planned_buy,
             require_buy=require_buy,
+            account_growth_context=account_growth_context,
         )
         hard_blocks = [str(value) for value in list(row.get("hard_blocks") or []) if str(value).strip()]
         warnings = [str(value) for value in list(row.get("warnings") or []) if str(value).strip()]
@@ -1061,7 +1124,12 @@ def _build_submit_frontier_candidates(
             frontier_reason = str(row.get("primary_reason") or "not_ready").strip() or "not_ready"
         frontier.append(
             {
-                **_submit_candidate_base(row, order_count=order_count, planned_gross=planned_gross),
+                **_submit_candidate_base(
+                    row,
+                    order_count=order_count,
+                    planned_gross=planned_gross,
+                    account_growth_context=account_growth_context,
+                ),
                 "status": str(row.get("status") or ""),
                 "ready": bool(row.get("ready", False)),
                 "frontier_reason": frontier_reason,
@@ -1583,12 +1651,14 @@ def build_auto_order_submit_plan(
     *,
     policy: Mapping[str, Any] | None = None,
     weekly_summary: Mapping[str, Any] | None = None,
+    account_growth_tier_plan: Mapping[str, Any] | None = None,
 ) -> Dict[str, Any]:
     normalized_policy = normalize_auto_order_readiness_policy(policy)
     capacity_plan = build_auto_order_submit_capacity_plan(
         weekly_summary,
         policy=normalized_policy,
     )
+    account_growth_context = _account_growth_submit_context(account_growth_tier_plan)
     clean_rows = [dict(row) for row in list(rows or []) if isinstance(row, Mapping)]
     if not bool(normalized_policy.get("enabled", False)):
         return {
@@ -1621,6 +1691,12 @@ def build_auto_order_submit_plan(
     max_per_market = max(1, _int(normalized_policy.get("max_submit_portfolios_per_market"), 1))
     max_orders = max(1, _int(normalized_policy.get("max_submit_orders_per_portfolio"), 1))
     max_value = max(0.0, _float(normalized_policy.get("max_submit_gross_order_value"), 100.0))
+    account_max_orders = _int(account_growth_context.get("max_orders_per_run"), 0)
+    if account_max_orders > 0:
+        max_orders = max(1, min(max_orders, account_max_orders))
+    account_max_value = _float(account_growth_context.get("max_order_value"), 0.0)
+    if account_max_value > 0.0:
+        max_value = max(0.0, min(max_value, account_max_value))
     max_total_value = max(
         0.0,
         _float(
@@ -1637,12 +1713,14 @@ def build_auto_order_submit_plan(
         max_value=max_value,
         max_total_value=max_total_value,
         require_buy=require_buy,
+        account_growth_context=account_growth_context,
     )
     frontier_candidates = _build_submit_frontier_candidates(
         clean_rows,
         max_orders=max_orders,
         max_value=max_value,
         require_buy=require_buy,
+        account_growth_context=account_growth_context,
     )
     candidate_rows: List[Dict[str, Any]] = []
     rejection_rows: List[Dict[str, Any]] = []
@@ -1657,8 +1735,14 @@ def build_auto_order_submit_plan(
             max_value=max_value,
             planned_buy=planned_buy,
             require_buy=require_buy,
+            account_growth_context=account_growth_context,
         )
-        base = _submit_candidate_base(row, order_count=order_count, planned_gross=planned_gross)
+        base = _submit_candidate_base(
+            row,
+            order_count=order_count,
+            planned_gross=planned_gross,
+            account_growth_context=account_growth_context,
+        )
         if reject_reasons:
             rejection_rows.append({**base, "reject_reasons": reject_reasons})
         else:
@@ -2582,6 +2666,7 @@ def build_auto_order_readiness_summary(
         clean_rows,
         policy=policy,
         weekly_summary=weekly_summary,
+        account_growth_tier_plan=dict(watchlist_expansion_summary or {}).get("account_growth_tier_plan"),
     )
     frequency_plan = build_auto_order_frequency_plan(
         clean_rows,

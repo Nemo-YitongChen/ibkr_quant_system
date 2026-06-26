@@ -707,3 +707,12 @@
 - `_auto_order_recovery_action_decision` 已识别 `stale_execution_refresh_required`，只对目标组合强制 report + execution no-submit；非目标组合被 recovery scope 阻断，opportunity 仍被 suppressed。
 - 刷新只读 `auto_order_readiness` 后，当前 `recovery_plan.status=stale_execution_refresh_required`，target=`HK/HK:resolved_hk_top100_tech_growth`，`recovery_eligibility.eligible=true`，allowed actions=`generate_investment_report, run_investment_execution_no_submit`。
 - 安全边界不变：`submit_orders=false`、`gateway_refresh_portfolio_limit=1`、`estimated_gateway_refresh_count=1`、`does_not_relax_submit_gates=true`；不会绕过 risk、edge、cost、liquidity、market-rule、Gateway budget 或 submit-quality gate。
+
+## 52. 2026-06-26 Account-tier submit policy context
+
+- `build_auto_order_submit_plan` 现在可消费 `account_growth_tier_plan`，把账户规模路径直接纳入 submit candidate selection 的只读 policy context。
+- 当前实现只会收紧或解释 submit policy，不会扩大配置权限：如果 account profile 的 `max_orders_per_run` 或 `max_order_value` 小于静态 auto-order policy，会使用更严格值，并保留 `configured_*` 字段用于审计。
+- 候选超出账户规模限制时会新增 reject reason：`account_growth_order_count_exceeds_profile` 或 `account_growth_order_value_exceeds_profile`。
+- `build_auto_order_readiness_summary` 会从 watchlist expansion summary 自动传递 `account_growth_tier_plan`；Supervisor 的 submit plan/recovery context 也使用同一份 account-tier context。
+- Dashboard Auto Order block 新增 `account_growth_profile`、`account_growth_primary_action`、`account_growth_submit_frequency_mode`、`account_growth_max_orders_per_run`、`account_growth_max_order_value`，operator 不用跳转到 watchlist expansion block 也能看到小账户 submit cap。
+- 小账户目标仍是 `whole_share_tradable_etf_first` / 单笔小额限价 / 先 paper fill-quality evidence；该改动不提交订单，不放宽 risk、edge、cost、liquidity、market-rule、Gateway budget 或 submit-quality gate。

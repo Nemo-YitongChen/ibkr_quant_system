@@ -524,6 +524,7 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
     frontier_high_quality_count = sum(
         1 for row in frontier_candidates if str(row.get("submit_quality_tier") or "").strip().upper() == "HIGH"
     )
+    submit_policy = _dict(submit_plan.get("policy"))
     submit_status = str(submit_plan.get("status") or "").strip().upper()
     summary_status = str(summary.get("status") or "").strip().lower()
     health_status = str(health.get("status") or "ready").strip().lower()
@@ -758,6 +759,17 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             ),
             "frontier_top_submit_quality_min_edge_margin_bps": float(
                 top_frontier.get("submit_quality_min_edge_margin_bps", 0.0) or 0.0
+            ),
+            "account_growth_profile": str(submit_policy.get("account_growth_profile") or ""),
+            "account_growth_primary_action": str(submit_policy.get("account_growth_primary_action") or ""),
+            "account_growth_submit_frequency_mode": str(
+                submit_policy.get("account_growth_submit_frequency_mode") or ""
+            ),
+            "account_growth_max_orders_per_run": _int(
+                submit_policy.get("account_growth_max_orders_per_run")
+            ),
+            "account_growth_max_order_value": float(
+                submit_policy.get("account_growth_max_order_value", 0.0) or 0.0
             ),
             "selected_market": str(submit_plan.get("selected_market") or ""),
             "selected_markets": list(submit_plan.get("selected_markets") or []),
