@@ -608,6 +608,11 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
     assert by_id["auto_order_readiness"]["metrics"]["frequency_seed_proposal_count"] == 1
     assert by_id["auto_order_readiness"]["metrics"]["frequency_seed_source_candidate_count"] == 2
     assert by_id["auto_order_readiness"]["metrics"]["frequency_seed_source_markets"] == ["US"]
+    assert by_id["auto_order_readiness"]["metrics"]["frequency_seed_evidence_queue_count"] == 1
+    assert by_id["auto_order_readiness"]["metrics"]["frequency_seed_evidence_ready_job_count"] == 1
+    assert by_id["auto_order_readiness"]["metrics"]["frequency_seed_evidence_primary_market"] == "ASX"
+    assert by_id["auto_order_readiness"]["metrics"]["frequency_seed_evidence_primary_symbols"] == "DHHF.AX,BGBL.AX"
+    assert by_id["auto_order_readiness"]["metrics"]["frequency_seed_evidence_mode"] == "YFINANCE_ONLY"
     assert by_id["auto_order_readiness"]["metrics"]["frequency_plan_does_not_change_submit_decision"] == 1
     assert by_id["auto_order_readiness"]["rows"]["frequency_plan"]["seed_proposal_markets"] == ["US"]
     assert by_id["auto_order_readiness"]["metrics"]["stale_execution_refresh_status"] == "WAIT_GATEWAY_BUDGET"
@@ -1074,6 +1079,32 @@ def test_auto_order_readiness_block_backfills_seed_metrics_for_legacy_frequency_
                     "source_candidate_count": 2,
                 },
             ],
+            "seed_evidence_queue": [
+                {
+                    "market": "ASX",
+                    "status": "READY",
+                    "symbols": ["DHHF.AX", "BGBL.AX"],
+                    "evidence_mode": "YFINANCE_ONLY",
+                    "submit_orders": False,
+                }
+            ],
+            "seed_evidence_primary_market": "ASX",
+            "seed_evidence_primary_symbols": ["DHHF.AX", "BGBL.AX"],
+            "seed_evidence_mode": "YFINANCE_ONLY",
+            "seed_promotion_review": [
+                {
+                    "market": "ASX",
+                    "symbol": "DHHF.AX",
+                    "promotion_status": "QUALITY_REJECTED",
+                    "quality_reasons": ["score_below_min", "expected_cost_above_max"],
+                },
+                {
+                    "market": "ASX",
+                    "symbol": "BGBL.AX",
+                    "promotion_status": "QUALITY_REJECTED",
+                    "quality_reasons": ["score_below_min"],
+                },
+            ],
         },
     }
 
@@ -1085,6 +1116,17 @@ def test_auto_order_readiness_block_backfills_seed_metrics_for_legacy_frequency_
     assert block["metrics"]["frequency_seed_intake_plan_count"] == 2
     assert block["metrics"]["frequency_seed_source_candidate_count"] == 4
     assert block["metrics"]["frequency_seed_source_markets"] == ["ASX", "HK"]
+    assert block["metrics"]["frequency_seed_evidence_queue_count"] == 1
+    assert block["metrics"]["frequency_seed_evidence_ready_job_count"] == 1
+    assert block["metrics"]["frequency_seed_evidence_primary_market"] == "ASX"
+    assert block["metrics"]["frequency_seed_evidence_primary_symbols"] == "DHHF.AX,BGBL.AX"
+    assert block["metrics"]["frequency_seed_evidence_mode"] == "YFINANCE_ONLY"
+    assert block["metrics"]["frequency_seed_promotion_quality_rejected_count"] == 2
+    assert block["metrics"]["frequency_seed_promotion_primary_quality_reason"] == "score_below_min"
+    assert block["metrics"]["frequency_seed_promotion_quality_reason_counts"] == {
+        "expected_cost_above_max": 1,
+        "score_below_min": 2,
+    }
     assert block["metrics"]["frequency_plan_does_not_change_submit_decision"] == 1
     assert block["metrics"]["recovery_plan_status"] == "wait_gateway_budget"
     assert block["metrics"]["recovery_plan_target_portfolio_id"] == "US:watchlist"

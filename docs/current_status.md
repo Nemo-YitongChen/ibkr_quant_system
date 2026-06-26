@@ -727,3 +727,14 @@
 - 这会让 `BGBL.AX`、`DHHF.AX` 这类价格低于小账户单笔上限且来源可验证的 ETF 进入候选报告验证路径，而不是直接污染质量失败统计；不会自动改 watchlist、symbol master 或 submit policy。
 - 主程序 shutdown 分析：当前 status 是 `running / ignored_signal:SIGHUP`，没有本地 shutdown event trail 显示崩溃；真正会退出的路径主要是 `SIGINT/SIGTERM`、未捕获异常、`--once` 正常结束、或第二个 Supervisor 因 instance lock 被占用退出。
 - 如果只是 intraday trade engine 停止，应优先看 `supervisor_cycle_summary.json -> trade_engine.reason`；这通常是市场窗口关闭或交易窗口 disabled，不是 Supervisor 主进程崩溃。
+
+## 54. 2026-06-26 Auto-order frequency plan surfaces seed quality rejection
+
+- 已用最新代码刷新本地 `watchlist_expansion_summary.json` 和 `auto_order_readiness.json`；两个工具均为只读路径，不提交订单、不改配置、不放宽任何 gate。
+- 当前 seed expansion 的真实状态不是“等待跑 candidate report”，而是已有 ASX seed review evidence：`DHHF.AX`、`BGBL.AX` 等 8 个 seed 全部为 `QUALITY_REJECTED`，`seed_evidence_queue_count=0`。
+- `build_auto_order_frequency_plan` 新增 `seed_evidence_queue_ready` 状态：当存在 READY seed evidence job 时，primary action 会明确为 `run_seed_candidate_evidence_review`。
+- 同时新增 `seed_evidence_quality_rejected` 状态：当 seed evidence 已跑完但全部被质量门拒绝时，primary action 为 `source_higher_quality_lower_cost_seed_candidates`。
+- 当前刷新后的 auto-order frequency plan：`status=seed_evidence_quality_rejected`、`reason=seed_candidate_quality_rejected:expected_edge_below_min`、`seed_promotion_quality_rejected_count=8`。
+- 当前 seed quality reason 分布：`expected_edge_below_min=8`、`score_below_min=8`、`whole_share_edge_margin_below_min=8`、`whole_share_not_tradable=8`、`liquidity_below_min=5`、`expected_cost_above_max=4`。
+- Dashboard v2 Auto Order block 和 `review_auto_order_readiness.md` 现在会展示 seed evidence queue / quality rejection 指标；legacy fallback 只补缺失字段，不覆盖新版 frequency source metrics。
+- 交易含义：下一步扩池不应降低风险门或 submit gate，而应替换/新增更强的低价、整股可交易 ETF 或大盘股来源；自动提交仍必须先解决 `weekly_review_stale`、stale execution artifact、Gateway budget、fresh BUY plan 和 submit-quality。

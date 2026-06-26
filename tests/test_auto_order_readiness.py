@@ -2078,3 +2078,90 @@ def test_auto_order_readiness_summary_includes_frequency_plan_from_watchlist_exp
     assert summary["candidate_supply_primary_action"] == "resolve_submit_frontier_blocker"
     assert summary["recovery_plan"]["status"] == "manual_review_required"
     assert summary["recovery_plan"]["does_not_submit_orders"] is True
+
+
+def test_auto_order_frequency_plan_prioritizes_ready_seed_evidence_queue() -> None:
+    summary = build_auto_order_readiness_summary(
+        [
+            {
+                "status": BLOCKED_STATUS,
+                "ready": False,
+                "primary_reason": "weekly_review_stale",
+                "hard_blocks": ["weekly_review_stale"],
+                "market": "ASX",
+                "portfolio_id": "ASX:asx_top_quality",
+            }
+        ],
+        policy={"enabled": True},
+        watchlist_expansion_summary={
+            "seed_evidence_queue": [
+                {
+                    "market": "ASX",
+                    "status": "READY",
+                    "symbols": ["DHHF.AX", "BGBL.AX"],
+                    "evidence_mode": "YFINANCE_ONLY",
+                    "submit_orders": False,
+                }
+            ],
+            "seed_evidence_primary_market": "ASX",
+            "seed_evidence_primary_symbols": ["DHHF.AX", "BGBL.AX"],
+            "seed_evidence_mode": "YFINANCE_ONLY",
+        },
+    )
+
+    frequency = summary["frequency_plan"]
+    assert frequency["status"] == "seed_evidence_queue_ready"
+    assert frequency["reason"] == "source_verified_candidates_need_candidate_report"
+    assert frequency["primary_action"] == "run_seed_candidate_evidence_review"
+    assert frequency["seed_evidence_queue_count"] == 1
+    assert frequency["seed_evidence_ready_job_count"] == 1
+    assert frequency["seed_evidence_primary_market"] == "ASX"
+    assert frequency["seed_evidence_primary_symbols"] == ["DHHF.AX", "BGBL.AX"]
+    assert frequency["seed_evidence_mode"] == "YFINANCE_ONLY"
+    assert frequency["does_not_change_submit_decision"] is True
+    assert summary["candidate_supply_status"] == "seed_evidence_queue_ready"
+    assert summary["candidate_supply_primary_action"] == "run_seed_candidate_evidence_review"
+
+
+def test_auto_order_frequency_plan_surfaces_seed_quality_rejections() -> None:
+    summary = build_auto_order_readiness_summary(
+        [
+            {
+                "status": BLOCKED_STATUS,
+                "ready": False,
+                "primary_reason": "weekly_review_stale",
+                "hard_blocks": ["weekly_review_stale"],
+                "market": "ASX",
+                "portfolio_id": "ASX:asx_top_quality",
+            }
+        ],
+        policy={"enabled": True},
+        watchlist_expansion_summary={
+            "seed_promotion_review": [
+                {
+                    "market": "ASX",
+                    "symbol": "DHHF.AX",
+                    "promotion_status": "QUALITY_REJECTED",
+                    "quality_reasons": ["score_below_min", "expected_cost_above_max"],
+                },
+                {
+                    "market": "ASX",
+                    "symbol": "BGBL.AX",
+                    "promotion_status": "QUALITY_REJECTED",
+                    "quality_reasons": ["score_below_min"],
+                },
+            ],
+        },
+    )
+
+    frequency = summary["frequency_plan"]
+    assert frequency["status"] == "seed_evidence_quality_rejected"
+    assert frequency["reason"] == "seed_candidate_quality_rejected:score_below_min"
+    assert frequency["primary_action"] == "source_higher_quality_lower_cost_seed_candidates"
+    assert frequency["seed_promotion_quality_rejected_count"] == 2
+    assert frequency["seed_promotion_primary_quality_reason"] == "score_below_min"
+    assert frequency["seed_promotion_quality_reason_counts"] == {
+        "expected_cost_above_max": 1,
+        "score_below_min": 2,
+    }
+    assert summary["candidate_supply_status"] == "seed_evidence_quality_rejected"

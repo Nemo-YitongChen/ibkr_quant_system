@@ -592,6 +592,28 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "frequency_seed_intake_external_source_count": _int(
                 frequency_plan.get("seed_intake_external_source_count")
             ),
+            "frequency_seed_promotion_quality_rejected_count": _int(
+                frequency_plan.get("seed_promotion_quality_rejected_count")
+            ),
+            "frequency_seed_promotion_primary_quality_reason": str(
+                frequency_plan.get("seed_promotion_primary_quality_reason") or ""
+            ),
+            "frequency_seed_promotion_quality_reason_counts": _dict(
+                frequency_plan.get("seed_promotion_quality_reason_counts")
+            ),
+            "frequency_seed_evidence_queue_count": _int(frequency_plan.get("seed_evidence_queue_count")),
+            "frequency_seed_evidence_ready_job_count": _int(
+                frequency_plan.get("seed_evidence_ready_job_count")
+            ),
+            "frequency_seed_evidence_primary_market": str(
+                frequency_plan.get("seed_evidence_primary_market") or ""
+            ),
+            "frequency_seed_evidence_primary_symbols": ",".join(
+                str(symbol)
+                for symbol in list(frequency_plan.get("seed_evidence_primary_symbols") or [])
+                if str(symbol).strip()
+            ),
+            "frequency_seed_evidence_mode": str(frequency_plan.get("seed_evidence_mode") or ""),
             "frequency_plan_does_not_change_submit_decision": int(
                 bool(frequency_plan.get("does_not_change_submit_decision", False))
             ),
@@ -813,48 +835,97 @@ def _auto_order_frequency_plan_with_watchlist_fallback(
 ) -> Dict[str, Any]:
     """Backfill display-only seed metrics for legacy readiness artifacts."""
     merged = dict(frequency_plan or {})
-    if any(
+    expansion = _dict(payload.get("watchlist_expansion_summary"))
+    seed_proposals = _rows(expansion.get("seed_proposals"), limit=50)
+    seed_intake_plan = _rows(expansion.get("seed_intake_plan"), limit=50)
+    seed_evidence_queue = _rows(expansion.get("seed_evidence_queue"), limit=20)
+    seed_promotion_review = _rows(expansion.get("seed_promotion_review"), limit=50)
+    if not seed_proposals and not seed_intake_plan and not seed_evidence_queue and not seed_promotion_review:
+        return merged
+    ready_seed_jobs = [
+        row for row in seed_evidence_queue if str(row.get("status") or "").strip().upper() == "READY"
+    ]
+    primary_seed_job = dict(ready_seed_jobs[0]) if ready_seed_jobs else {}
+    has_seed_source_metrics = any(
         key in merged
         for key in (
             "seed_intake_plan_count",
             "seed_source_candidate_count",
             "seed_intake_external_source_count",
         )
-    ):
-        return merged
-    expansion = _dict(payload.get("watchlist_expansion_summary"))
-    seed_proposals = _rows(expansion.get("seed_proposals"), limit=50)
-    seed_intake_plan = _rows(expansion.get("seed_intake_plan"), limit=50)
-    if not seed_proposals and not seed_intake_plan:
-        return merged
-    merged.update(
-        {
-            "seed_proposal_count": len(seed_proposals),
-            "manual_seed_proposal_count": sum(1 for row in seed_proposals if not bool(row.get("auto_apply"))),
-            "seed_proposal_markets": [
-                str(row.get("market") or "")
-                for row in seed_proposals
-                if str(row.get("market") or "").strip()
-            ],
-            "seed_intake_plan_count": len(seed_intake_plan),
-            "seed_source_candidate_count": sum(
-                _int(row.get("source_candidate_count"))
-                for row in seed_intake_plan
-            ),
-            "seed_source_markets": [
-                str(row.get("market") or "")
-                for row in seed_intake_plan
-                if _int(row.get("source_candidate_count")) > 0 and str(row.get("market") or "").strip()
-            ],
-            "seed_intake_external_source_count": sum(
-                1
-                for row in seed_intake_plan
-                if str(row.get("intake_status") or "") == "NEEDS_EXTERNAL_PREFERRED_ASSET_SOURCE"
-            ),
-            "does_not_change_submit_decision": bool(
-                merged.get("does_not_change_submit_decision", True)
-            ),
-        }
+    )
+    if not has_seed_source_metrics:
+        merged.update(
+            {
+                "seed_proposal_count": len(seed_proposals),
+                "manual_seed_proposal_count": sum(1 for row in seed_proposals if not bool(row.get("auto_apply"))),
+                "seed_proposal_markets": [
+                    str(row.get("market") or "")
+                    for row in seed_proposals
+                    if str(row.get("market") or "").strip()
+                ],
+                "seed_intake_plan_count": len(seed_intake_plan),
+                "seed_source_candidate_count": sum(
+                    _int(row.get("source_candidate_count"))
+                    for row in seed_intake_plan
+                ),
+                "seed_source_markets": [
+                    str(row.get("market") or "")
+                    for row in seed_intake_plan
+                    if _int(row.get("source_candidate_count")) > 0 and str(row.get("market") or "").strip()
+                ],
+                "seed_intake_external_source_count": sum(
+                    1
+                    for row in seed_intake_plan
+                    if str(row.get("intake_status") or "") == "NEEDS_EXTERNAL_PREFERRED_ASSET_SOURCE"
+                ),
+            }
+        )
+    if "seed_promotion_quality_rejected_count" not in merged:
+        quality_rejected_rows = [
+            row
+            for row in seed_promotion_review
+            if str(row.get("promotion_status") or "").strip().upper() == "QUALITY_REJECTED"
+        ]
+        quality_reason_counts: Dict[str, int] = {}
+        for row in quality_rejected_rows:
+            for reason in list(row.get("quality_reasons") or []):
+                reason_text = str(reason or "").strip()
+                if reason_text:
+                    quality_reason_counts[reason_text] = int(quality_reason_counts.get(reason_text, 0)) + 1
+        primary_reason = (
+            sorted(quality_reason_counts.items(), key=lambda item: (-item[1], item[0]))[0][0]
+            if quality_reason_counts
+            else ""
+        )
+        merged["seed_promotion_quality_rejected_count"] = len(quality_rejected_rows)
+        merged["seed_promotion_quality_reason_counts"] = dict(sorted(quality_reason_counts.items()))
+        merged["seed_promotion_primary_quality_reason"] = primary_reason
+    if "seed_evidence_queue_count" not in merged:
+        merged["seed_evidence_queue_count"] = len(seed_evidence_queue)
+    if "seed_evidence_ready_job_count" not in merged:
+        merged["seed_evidence_ready_job_count"] = len(ready_seed_jobs)
+    if "seed_evidence_primary_market" not in merged:
+        merged["seed_evidence_primary_market"] = str(
+            expansion.get("seed_evidence_primary_market")
+            or primary_seed_job.get("market")
+            or ""
+        )
+    if "seed_evidence_primary_symbols" not in merged:
+        merged["seed_evidence_primary_symbols"] = list(
+            expansion.get("seed_evidence_primary_symbols")
+            or primary_seed_job.get("symbols")
+            or []
+        )
+    if "seed_evidence_mode" not in merged:
+        merged["seed_evidence_mode"] = str(
+            expansion.get("seed_evidence_mode")
+            or primary_seed_job.get("evidence_mode")
+            or primary_seed_job.get("mode")
+            or ""
+        )
+    merged["does_not_change_submit_decision"] = bool(
+        merged.get("does_not_change_submit_decision", True)
     )
     return merged
 

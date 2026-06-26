@@ -184,8 +184,8 @@ def _write_markdown(path: Path, payload: Dict[str, Any]) -> None:
             "",
             "## Frequency Plan",
             "",
-            "| status | reason | primary action | seed proposals | markets | policy |",
-            "| --- | --- | --- | ---: | --- | --- |",
+            "| status | reason | primary action | seed proposals | seed evidence jobs | primary seed | markets | policy |",
+            "| --- | --- | --- | ---: | ---: | --- | --- | --- |",
             "| "
             + " | ".join(
                 [
@@ -193,6 +193,11 @@ def _write_markdown(path: Path, payload: Dict[str, Any]) -> None:
                     str(frequency_plan.get("reason") or "-"),
                     str(frequency_plan.get("primary_action") or "-"),
                     str(int(frequency_plan.get("seed_proposal_count", 0) or 0)),
+                    str(int(frequency_plan.get("seed_evidence_ready_job_count", 0) or 0)),
+                    (
+                        f"{frequency_plan.get('seed_evidence_primary_market', '-')}:"
+                        f"{','.join(str(value) for value in list(frequency_plan.get('seed_evidence_primary_symbols') or [])) or '-'}"
+                    ),
                     ",".join(str(value) for value in list(frequency_plan.get("seed_proposal_markets") or [])) or "-",
                     str(frequency_plan.get("submit_gate_policy") or "-"),
                 ]

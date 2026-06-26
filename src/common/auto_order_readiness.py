@@ -1897,6 +1897,51 @@ def build_auto_order_frequency_plan(
         for row in list(expansion.get("seed_evidence_queue") or [])
         if isinstance(row, Mapping)
     ]
+    seed_promotion_review = [
+        dict(row)
+        for row in list(expansion.get("seed_promotion_review") or [])
+        if isinstance(row, Mapping)
+    ]
+    seed_quality_rejected = [
+        row
+        for row in seed_promotion_review
+        if str(row.get("promotion_status") or "").strip().upper() == "QUALITY_REJECTED"
+    ]
+    seed_quality_reason_counts: Dict[str, int] = {}
+    for row in seed_quality_rejected:
+        for reason in list(row.get("quality_reasons") or []):
+            reason_text = str(reason or "").strip()
+            if reason_text:
+                seed_quality_reason_counts[reason_text] = seed_quality_reason_counts.get(reason_text, 0) + 1
+    seed_primary_quality_reason = (
+        sorted(seed_quality_reason_counts.items(), key=lambda item: (-item[1], item[0]))[0][0]
+        if seed_quality_reason_counts
+        else ""
+    )
+    ready_seed_evidence_jobs = [
+        row
+        for row in seed_evidence_queue
+        if str(row.get("status") or "").strip().upper() == "READY"
+    ]
+    primary_seed_job = dict(ready_seed_evidence_jobs[0]) if ready_seed_evidence_jobs else {}
+    primary_seed_market = str(
+        expansion.get("seed_evidence_primary_market") or primary_seed_job.get("market") or ""
+    ).strip().upper()
+    primary_seed_symbols = [
+        str(symbol or "").strip().upper()
+        for symbol in list(
+            expansion.get("seed_evidence_primary_symbols")
+            or primary_seed_job.get("symbols")
+            or []
+        )
+        if str(symbol or "").strip()
+    ]
+    primary_seed_mode = str(
+        expansion.get("seed_evidence_mode")
+        or primary_seed_job.get("evidence_mode")
+        or primary_seed_job.get("mode")
+        or ""
+    ).strip()
     submit_ready = bool(plan.get("ready", False))
     submit_reason = str(plan.get("reason") or "").strip()
     submit_status = str(plan.get("status") or "").strip().upper()
@@ -1916,6 +1961,18 @@ def build_auto_order_frequency_plan(
         status = "safe_submit_candidate_ready"
         reason = submit_reason or "submit_plan_ready"
         primary_action = "submit_selected_paper_plan_once"
+    elif ready_seed_evidence_jobs:
+        status = "seed_evidence_queue_ready"
+        reason = "source_verified_candidates_need_candidate_report"
+        primary_action = "run_seed_candidate_evidence_review"
+    elif seed_quality_rejected and len(seed_quality_rejected) == len(seed_promotion_review):
+        status = "seed_evidence_quality_rejected"
+        reason = (
+            f"seed_candidate_quality_rejected:{seed_primary_quality_reason}"
+            if seed_primary_quality_reason
+            else "seed_candidate_quality_rejected"
+        )
+        primary_action = "source_higher_quality_lower_cost_seed_candidates"
     elif top_frontier_hard_blocks:
         status = "frontier_blocked"
         reason = str(top_frontier.get("frontier_reason") or top_frontier_hard_blocks[0] or "frontier_not_ready")
@@ -1984,19 +2041,28 @@ def build_auto_order_frequency_plan(
             expansion.get("seed_promotion_candidate_report_required_count"),
             0,
         ),
+        "seed_promotion_quality_rejected_count": len(seed_quality_rejected),
+        "seed_promotion_quality_reason_counts": dict(sorted(seed_quality_reason_counts.items())),
+        "seed_promotion_primary_quality_reason": seed_primary_quality_reason,
         "seed_evidence_queue_count": len(seed_evidence_queue),
-        "seed_evidence_ready_job_count": sum(
-            1
-            for row in seed_evidence_queue
-            if str(row.get("status") or "") == "READY"
-        ),
-        "seed_evidence_primary_market": str(
-            expansion.get("seed_evidence_primary_market") or ""
-        ),
-        "seed_evidence_primary_symbols": list(
-            expansion.get("seed_evidence_primary_symbols") or []
-        ),
-        "seed_evidence_mode": str(expansion.get("seed_evidence_mode") or ""),
+        "seed_evidence_ready_job_count": len(ready_seed_evidence_jobs),
+        "seed_evidence_primary_market": primary_seed_market,
+        "seed_evidence_primary_symbols": primary_seed_symbols,
+        "seed_evidence_mode": primary_seed_mode,
+        "seed_evidence_jobs": [
+            {
+                "market": str(row.get("market") or "").strip().upper(),
+                "status": str(row.get("status") or "").strip().upper(),
+                "symbols": [
+                    str(symbol or "").strip().upper()
+                    for symbol in list(row.get("symbols") or [])
+                    if str(symbol or "").strip()
+                ],
+                "evidence_mode": str(row.get("evidence_mode") or row.get("mode") or "").strip(),
+                "submit_orders": bool(row.get("submit_orders", False)),
+            }
+            for row in seed_evidence_queue[:10]
+        ],
         "submit_capacity_status": str(capacity_plan.get("status") or ""),
         "submit_capacity_reason": str(capacity_plan.get("reason") or ""),
         "submit_capacity_scale_allowed": bool(capacity_plan.get("scale_allowed", False)),
