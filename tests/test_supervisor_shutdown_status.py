@@ -22,7 +22,8 @@ def test_supervisor_writes_shutdown_status(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     supervisor = Supervisor(str(cfg_path))
-    supervisor._code_revision = lambda: "abc123"
+    supervisor._runtime_code_revision = "abc123"
+    supervisor._code_revision = lambda: "current123"
 
     supervisor._last_signal_name = "SIGTERM"
     supervisor._write_shutdown_status(status="stopping", reason="signal:SIGTERM")
@@ -31,6 +32,7 @@ def test_supervisor_writes_shutdown_status(tmp_path: Path) -> None:
     assert payload["status"] == "stopping"
     assert payload["reason"] == "signal:SIGTERM"
     assert payload["code_revision"] == "abc123"
+    assert payload["current_code_revision"] == "current123"
     assert payload["last_signal_name"] == "SIGTERM"
 
     events = [
@@ -42,6 +44,7 @@ def test_supervisor_writes_shutdown_status(tmp_path: Path) -> None:
     assert events[0]["status"] == "stopping"
     assert events[0]["reason"] == "signal:SIGTERM"
     assert events[0]["code_revision"] == "abc123"
+    assert events[0]["current_code_revision"] == "current123"
     assert events[0]["last_signal_name"] == "SIGTERM"
 
 
@@ -59,7 +62,8 @@ def test_supervisor_heartbeat_updates_status_without_event_spam(tmp_path: Path) 
         encoding="utf-8",
     )
     supervisor = Supervisor(str(cfg_path))
-    supervisor._code_revision = lambda: "abc123"
+    supervisor._runtime_code_revision = "abc123"
+    supervisor._code_revision = lambda: "current123"
 
     supervisor._write_shutdown_status(status="running", reason="started")
     supervisor._write_shutdown_status(
@@ -73,6 +77,7 @@ def test_supervisor_heartbeat_updates_status_without_event_spam(tmp_path: Path) 
     assert payload["status"] == "running"
     assert payload["reason"] == "cycle_complete"
     assert payload["code_revision"] == "abc123"
+    assert payload["current_code_revision"] == "current123"
     assert payload["consecutive_cycle_error_count"] == 0
 
     events = [

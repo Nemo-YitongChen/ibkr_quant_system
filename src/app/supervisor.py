@@ -325,6 +325,7 @@ class Supervisor:
         self.cfg = _load_yaml(config_path)
         self.tz = ZoneInfo(str(self.cfg.get("timezone", "Australia/Sydney")))
         self.poll_sec = int(self.cfg.get("poll_sec", 30))
+        self._runtime_code_revision = self._code_revision()
         self.max_consecutive_cycle_errors = max(
             1,
             int(self.cfg.get("max_consecutive_cycle_errors_before_shutdown", 3) or 3),
@@ -436,7 +437,8 @@ class Supervisor:
                 "reason": str(reason or ""),
                 "pid": os.getpid(),
                 "config_path": str(_resolve_path(self.config_path)),
-                "code_revision": self._code_revision(),
+                "code_revision": str(self._runtime_code_revision or ""),
+                "current_code_revision": self._code_revision(),
                 "last_signal_name": str(self._last_signal_name or ""),
                 "written_at": datetime.now(timezone.utc).isoformat(),
             }

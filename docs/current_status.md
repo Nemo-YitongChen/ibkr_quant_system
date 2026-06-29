@@ -755,6 +755,7 @@
 ## 56. 2026-06-29 Auto-order submit gate blocks stale Supervisor code
 
 - `auto_order_readiness` 现在读取 `supervisor_shutdown_status.json`，并把运行中 Supervisor 的 `code_revision` 与当前 repo `HEAD` 比较。
+- Supervisor status 的 `code_revision` 表示进程启动时加载的代码版本；`current_code_revision` 表示写 status 时的当前 repo `HEAD`，用于审计 repo 更新后旧进程是否仍在运行。
 - 只有 `status=running/running_degraded` 的 Supervisor 会触发该 gate；缺少 status artifact 的离线 CLI 分析不会被误阻断。
 - 新增 hard block：`supervisor_code_revision_missing` 和 `supervisor_code_revision_mismatch`。默认配置 `block_on_supervisor_code_revision_mismatch: true`。
 - Supervisor 内部 submit gate 和 `review_auto_order_readiness` CLI 都使用同一逻辑；dashboard Auto Order block 新增 `supervisor_revision_block_count`、`supervisor_code_revision_missing_count`、`supervisor_code_revision_mismatch_count`。

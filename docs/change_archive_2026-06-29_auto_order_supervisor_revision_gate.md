@@ -21,6 +21,10 @@ still running, leaving automated submit controlled by stale in-memory code.
   `reports_supervisor/supervisor_shutdown_status.json`.
 - The readiness evaluator compares running Supervisor `code_revision` against
   the current repository `HEAD`.
+- Supervisor writes `code_revision` as the startup/runtime revision captured
+  when the process starts, not as a dynamic `git rev-parse HEAD` lookup. It also
+  writes `current_code_revision` for audit. This prevents an old in-memory
+  Supervisor from looking fresh after the repository advances.
 - If a running/running-degraded Supervisor has no revision or a different
   revision, all submit-enabled portfolios receive a hard block:
   - `supervisor_code_revision_missing`
