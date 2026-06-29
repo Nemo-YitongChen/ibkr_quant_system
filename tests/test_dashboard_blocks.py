@@ -57,6 +57,10 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
                 "blocked_count": 1,
                 "disabled_count": 0,
                 "primary_block_reason": "preflight_stale",
+                "hard_block_counts": {
+                    "preflight_stale": 1,
+                    "supervisor_code_revision_missing": 1,
+                },
                 "offline_recovery_required_count": 1,
                 "offline_recovery_markets": ["US"],
                 "offline_recovery_summary_text": "offline_recovery_required=1 markets=US top_reason=preflight_stale_after_offline_gap",
@@ -585,6 +589,8 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
     assert by_id["open_market_analysis"]["metrics"]["primary_reason"] == "preflight_stale"
     assert by_id["auto_order_readiness"]["metrics"]["portfolio_count"] == 2
     assert by_id["auto_order_readiness"]["metrics"]["blocked_count"] == 1
+    assert by_id["auto_order_readiness"]["metrics"]["supervisor_revision_block_count"] == 1
+    assert by_id["auto_order_readiness"]["metrics"]["supervisor_code_revision_missing_count"] == 1
     assert by_id["auto_order_readiness"]["metrics"]["offline_recovery_required_count"] == 1
     assert by_id["auto_order_readiness"]["metrics"]["offline_recovery_markets"] == ["US"]
     assert by_id["auto_order_readiness"]["metrics"]["submit_plan_status"] == "BLOCKED"

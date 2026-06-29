@@ -535,6 +535,7 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
     health_status = str(health.get("status") or "ready").strip().lower()
     health_reason = str(health.get("reason") or "").strip()
     health_summary = str(health.get("summary_text") or "").strip()
+    hard_block_counts = _dict(summary.get("hard_block_counts"))
     if not auto_order:
         status = "warn"
         summary_text = "auto_order_readiness artifact missing"
@@ -568,6 +569,16 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "blocked_count": _int(summary.get("blocked_count")),
             "disabled_count": _int(summary.get("disabled_count")),
             "primary_block_reason": str(summary.get("primary_block_reason") or ""),
+            "supervisor_code_revision_missing_count": _int(
+                hard_block_counts.get("supervisor_code_revision_missing")
+            ),
+            "supervisor_code_revision_mismatch_count": _int(
+                hard_block_counts.get("supervisor_code_revision_mismatch")
+            ),
+            "supervisor_revision_block_count": _int(
+                hard_block_counts.get("supervisor_code_revision_missing")
+            )
+            + _int(hard_block_counts.get("supervisor_code_revision_mismatch")),
             "offline_recovery_required_count": _int(summary.get("offline_recovery_required_count")),
             "offline_recovery_markets": list(summary.get("offline_recovery_markets") or []),
             "offline_recovery_summary_text": str(summary.get("offline_recovery_summary_text") or ""),

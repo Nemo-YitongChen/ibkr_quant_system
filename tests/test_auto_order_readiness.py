@@ -101,6 +101,8 @@ def test_auto_order_readiness_allows_fresh_paper_submit() -> None:
         _portfolio(),
         preflight_summary=_preflight(),
         weekly_summary=_weekly(),
+        supervisor_status={"status": "running", "code_revision": "abc123", "pid": 123},
+        current_code_revision="abc123",
         policy={"enabled": True},
         now=NOW,
     )
@@ -108,6 +110,44 @@ def test_auto_order_readiness_allows_fresh_paper_submit() -> None:
     assert result["ready"] is True
     assert result["status"] == READY_STATUS
     assert result["primary_reason"] == "ready"
+    assert result["supervisor_code_revision_status"] == "match"
+
+
+def test_auto_order_readiness_blocks_running_supervisor_missing_code_revision() -> None:
+    result = evaluate_auto_order_readiness(
+        _portfolio(),
+        preflight_summary=_preflight(),
+        weekly_summary=_weekly(),
+        market_readiness_summary=_market_readiness_row(),
+        supervisor_status={"status": "running", "pid": 77976},
+        current_code_revision="abc123",
+        policy={"enabled": True},
+        now=NOW,
+    )
+
+    assert result["ready"] is False
+    assert result["status"] == BLOCKED_STATUS
+    assert result["primary_reason"] == "supervisor_code_revision_missing"
+    assert "supervisor_code_revision_missing" in result["hard_blocks"]
+    assert result["supervisor_code_revision_status"] == "missing"
+
+
+def test_auto_order_readiness_blocks_running_supervisor_code_revision_mismatch() -> None:
+    result = evaluate_auto_order_readiness(
+        _portfolio(),
+        preflight_summary=_preflight(),
+        weekly_summary=_weekly(),
+        market_readiness_summary=_market_readiness_row(),
+        supervisor_status={"status": "running", "pid": 77976, "code_revision": "oldrev"},
+        current_code_revision="newrev",
+        policy={"enabled": True},
+        now=NOW,
+    )
+
+    assert result["ready"] is False
+    assert result["primary_reason"] == "supervisor_code_revision_mismatch"
+    assert "supervisor_code_revision_mismatch" in result["hard_blocks"]
+    assert result["supervisor_code_revision_status"] == "mismatch"
 
 
 def test_auto_order_readiness_blocks_market_readiness_not_ready() -> None:

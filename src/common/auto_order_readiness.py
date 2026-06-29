@@ -15,6 +15,8 @@ DISABLED_STATUS = "DISABLED"
 _BLOCK_REASON_PRIORITY = {
     "live_submit_not_allowed": 10,
     "ibkr_gateway_unavailable": 15,
+    "supervisor_code_revision_missing": 18,
+    "supervisor_code_revision_mismatch": 19,
     "preflight_missing": 20,
     "preflight_failed": 25,
     "preflight_stale": 30,
@@ -70,6 +72,56 @@ def _market(value: Any) -> str:
     return str(value or "").strip().upper()
 
 
+def _supervisor_code_revision_gate(
+    supervisor_status: Mapping[str, Any] | None,
+    current_code_revision: str,
+) -> Dict[str, str]:
+    status = dict(supervisor_status or {})
+    running_state = _status(status.get("status"))
+    if running_state not in {"running", "running_degraded"}:
+        return {
+            "revision_status": "not_running",
+            "reason": "",
+            "detail": "",
+            "supervisor_code_revision": str(status.get("code_revision") or "").strip(),
+            "current_code_revision": str(current_code_revision or "").strip(),
+        }
+    supervisor_revision = str(status.get("code_revision") or "").strip()
+    current_revision = str(current_code_revision or "").strip()
+    if not supervisor_revision:
+        return {
+            "revision_status": "missing",
+            "reason": "supervisor_code_revision_missing",
+            "detail": (
+                f"status={running_state} pid={status.get('pid', '')} "
+                "code_revision is missing"
+            ),
+            "supervisor_code_revision": supervisor_revision,
+            "current_code_revision": current_revision,
+        }
+    if current_revision and supervisor_revision != current_revision:
+        return {
+            "revision_status": "mismatch",
+            "reason": "supervisor_code_revision_mismatch",
+            "detail": (
+                f"status={running_state} pid={status.get('pid', '')} "
+                f"supervisor={supervisor_revision} current={current_revision}"
+            ),
+            "supervisor_code_revision": supervisor_revision,
+            "current_code_revision": current_revision,
+        }
+    return {
+        "revision_status": "match",
+        "reason": "",
+        "detail": (
+            f"status={running_state} pid={status.get('pid', '')} "
+            f"supervisor={supervisor_revision} current={current_revision}"
+        ),
+        "supervisor_code_revision": supervisor_revision,
+        "current_code_revision": current_revision,
+    }
+
+
 def normalize_auto_order_readiness_policy(raw: Mapping[str, Any] | None) -> Dict[str, Any]:
     source = dict(raw or {})
     raw_excluded_markets = source.get("excluded_markets") or source.get("exclude_markets") or []
@@ -115,6 +167,9 @@ def normalize_auto_order_readiness_policy(raw: Mapping[str, Any] | None) -> Dict
         "block_on_missing_weekly_review": bool(source.get("block_on_missing_weekly_review", True)),
         "block_on_stale_weekly_review": bool(source.get("block_on_stale_weekly_review", True)),
         "block_on_gateway_budget_degraded": bool(source.get("block_on_gateway_budget_degraded", True)),
+        "block_on_supervisor_code_revision_mismatch": bool(
+            source.get("block_on_supervisor_code_revision_mismatch", True)
+        ),
         "block_on_missing_market_readiness": bool(source.get("block_on_missing_market_readiness", False)),
         "block_on_market_readiness_not_ready": bool(source.get("block_on_market_readiness_not_ready", True)),
         "warn_on_missing_market_readiness": bool(source.get("warn_on_missing_market_readiness", False)),
@@ -1173,6 +1228,8 @@ def evaluate_auto_order_readiness(
     preflight_summary: Mapping[str, Any] | None = None,
     weekly_summary: Mapping[str, Any] | None = None,
     market_readiness_summary: Mapping[str, Any] | None = None,
+    supervisor_status: Mapping[str, Any] | None = None,
+    current_code_revision: str = "",
     policy: Mapping[str, Any] | None = None,
     now: datetime | None = None,
 ) -> Dict[str, Any]:
@@ -1222,6 +1279,25 @@ def evaluate_auto_order_readiness(
                 "block",
                 f"account_mode={account_mode}",
                 "Set allow_live_submit only after live governance approval.",
+            )
+        )
+
+    supervisor_revision_gate = _supervisor_code_revision_gate(
+        supervisor_status,
+        current_code_revision,
+    )
+    supervisor_revision_reason = str(supervisor_revision_gate.get("reason") or "")
+    if (
+        bool(normalized_policy.get("block_on_supervisor_code_revision_mismatch", True))
+        and supervisor_revision_reason
+    ):
+        hard_blocks.append(supervisor_revision_reason)
+        hard_block_details.append(
+            _block_detail(
+                supervisor_revision_reason,
+                "block",
+                str(supervisor_revision_gate.get("detail") or ""),
+                "Restart Supervisor with the current code before allowing automated submit.",
             )
         )
 
@@ -1643,6 +1719,9 @@ def evaluate_auto_order_readiness(
         "submit_quality_min_edge_margin_bps": _float(market_readiness.get("submit_quality_min_edge_margin_bps"), 0.0),
         "submit_quality_max_expected_cost_bps": _float(market_readiness.get("submit_quality_max_expected_cost_bps"), 0.0),
         "submit_quality_order_types": str(market_readiness.get("submit_quality_order_types") or ""),
+        "supervisor_code_revision_status": str(supervisor_revision_gate.get("revision_status") or ""),
+        "supervisor_code_revision": str(supervisor_revision_gate.get("supervisor_code_revision") or ""),
+        "current_code_revision": str(supervisor_revision_gate.get("current_code_revision") or ""),
         **offline_recovery,
     }
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List
@@ -77,6 +78,23 @@ def _summary_dir(cfg: Dict[str, Any], runtime_root: str) -> Path:
     if bool(cfg.get("scope_summary_out_dir", False)):
         return (_resolve(runtime_root) / raw_path).resolve()
     return _resolve(str(raw_path))
+
+
+def _code_revision() -> str:
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(BASE_DIR),
+            text=True,
+            capture_output=True,
+            timeout=2,
+            check=False,
+        )
+    except Exception:
+        return ""
+    if completed.returncode != 0:
+        return ""
+    return str(completed.stdout or "").strip()
 
 
 def _overlay_gateway_budget_evidence(
@@ -404,6 +422,7 @@ def build_auto_order_readiness_payload(
         if str(watchlist_expansion_path or "").strip()
         else summary_dir / "watchlist_expansion" / "watchlist_expansion_summary.json"
     )
+    supervisor_status_path = summary_dir / "supervisor_shutdown_status.json"
     preflight_summary = _load_json(preflight_path)
     weekly_summary = _load_json(weekly_path)
     gateway_budget_path = weekly_path.parent / "weekly_ibkr_gateway_budget_status.json"
@@ -413,6 +432,8 @@ def build_auto_order_readiness_payload(
     )
     market_readiness_summary = _load_json(market_readiness_json_path)
     watchlist_expansion_summary = _load_json(watchlist_expansion_json_path)
+    supervisor_status = _load_json(supervisor_status_path)
+    current_code_revision = _code_revision()
     if not market_readiness_summary:
         market_readiness_summary = build_market_readiness_payload(
             base_dir=BASE_DIR,
@@ -427,6 +448,8 @@ def build_auto_order_readiness_payload(
             preflight_summary=preflight_summary,
             weekly_summary=weekly_summary,
             market_readiness_summary=market_readiness_summary,
+            supervisor_status=supervisor_status,
+            current_code_revision=current_code_revision,
             policy=policy,
             now=now,
         )
@@ -451,6 +474,9 @@ def build_auto_order_readiness_payload(
         "gateway_budget_path": str(gateway_budget_path),
         "market_readiness_path": str(market_readiness_json_path),
         "watchlist_expansion_path": str(watchlist_expansion_json_path),
+        "supervisor_status_path": str(supervisor_status_path),
+        "current_code_revision": current_code_revision,
+        "supervisor_status": supervisor_status,
         "policy": policy,
         "summary": summary,
         "rows": rows,

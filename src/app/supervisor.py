@@ -3528,6 +3528,8 @@ class Supervisor:
             "weekly_summary": self._auto_order_weekly_summary_payload(),
             "market_readiness_summary": self._market_readiness_summary_payload(),
             "watchlist_expansion_summary": self._watchlist_expansion_summary_payload(),
+            "supervisor_status": _load_json_file(self._shutdown_status_path()),
+            "current_code_revision": self._code_revision(),
             "policy": self._auto_order_readiness_policy(),
         }
 
@@ -3539,6 +3541,8 @@ class Supervisor:
             preflight_summary=common["preflight_summary"],
             weekly_summary=common["weekly_summary"],
             market_readiness_summary=common["market_readiness_summary"],
+            supervisor_status=common["supervisor_status"],
+            current_code_revision=common["current_code_revision"],
             policy=common["policy"],
             now=datetime.now(timezone.utc),
         )
@@ -3558,6 +3562,8 @@ class Supervisor:
                         preflight_summary=common["preflight_summary"],
                         weekly_summary=common["weekly_summary"],
                         market_readiness_summary=common["market_readiness_summary"],
+                        supervisor_status=common["supervisor_status"],
+                        current_code_revision=common["current_code_revision"],
                         policy=common["policy"],
                         now=now_dt,
                     )

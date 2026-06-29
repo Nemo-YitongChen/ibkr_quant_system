@@ -751,3 +751,13 @@
 - “自动 shutdown”主要有两类：`src.main` 子交易进程会在无 active live market 或 trading window disabled 时被 Supervisor 主动停止；Supervisor 顶层进程则会在 `--once`、重复实例 lock、SIGINT/SIGTERM 或未捕获异常时退出。
 - Supervisor 现在新增 cycle heartbeat 与 transient cycle error tolerance：每轮成功后刷新 `supervisor_shutdown_status.json`，但不刷爆 event history；单轮 `run_cycle()` 异常会记录 `running_degraded` 并继续，连续失败达到 `max_consecutive_cycle_errors_before_shutdown` 才升级为 `crashed`。
 - `config/supervisor.yaml` 新增 `max_consecutive_cycle_errors_before_shutdown: 3`。该改动只提升可用性和诊断，不提交订单，不改变 submit policy，不放宽任何交易门。
+
+## 56. 2026-06-29 Auto-order submit gate blocks stale Supervisor code
+
+- `auto_order_readiness` 现在读取 `supervisor_shutdown_status.json`，并把运行中 Supervisor 的 `code_revision` 与当前 repo `HEAD` 比较。
+- 只有 `status=running/running_degraded` 的 Supervisor 会触发该 gate；缺少 status artifact 的离线 CLI 分析不会被误阻断。
+- 新增 hard block：`supervisor_code_revision_missing` 和 `supervisor_code_revision_mismatch`。默认配置 `block_on_supervisor_code_revision_mismatch: true`。
+- Supervisor 内部 submit gate 和 `review_auto_order_readiness` CLI 都使用同一逻辑；dashboard Auto Order block 新增 `supervisor_revision_block_count`、`supervisor_code_revision_missing_count`、`supervisor_code_revision_mismatch_count`。
+- 用当前真实 runtime 只读刷新到 `/private/tmp/ibkr_auto_order_revision_gate/` 验证：active PID `77976` 仍是旧长进程且未上报 `code_revision`，因此 `primary_block_reason=supervisor_code_revision_missing`，6 个可提交组合全部被阻断。
+- 当前仍有其他阻塞：`weekly_review_stale=6`、`market_readiness_not_ready=6`、US `gateway_budget_degraded=2`、HK `strategy_suggestion_stale=2`。但在这些解除之前，旧 Supervisor 也不能自动 submit。
+- 交易含义：这不会降低下单频率；它防止“代码已更新但旧长进程仍在用旧 submit gate”导致错误提交。下一步应在合适窗口优雅重启 Supervisor，然后刷新 weekly review / market readiness / no-submit execution evidence。

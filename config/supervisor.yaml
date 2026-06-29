@@ -66,6 +66,7 @@ auto_order_readiness:
   block_on_stale_preflight: true
   block_on_stale_weekly_review: true
   block_on_gateway_budget_degraded: true
+  block_on_supervisor_code_revision_mismatch: true
   block_on_missing_market_readiness: false
   block_on_market_readiness_not_ready: true
   warn_on_missing_market_readiness: true
