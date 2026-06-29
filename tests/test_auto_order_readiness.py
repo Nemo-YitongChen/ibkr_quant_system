@@ -2157,7 +2157,9 @@ def test_auto_order_frequency_plan_surfaces_seed_quality_rejections() -> None:
     frequency = summary["frequency_plan"]
     assert frequency["status"] == "seed_evidence_quality_rejected"
     assert frequency["reason"] == "seed_candidate_quality_rejected:score_below_min"
-    assert frequency["primary_action"] == "source_higher_quality_lower_cost_seed_candidates"
+    assert frequency["primary_action"] == "source_higher_score_candidates"
+    assert frequency["seed_replacement_primary_action"] == "source_higher_score_candidates"
+    assert frequency["seed_quality_feedback"]["status"] == "ALL_SEEDS_QUALITY_REJECTED"
     assert frequency["seed_promotion_quality_rejected_count"] == 2
     assert frequency["seed_promotion_primary_quality_reason"] == "score_below_min"
     assert frequency["seed_promotion_quality_reason_counts"] == {

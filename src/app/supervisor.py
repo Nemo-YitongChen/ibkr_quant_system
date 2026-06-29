@@ -325,6 +325,10 @@ class Supervisor:
         self.cfg = _load_yaml(config_path)
         self.tz = ZoneInfo(str(self.cfg.get("timezone", "Australia/Sydney")))
         self.poll_sec = int(self.cfg.get("poll_sec", 30))
+        self.max_consecutive_cycle_errors = max(
+            1,
+            int(self.cfg.get("max_consecutive_cycle_errors_before_shutdown", 3) or 3),
+        )
         self._stopping = False
         self.markets = self._load_markets()
         self.holiday_cfg = _load_yaml(str(self.cfg.get("market_holidays_config", "config/market_holidays.yaml")))
@@ -361,6 +365,7 @@ class Supervisor:
         self._dashboard_control_action_history: List[Dict[str, Any]] = []
         self._instance_lock_handle: Any = None
         self._shutdown_reason = "not_started"
+        self._shutdown_status_extra: Dict[str, Any] = {}
         self._last_signal_name = ""
         self._capture_dashboard_control_baselines()
         self._apply_dashboard_control_overrides()
@@ -414,7 +419,14 @@ class Supervisor:
             return ""
         return str(completed.stdout or "").strip()
 
-    def _write_shutdown_status(self, *, status: str, reason: str) -> None:
+    def _write_shutdown_status(
+        self,
+        *,
+        status: str,
+        reason: str,
+        append_event: bool = True,
+        extra: Optional[Mapping[str, Any]] = None,
+    ) -> None:
         try:
             path = self._shutdown_status_path()
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -428,10 +440,13 @@ class Supervisor:
                 "last_signal_name": str(self._last_signal_name or ""),
                 "written_at": datetime.now(timezone.utc).isoformat(),
             }
+            if extra:
+                payload.update(dict(extra))
             path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-            events_path = self._shutdown_events_path()
-            with events_path.open("a", encoding="utf-8") as handle:
-                handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
+            if append_event:
+                events_path = self._shutdown_events_path()
+                with events_path.open("a", encoding="utf-8") as handle:
+                    handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
         except Exception as exc:
             log.debug("Unable to write Supervisor shutdown status: %s: %s", type(exc).__name__, exc)
 
@@ -6715,8 +6730,53 @@ class Supervisor:
                 bool(self._dashboard_control_enabled()),
                 self._dashboard_control_url() if self._dashboard_control_enabled() else "-",
             )
+            consecutive_cycle_errors = 0
             while not self._stopping:
-                self.run_cycle()
+                try:
+                    self.run_cycle()
+                except Exception as exc:
+                    consecutive_cycle_errors += 1
+                    self._shutdown_reason = f"cycle_exception:{type(exc).__name__}"
+                    self._shutdown_status_extra = {
+                        "consecutive_cycle_error_count": consecutive_cycle_errors,
+                        "max_consecutive_cycle_errors": self.max_consecutive_cycle_errors,
+                        "last_cycle_error": str(exc),
+                    }
+                    self._write_shutdown_status(
+                        status="running_degraded",
+                        reason=self._shutdown_reason,
+                        extra=self._shutdown_status_extra,
+                    )
+                    log.exception(
+                        "Supervisor cycle failed; continuing until consecutive error budget is exhausted: "
+                        "count=%s max=%s reason=%s",
+                        consecutive_cycle_errors,
+                        self.max_consecutive_cycle_errors,
+                        self._shutdown_reason,
+                    )
+                    if consecutive_cycle_errors >= self.max_consecutive_cycle_errors:
+                        self._shutdown_reason = f"exception:{type(exc).__name__}"
+                        self._write_shutdown_status(
+                            status="crashed",
+                            reason=self._shutdown_reason,
+                            extra=self._shutdown_status_extra,
+                        )
+                        raise
+                else:
+                    if consecutive_cycle_errors:
+                        log.info("Supervisor cycle recovered after %s failed cycle(s)", consecutive_cycle_errors)
+                    consecutive_cycle_errors = 0
+                    self._shutdown_reason = "running"
+                    self._shutdown_status_extra = {}
+                    self._write_shutdown_status(
+                        status="running",
+                        reason="cycle_complete",
+                        append_event=False,
+                        extra={
+                            "consecutive_cycle_error_count": 0,
+                            "max_consecutive_cycle_errors": self.max_consecutive_cycle_errors,
+                        },
+                    )
                 time.sleep(self.poll_sec)
         except KeyboardInterrupt:
             self._stopping = True
@@ -6726,13 +6786,18 @@ class Supervisor:
         except Exception as exc:
             self._stopping = True
             self._shutdown_reason = f"exception:{type(exc).__name__}"
-            self._write_shutdown_status(status="crashed", reason=self._shutdown_reason)
+            self._write_shutdown_status(status="crashed", reason=self._shutdown_reason, extra=self._shutdown_status_extra)
             log.exception("Supervisor crashed; shutting down reason=%s", self._shutdown_reason)
             raise
         finally:
             self._stop_dashboard_control_service()
             self.trade_proc.stop()
-            self._write_shutdown_status(status=self._final_shutdown_status(), reason=self._shutdown_reason or "stopped")
+            final_status = self._final_shutdown_status()
+            self._write_shutdown_status(
+                status=final_status,
+                reason=self._shutdown_reason or "stopped",
+                extra=self._shutdown_status_extra if final_status == "crashed" else None,
+            )
             self._release_instance_lock()
 
 

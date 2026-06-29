@@ -9,7 +9,12 @@ from ..common.auto_order_readiness import (
     evaluate_auto_order_recovery_eligibility,
 )
 from ..common.dashboard_control_audit import summarize_evidence_action_audit_links
-from ..common.watchlist_expansion import WatchlistExpansionPolicy, selection_reason_summary, summarize_watchlist_expansion
+from ..common.watchlist_expansion import (
+    WatchlistExpansionPolicy,
+    selection_reason_summary,
+    summarize_seed_promotion_quality,
+    summarize_watchlist_expansion,
+)
 
 
 DASHBOARD_BLOCK_CATEGORY_HOME = "home"
@@ -598,6 +603,9 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "frequency_seed_promotion_primary_quality_reason": str(
                 frequency_plan.get("seed_promotion_primary_quality_reason") or ""
             ),
+            "frequency_seed_replacement_primary_action": str(
+                frequency_plan.get("seed_replacement_primary_action") or ""
+            ),
             "frequency_seed_promotion_quality_reason_counts": _dict(
                 frequency_plan.get("seed_promotion_quality_reason_counts")
             ),
@@ -882,25 +890,16 @@ def _auto_order_frequency_plan_with_watchlist_fallback(
             }
         )
     if "seed_promotion_quality_rejected_count" not in merged:
-        quality_rejected_rows = [
-            row
-            for row in seed_promotion_review
-            if str(row.get("promotion_status") or "").strip().upper() == "QUALITY_REJECTED"
-        ]
-        quality_reason_counts: Dict[str, int] = {}
-        for row in quality_rejected_rows:
-            for reason in list(row.get("quality_reasons") or []):
-                reason_text = str(reason or "").strip()
-                if reason_text:
-                    quality_reason_counts[reason_text] = int(quality_reason_counts.get(reason_text, 0)) + 1
-        primary_reason = (
-            sorted(quality_reason_counts.items(), key=lambda item: (-item[1], item[0]))[0][0]
-            if quality_reason_counts
-            else ""
+        quality_feedback = _dict(expansion.get("seed_quality_feedback")) or summarize_seed_promotion_quality(
+            seed_promotion_review
         )
-        merged["seed_promotion_quality_rejected_count"] = len(quality_rejected_rows)
-        merged["seed_promotion_quality_reason_counts"] = dict(sorted(quality_reason_counts.items()))
-        merged["seed_promotion_primary_quality_reason"] = primary_reason
+        merged["seed_quality_feedback"] = quality_feedback
+        merged["seed_promotion_quality_rejected_count"] = _int(quality_feedback.get("quality_rejected_count"))
+        merged["seed_promotion_quality_reason_counts"] = _dict(quality_feedback.get("quality_reason_counts"))
+        merged["seed_promotion_primary_quality_reason"] = str(
+            quality_feedback.get("primary_quality_reason") or ""
+        )
+        merged["seed_replacement_primary_action"] = str(quality_feedback.get("primary_action") or "")
     if "seed_evidence_queue_count" not in merged:
         merged["seed_evidence_queue_count"] = len(seed_evidence_queue)
     if "seed_evidence_ready_job_count" not in merged:
@@ -1144,6 +1143,9 @@ def build_watchlist_expansion_block(payload: Dict[str, Any]) -> Dict[str, Any]:
     account_growth_tier_plan = _dict(summary.get("account_growth_tier_plan")) or _dict(
         fallback_summary.get("account_growth_tier_plan")
     )
+    seed_quality_feedback = _dict(summary.get("seed_quality_feedback")) or summarize_seed_promotion_quality(
+        seed_promotion_review
+    )
     primary_market = str(summary.get("primary_recommendation_market") or fallback_summary.get("primary_recommendation_market") or "")
     primary_reason = str(summary.get("primary_recommendation_reason") or fallback_summary.get("primary_recommendation_reason") or "")
     primary_action = str(summary.get("primary_recommendation_action") or fallback_summary.get("primary_recommendation_action") or "")
@@ -1239,6 +1241,11 @@ def build_watchlist_expansion_block(payload: Dict[str, Any]) -> Dict[str, Any]:
                 for row in seed_promotion_review
                 if str(row.get("promotion_status") or "") == "QUALITY_REJECTED"
             ),
+            "seed_promotion_primary_quality_reason": str(
+                seed_quality_feedback.get("primary_quality_reason") or ""
+            ),
+            "seed_replacement_primary_action": str(seed_quality_feedback.get("primary_action") or ""),
+            "seed_quality_feedback_status": str(seed_quality_feedback.get("status") or ""),
             "seed_evidence_queue_count": len(seed_evidence_queue),
             "seed_evidence_ready_job_count": sum(
                 1
@@ -1287,6 +1294,7 @@ def build_watchlist_expansion_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "seed_promotion_review": seed_promotion_review,
             "seed_evidence_queue": seed_evidence_queue,
             "account_growth_tier_plan": account_growth_tier_plan,
+            "seed_quality_feedback": seed_quality_feedback,
             "policy": _dict(summary.get("policy")),
         },
     }

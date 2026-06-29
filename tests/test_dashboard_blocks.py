@@ -723,6 +723,11 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
     assert by_id["watchlist_expansion"]["metrics"]["seed_promotion_ready_count"] == 0
     assert by_id["watchlist_expansion"]["metrics"]["seed_promotion_mapping_required_count"] == 1
     assert by_id["watchlist_expansion"]["metrics"]["seed_promotion_quality_rejected_count"] == 1
+    assert by_id["watchlist_expansion"]["metrics"]["seed_quality_feedback_status"] == "PARTIAL_SEED_QUALITY_REJECTED"
+    assert (
+        by_id["watchlist_expansion"]["metrics"]["seed_replacement_primary_action"]
+        == "source_higher_quality_lower_cost_seed_candidates"
+    )
     assert by_id["watchlist_expansion"]["metrics"]["primary_seed_intake_status"] == "MANUAL_REVIEW_REQUIRED"
     assert by_id["watchlist_expansion"]["metrics"]["account_growth_profile"] == "small"
     assert (
@@ -1123,6 +1128,7 @@ def test_auto_order_readiness_block_backfills_seed_metrics_for_legacy_frequency_
     assert block["metrics"]["frequency_seed_evidence_mode"] == "YFINANCE_ONLY"
     assert block["metrics"]["frequency_seed_promotion_quality_rejected_count"] == 2
     assert block["metrics"]["frequency_seed_promotion_primary_quality_reason"] == "score_below_min"
+    assert block["metrics"]["frequency_seed_replacement_primary_action"] == "source_higher_score_candidates"
     assert block["metrics"]["frequency_seed_promotion_quality_reason_counts"] == {
         "expected_cost_above_max": 1,
         "score_below_min": 2,

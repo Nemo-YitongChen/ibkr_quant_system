@@ -148,6 +148,83 @@ def _selection_reasons(row: Mapping[str, Any], policy: WatchlistExpansionPolicy)
     return reasons
 
 
+_SEED_QUALITY_REASON_ACTIONS = {
+    "expected_edge_below_min": "source_candidates_with_stronger_expected_edge",
+    "score_below_min": "source_higher_score_candidates",
+    "whole_share_edge_margin_below_min": "source_candidates_with_positive_whole_share_edge_margin",
+    "whole_share_not_tradable": "require_whole_share_tradability_precheck",
+    "liquidity_below_min": "source_more_liquid_candidates",
+    "expected_cost_above_max": "source_lower_cost_candidates",
+    "last_close_above_account_cap": "source_lower_price_candidates",
+    "data_quality_below_min": "source_candidates_with_better_data_coverage",
+    "action_not_allowed": "wait_for_accumulate_or_hold_signal",
+    "execution_not_ready": "wait_for_execution_ready_signal",
+}
+
+
+def summarize_seed_promotion_quality(seed_promotion_review: Iterable[Mapping[str, Any]]) -> Dict[str, Any]:
+    """Summarize seed candidate quality failures into source-replacement guidance."""
+    rows = [dict(row) for row in list(seed_promotion_review or []) if isinstance(row, Mapping)]
+    quality_rejected = [
+        row
+        for row in rows
+        if str(row.get("promotion_status") or "").strip().upper() == "QUALITY_REJECTED"
+    ]
+    reason_counts: Dict[str, int] = {}
+    markets: set[str] = set()
+    symbols: List[str] = []
+    for row in quality_rejected:
+        market = str(row.get("market") or "").strip().upper()
+        symbol = _symbol(row.get("symbol"))
+        if market:
+            markets.add(market)
+        if symbol:
+            symbols.append(symbol)
+        for reason in list(row.get("quality_reasons") or []):
+            reason_text = str(reason or "").strip()
+            if reason_text:
+                reason_counts[reason_text] = int(reason_counts.get(reason_text, 0)) + 1
+    primary_reason = (
+        sorted(reason_counts.items(), key=lambda item: (-item[1], item[0]))[0][0]
+        if reason_counts
+        else ""
+    )
+    primary_action = _SEED_QUALITY_REASON_ACTIONS.get(
+        primary_reason,
+        "source_higher_quality_lower_cost_seed_candidates" if quality_rejected else "none",
+    )
+    if quality_rejected and len(quality_rejected) == len(rows):
+        status = "ALL_SEEDS_QUALITY_REJECTED"
+    elif quality_rejected:
+        status = "PARTIAL_SEED_QUALITY_REJECTED"
+    else:
+        status = "NO_SEED_QUALITY_REJECTIONS"
+    requirements = [
+        {
+            "reason": reason,
+            "count": count,
+            "source_requirement": _SEED_QUALITY_REASON_ACTIONS.get(
+                reason,
+                "source_higher_quality_lower_cost_seed_candidates",
+            ),
+        }
+        for reason, count in sorted(reason_counts.items(), key=lambda item: (-item[1], item[0]))
+    ]
+    return {
+        "status": status,
+        "quality_rejected_count": int(len(quality_rejected)),
+        "review_count": int(len(rows)),
+        "quality_reason_counts": dict(sorted(reason_counts.items())),
+        "primary_quality_reason": primary_reason,
+        "primary_action": primary_action,
+        "affected_markets": sorted(markets),
+        "quality_rejected_symbols": symbols[:20],
+        "source_requirements": requirements[:10],
+        "does_not_relax_submit_gates": True,
+        "auto_apply": False,
+    }
+
+
 def _has_candidate_report_evidence(row: Mapping[str, Any]) -> bool:
     """Separate source-registry rows from actual candidate-report evidence."""
     candidate_fields = (
@@ -821,6 +898,7 @@ def summarize_watchlist_expansion(
         seed_promotion_review,
         account_growth_tier_plan=account_growth_tier_plan,
     )
+    seed_quality_feedback = summarize_seed_promotion_quality(seed_promotion_review)
     primary_seed_evidence_job = dict(seed_evidence_queue[0]) if seed_evidence_queue else {}
     return {
         "candidate_row_count": len(clean_rows),
@@ -871,6 +949,10 @@ def summarize_watchlist_expansion(
             for row in seed_promotion_review
             if str(row.get("promotion_status") or "") == "QUALITY_REJECTED"
         ),
+        "seed_quality_feedback": seed_quality_feedback,
+        "seed_promotion_quality_reason_counts": dict(seed_quality_feedback.get("quality_reason_counts") or {}),
+        "seed_promotion_primary_quality_reason": str(seed_quality_feedback.get("primary_quality_reason") or ""),
+        "seed_replacement_primary_action": str(seed_quality_feedback.get("primary_action") or ""),
         "seed_evidence_queue": seed_evidence_queue,
         "seed_evidence_queue_count": len(seed_evidence_queue),
         "seed_evidence_ready_job_count": sum(

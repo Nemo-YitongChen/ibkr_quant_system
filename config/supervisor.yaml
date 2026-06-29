@@ -1,5 +1,6 @@
 timezone: "Australia/Sydney"
 poll_sec: 30
+max_consecutive_cycle_errors_before_shutdown: 3
 market_holidays_config: "config/market_holidays.yaml"
 summary_out_dir: "reports_supervisor"
 scope_summary_out_dir: true

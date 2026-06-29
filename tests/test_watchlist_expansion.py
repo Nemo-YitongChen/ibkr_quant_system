@@ -13,6 +13,7 @@ from src.common.watchlist_expansion import (
     build_watchlist_expansion_rows,
     selected_watchlist_symbols,
     selection_reason_summary,
+    summarize_seed_promotion_quality,
     summarize_watchlist_expansion,
 )
 from src.tools.expand_investment_watchlists import _latest_seed_evidence_csv
@@ -392,6 +393,46 @@ def test_watchlist_summary_builds_bounded_seed_evidence_queue() -> None:
     assert summary["seed_evidence_primary_market"] == "ASX"
     assert summary["seed_evidence_primary_symbols"] == ["DHHF.AX", "BGBL.AX"]
     assert summary["seed_evidence_mode"] == "YFINANCE_ONLY"
+    assert summary["seed_quality_feedback"]["status"] == "NO_SEED_QUALITY_REJECTIONS"
+    assert summary["seed_replacement_primary_action"] == "none"
+
+
+def test_seed_promotion_quality_summary_builds_replacement_guidance() -> None:
+    feedback = summarize_seed_promotion_quality(
+        [
+            {
+                "market": "ASX",
+                "symbol": "DHHF.AX",
+                "promotion_status": "QUALITY_REJECTED",
+                "quality_reasons": ["score_below_min", "expected_cost_above_max"],
+            },
+            {
+                "market": "ASX",
+                "symbol": "BGBL.AX",
+                "promotion_status": "QUALITY_REJECTED",
+                "quality_reasons": ["score_below_min"],
+            },
+        ]
+    )
+
+    assert feedback["status"] == "ALL_SEEDS_QUALITY_REJECTED"
+    assert feedback["quality_rejected_count"] == 2
+    assert feedback["review_count"] == 2
+    assert feedback["primary_quality_reason"] == "score_below_min"
+    assert feedback["primary_action"] == "source_higher_score_candidates"
+    assert feedback["quality_reason_counts"] == {
+        "expected_cost_above_max": 1,
+        "score_below_min": 2,
+    }
+    assert feedback["affected_markets"] == ["ASX"]
+    assert feedback["quality_rejected_symbols"] == ["DHHF.AX", "BGBL.AX"]
+    assert feedback["source_requirements"][0] == {
+        "reason": "score_below_min",
+        "count": 2,
+        "source_requirement": "source_higher_score_candidates",
+    }
+    assert feedback["does_not_relax_submit_gates"] is True
+    assert feedback["auto_apply"] is False
 
 
 def test_watchlist_seed_intake_plan_keeps_etf_first_review_only() -> None:

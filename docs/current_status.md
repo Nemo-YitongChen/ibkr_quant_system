@@ -738,3 +738,16 @@
 - 当前 seed quality reason 分布：`expected_edge_below_min=8`、`score_below_min=8`、`whole_share_edge_margin_below_min=8`、`whole_share_not_tradable=8`、`liquidity_below_min=5`、`expected_cost_above_max=4`。
 - Dashboard v2 Auto Order block 和 `review_auto_order_readiness.md` 现在会展示 seed evidence queue / quality rejection 指标；legacy fallback 只补缺失字段，不覆盖新版 frequency source metrics。
 - 交易含义：下一步扩池不应降低风险门或 submit gate，而应替换/新增更强的低价、整股可交易 ETF 或大盘股来源；自动提交仍必须先解决 `weekly_review_stale`、stale execution artifact、Gateway budget、fresh BUY plan 和 submit-quality。
+
+## 55. 2026-06-29 HK outcome revalidation and Supervisor cycle resilience
+
+- 已用当前 `market_readiness.json` 与 `reports_investment_weekly/weekly_unified_evidence.csv` 重新刷新 HK-only `opportunity_outcome_validation`，输出到 `runtime_data/paper_investment_only_duq152001/reports_supervisor/hk_opportunity_outcome_validation/`。
+- 当前 HK 正 post-cost candidates 已从 6/24 的组级正面证据转为 `OUTCOME_WEAK_OR_MIXED`：两个 HK portfolio 的当前正 post-cost 符号都只剩 `2359.HK,0005.HK`，5d 仍为正，但 20d 平均为负。
+- 具体结果：bluechip 5d `+65.87bps`、20d `-129.20bps`；tech growth 5d `+72.54bps`、20d `-127.94bps`。`2359.HK` 是主要负贡献，单符号 20d 约 `-650bps` 至 `-681bps`。
+- 当前 HK close `WAIT_PULLBACK` 仍为组级 `OUTCOME_SUPPORTS_GROUP`：bluechip 5d `+125.96bps`、20d `+212.07bps`；tech growth 5d `+126.74bps`、20d `+222.09bps`。
+- WAIT_PULLBACK 的可交易解释必须保持 symbol-aware：`3988.HK`、`2388.HK`、`1398.HK`、`0939.HK`、`0005.HK`、`3328.HK` 支撑较好；`1288.HK` 和 `2359.HK` 的 5d/20d 都为负，不应进入 near-entry trial 子集。
+- 交易含义：本次不支持扩大 HK post-cost threshold trial；支持继续保留 close `WAIT_PULLBACK` 的 paper-only 小额限价 near-entry 研究，但仍必须要求 fresh BUY plan、post-cost positive、submit-quality PASS、Gateway budget OK、whole-share feasible，不放宽 risk/edge/cost/liquidity/market-rule gate。
+- Supervisor 主进程当前 PID `77976` 仍存活，且由 2026-06-16 启动的旧长进程持有 `supervisor.lock`；这解释了为什么 shutdown status 仍缺 `code_revision` / event history，最新代码没有被长进程加载。
+- “自动 shutdown”主要有两类：`src.main` 子交易进程会在无 active live market 或 trading window disabled 时被 Supervisor 主动停止；Supervisor 顶层进程则会在 `--once`、重复实例 lock、SIGINT/SIGTERM 或未捕获异常时退出。
+- Supervisor 现在新增 cycle heartbeat 与 transient cycle error tolerance：每轮成功后刷新 `supervisor_shutdown_status.json`，但不刷爆 event history；单轮 `run_cycle()` 异常会记录 `running_degraded` 并继续，连续失败达到 `max_consecutive_cycle_errors_before_shutdown` 才升级为 `crashed`。
+- `config/supervisor.yaml` 新增 `max_consecutive_cycle_errors_before_shutdown: 3`。该改动只提升可用性和诊断，不提交订单，不改变 submit policy，不放宽任何交易门。

@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Mapping
 
 from .freshness import age_hours_from_timestamp, parse_utc_datetime
+from .watchlist_expansion import summarize_seed_promotion_quality
 
 READY_STATUS = "READY"
 BLOCKED_STATUS = "BLOCKED"
@@ -1902,22 +1903,13 @@ def build_auto_order_frequency_plan(
         for row in list(expansion.get("seed_promotion_review") or [])
         if isinstance(row, Mapping)
     ]
-    seed_quality_rejected = [
-        row
-        for row in seed_promotion_review
-        if str(row.get("promotion_status") or "").strip().upper() == "QUALITY_REJECTED"
-    ]
-    seed_quality_reason_counts: Dict[str, int] = {}
-    for row in seed_quality_rejected:
-        for reason in list(row.get("quality_reasons") or []):
-            reason_text = str(reason or "").strip()
-            if reason_text:
-                seed_quality_reason_counts[reason_text] = seed_quality_reason_counts.get(reason_text, 0) + 1
-    seed_primary_quality_reason = (
-        sorted(seed_quality_reason_counts.items(), key=lambda item: (-item[1], item[0]))[0][0]
-        if seed_quality_reason_counts
-        else ""
+    seed_quality_feedback = (
+        dict(expansion.get("seed_quality_feedback") or {})
+        or summarize_seed_promotion_quality(seed_promotion_review)
     )
+    seed_quality_rejected_count = _int(seed_quality_feedback.get("quality_rejected_count"), 0)
+    seed_primary_quality_reason = str(seed_quality_feedback.get("primary_quality_reason") or "")
+    seed_quality_reason_counts = dict(seed_quality_feedback.get("quality_reason_counts") or {})
     ready_seed_evidence_jobs = [
         row
         for row in seed_evidence_queue
@@ -1965,14 +1957,20 @@ def build_auto_order_frequency_plan(
         status = "seed_evidence_queue_ready"
         reason = "source_verified_candidates_need_candidate_report"
         primary_action = "run_seed_candidate_evidence_review"
-    elif seed_quality_rejected and len(seed_quality_rejected) == len(seed_promotion_review):
+    elif (
+        seed_quality_rejected_count > 0
+        and seed_quality_rejected_count == len(seed_promotion_review)
+    ):
         status = "seed_evidence_quality_rejected"
         reason = (
             f"seed_candidate_quality_rejected:{seed_primary_quality_reason}"
             if seed_primary_quality_reason
             else "seed_candidate_quality_rejected"
         )
-        primary_action = "source_higher_quality_lower_cost_seed_candidates"
+        primary_action = str(
+            seed_quality_feedback.get("primary_action")
+            or "source_higher_quality_lower_cost_seed_candidates"
+        )
     elif top_frontier_hard_blocks:
         status = "frontier_blocked"
         reason = str(top_frontier.get("frontier_reason") or top_frontier_hard_blocks[0] or "frontier_not_ready")
@@ -2041,9 +2039,11 @@ def build_auto_order_frequency_plan(
             expansion.get("seed_promotion_candidate_report_required_count"),
             0,
         ),
-        "seed_promotion_quality_rejected_count": len(seed_quality_rejected),
+        "seed_quality_feedback": seed_quality_feedback,
+        "seed_promotion_quality_rejected_count": seed_quality_rejected_count,
         "seed_promotion_quality_reason_counts": dict(sorted(seed_quality_reason_counts.items())),
         "seed_promotion_primary_quality_reason": seed_primary_quality_reason,
+        "seed_replacement_primary_action": str(seed_quality_feedback.get("primary_action") or ""),
         "seed_evidence_queue_count": len(seed_evidence_queue),
         "seed_evidence_ready_job_count": len(ready_seed_evidence_jobs),
         "seed_evidence_primary_market": primary_seed_market,
