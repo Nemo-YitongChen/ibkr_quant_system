@@ -1252,7 +1252,12 @@ def test_auto_order_readiness_block_overrides_legacy_recovery_when_supervisor_re
     assert block["metrics"]["recovery_eligibility_active"] == 1
     assert block["metrics"]["recovery_eligibility_eligible"] == 0
     assert block["metrics"]["recovery_eligibility_reason"] == "supervisor_runtime_restart_required"
+    assert block["metrics"]["unblock_plan_status"] == "runtime_restart_required"
+    assert block["metrics"]["unblock_plan_primary_action"] == "restart_supervisor_current_code"
+    assert block["metrics"]["unblock_plan_requires_gateway"] == 0
+    assert block["metrics"]["unblock_plan_submit_orders"] == 0
     assert block["rows"]["recovery_plan"]["steps"][0]["requires_ibkr_gateway"] is False
+    assert block["rows"]["unblock_plan"]["source"] == "recovery_plan"
 
 
 def test_evidence_focus_actions_block_keeps_sample_collection_non_warning():

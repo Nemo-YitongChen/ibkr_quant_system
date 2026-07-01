@@ -812,3 +812,13 @@
 - READY / missing / mismatch 三类测试已锁定 runtime action：READY 指向 `continue_monitoring_supervisor_runtime`；missing/mismatch 指向 `restart_supervisor_current_code` 且 request policy 为 `no_ibkr_requests_until_supervisor_runtime_current`。
 - 交易含义：auto-order CLI、dashboard、runtime review、recovery plan 对旧 Supervisor 的下一步判断现在完全一致；本次不新增 stale-lock/liveness submit block，不连接 IBKR，不刷新 evidence，不提交订单，不放宽任何 risk/edge/quality gate。
 - 验证：`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_auto_order_readiness.py tests/test_supervisor_runtime_status.py` -> `67 passed`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider --maxfail=1 -x` -> `778 passed`。
+
+## 62. 2026-07-02 Auto-order readiness emits a single next-unblock plan
+
+- `build_auto_order_readiness_summary` 新增 `unblock_plan`，把 submit plan、recovery plan、frequency plan、remediation plan 合成为单一“下一步先做什么”的只读 contract。
+- `unblock_plan` 输出 `status`、`primary_action`、`phase`、`source`、`requires_ibkr_gateway`、`submit_orders`、target、request policy，并固定 `does_not_change_submit_decision=true`。
+- 当 Supervisor runtime 过旧或缺 revision 时，unblock plan 指向 `runtime_restart_required / restart_supervisor_current_code`，且 `requires_ibkr_gateway=false`。
+- 当 primary blocker 是 `weekly_review_stale` / `weekly_review_missing` 时，unblock plan 指向 `local_weekly_review_required / refresh_weekly_review`，避免把本地周报 stale 误归入 Gateway-backed refresh。
+- `review_auto_order_readiness.md` 新增 `Next Unblock Plan` section；dashboard v2 Auto Order block 新增 unblock plan metrics，并能从旧 auto-order artifact fallback 构建该 plan。
+- 交易含义：系统现在能在 JSON/Markdown/dashboard 上一致显示“先本地解阻塞、再 Gateway dry-run、最后才考虑 paper submit”的顺序；本次不自动执行、不连接 IBKR、不提交订单、不放宽任何 risk/edge/cost/liquidity/market-rule/Gateway/submit-quality gate。
+- 验证：`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_auto_order_readiness.py tests/test_dashboard_blocks.py` -> `77 passed`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider --maxfail=1 -x` -> `779 passed`。

@@ -5,6 +5,7 @@ from typing import Any, Dict, List
 from ..common.alert_classification import summarize_error_classes
 from ..common.auto_order_readiness import (
     build_auto_order_recovery_plan,
+    build_auto_order_unblock_plan,
     build_stale_execution_refresh_plan,
     evaluate_auto_order_recovery_eligibility,
 )
@@ -480,6 +481,12 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
     ) or evaluate_auto_order_recovery_eligibility(recovery_plan)
     if ops_revision_block_reason and str(recovery_plan.get("status") or "") == "runtime_restart_required":
         recovery_eligibility = evaluate_auto_order_recovery_eligibility(recovery_plan)
+    unblock_plan = _dict(summary.get("unblock_plan")) or build_auto_order_unblock_plan(
+        submit_plan=submit_plan,
+        recovery_plan=recovery_plan,
+        frequency_plan=frequency_plan,
+        remediation_plan=_rows(summary.get("remediation_plan"), limit=20),
+    )
     execution_evidence_maintenance = _dict(
         auto_order.get("execution_evidence_maintenance")
     )
@@ -708,6 +715,18 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "recovery_eligibility_active": int(bool(recovery_eligibility.get("active", False))),
             "recovery_eligibility_eligible": int(bool(recovery_eligibility.get("eligible", False))),
             "recovery_eligibility_reason": str(recovery_eligibility.get("reason") or ""),
+            "unblock_plan_status": str(unblock_plan.get("status") or ""),
+            "unblock_plan_primary_action": str(unblock_plan.get("primary_action") or ""),
+            "unblock_plan_phase": str(unblock_plan.get("phase") or ""),
+            "unblock_plan_source": str(unblock_plan.get("source") or ""),
+            "unblock_plan_requires_gateway": int(
+                bool(unblock_plan.get("requires_ibkr_gateway", False))
+            ),
+            "unblock_plan_submit_orders": int(bool(unblock_plan.get("submit_orders", False))),
+            "unblock_plan_target_market": str(unblock_plan.get("target_market") or ""),
+            "unblock_plan_target_portfolio_id": str(
+                unblock_plan.get("target_portfolio_id") or ""
+            ),
             "execution_evidence_maintenance_status": str(
                 execution_evidence_maintenance.get("status")
                 or summary.get("execution_evidence_maintenance_status")
@@ -863,6 +882,7 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "stale_execution_refresh_plan": stale_execution_refresh_plan,
             "recovery_plan": recovery_plan,
             "recovery_eligibility": recovery_eligibility,
+            "unblock_plan": unblock_plan,
             "execution_evidence_maintenance": execution_evidence_maintenance,
             "opportunity_outcome_validation": opportunity_outcome_validation,
             "opportunity_calibration_suggestions": calibration_suggestions,

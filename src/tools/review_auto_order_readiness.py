@@ -158,6 +158,7 @@ def _write_markdown(path: Path, payload: Dict[str, Any]) -> None:
         for row in list(summary.get("remediation_plan") or [])
         if isinstance(row, dict)
     ]
+    unblock_plan = dict(summary.get("unblock_plan") or {})
     lines = [
         "# Auto Order Readiness",
         "",
@@ -166,6 +167,18 @@ def _write_markdown(path: Path, payload: Dict[str, Any]) -> None:
         f"- Summary: {summary.get('summary_text', '-')}",
         f"- Submit plan: {dict(summary.get('submit_plan') or {}).get('status', '-')} "
         f"({dict(summary.get('submit_plan') or {}).get('reason', '-')})",
+        "",
+        "## Next Unblock Plan",
+        "",
+        f"- Status: {unblock_plan.get('status', '-')}",
+        f"- Primary action: {unblock_plan.get('primary_action', '-')}",
+        f"- Phase: {unblock_plan.get('phase', '-')}",
+        f"- Source: {unblock_plan.get('source', '-')}",
+        f"- Target: {unblock_plan.get('target_market', '-')}/"
+        f"{unblock_plan.get('target_portfolio_id', '-')}",
+        f"- Requires Gateway: {unblock_plan.get('requires_ibkr_gateway', False)}",
+        f"- Submit orders: {unblock_plan.get('submit_orders', False)}",
+        f"- Request policy: {unblock_plan.get('request_policy', '-')}",
         "",
         "## Remediation Plan",
         "",

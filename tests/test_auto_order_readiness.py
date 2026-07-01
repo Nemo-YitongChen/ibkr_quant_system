@@ -1586,6 +1586,39 @@ def test_auto_order_readiness_summary_counts_rows() -> None:
     assert summary["offline_recovery_reason_counts"]["preflight_stale_after_offline_gap"] == 1
     assert summary["remediation_plan"][0]["reason"] == "preflight_stale"
     assert summary["remediation_plan"][1]["reason"] == "market_readiness_not_ready"
+    assert summary["unblock_plan"]["status"] == "local_preflight_refresh_required"
+    assert summary["unblock_plan"]["primary_action"] == "refresh_supervisor_preflight"
+    assert summary["unblock_plan"]["requires_ibkr_gateway"] is False
+    assert summary["unblock_plan"]["submit_orders"] is False
+
+
+def test_auto_order_unblock_plan_routes_weekly_review_stale_to_local_evidence() -> None:
+    summary = build_auto_order_readiness_summary(
+        [
+            {
+                "status": BLOCKED_STATUS,
+                "ready": False,
+                "primary_reason": "weekly_review_stale",
+                "hard_blocks": ["weekly_review_stale", "market_readiness_not_ready"],
+                "hard_block_details": [
+                    {
+                        "reason": "weekly_review_stale",
+                        "remediation": "Refresh weekly review before automated submit.",
+                    }
+                ],
+                "market": "HK",
+                "portfolio_id": "HK:resolved_hk_top100_tech_growth",
+            }
+        ]
+    )
+
+    plan = summary["unblock_plan"]
+    assert plan["status"] == "local_weekly_review_required"
+    assert plan["primary_action"] == "refresh_weekly_review"
+    assert plan["phase"] == "local_evidence"
+    assert plan["requires_ibkr_gateway"] is False
+    assert plan["submit_orders"] is False
+    assert plan["affected_markets"] == ["HK"]
 
 
 def test_stale_execution_refresh_plan_ranks_no_submit_target() -> None:
@@ -2062,6 +2095,10 @@ def test_auto_order_recovery_requires_runtime_restart_before_stale_refresh() -> 
     assert plan["estimated_gateway_refresh_count"] == 0
     assert plan["steps"][0]["requires_ibkr_gateway"] is False
     assert plan["steps"][0]["submit_orders"] is False
+    assert summary["unblock_plan"]["status"] == "runtime_restart_required"
+    assert summary["unblock_plan"]["primary_action"] == "restart_supervisor_current_code"
+    assert summary["unblock_plan"]["requires_ibkr_gateway"] is False
+    assert summary["unblock_plan"]["submit_orders"] is False
 
     eligibility = evaluate_auto_order_recovery_eligibility(
         plan,

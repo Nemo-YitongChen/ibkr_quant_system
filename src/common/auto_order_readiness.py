@@ -2551,6 +2551,213 @@ def build_auto_order_recovery_plan(
     }
 
 
+def build_auto_order_unblock_plan(
+    *,
+    submit_plan: Mapping[str, Any] | None = None,
+    recovery_plan: Mapping[str, Any] | None = None,
+    frequency_plan: Mapping[str, Any] | None = None,
+    remediation_plan: Iterable[Mapping[str, Any]] | None = None,
+) -> Dict[str, Any]:
+    """Summarize the next non-submit action that can move auto-order forward."""
+    submit = dict(submit_plan or {})
+    recovery = dict(recovery_plan or {})
+    frequency = dict(frequency_plan or {})
+    remediations = [
+        dict(row)
+        for row in list(remediation_plan or [])
+        if isinstance(row, Mapping)
+    ]
+
+    def finish(
+        *,
+        status: str,
+        primary_action: str,
+        reason: str,
+        phase: str,
+        source: str,
+        requires_gateway: bool = False,
+        target_market: str = "",
+        target_portfolio_id: str = "",
+        target_symbols: str = "",
+        request_policy: str = "no_submit_unblock_planning",
+        affected_markets: Iterable[Any] | None = None,
+        affected_portfolios: Iterable[Any] | None = None,
+    ) -> Dict[str, Any]:
+        return {
+            "status": status,
+            "primary_action": primary_action,
+            "reason": reason,
+            "phase": phase,
+            "source": source,
+            "requires_ibkr_gateway": bool(requires_gateway),
+            "submit_orders": False,
+            "target_market": target_market,
+            "target_portfolio_id": target_portfolio_id,
+            "target_symbols": target_symbols,
+            "request_policy": request_policy,
+            "affected_markets": [
+                str(value or "").strip().upper()
+                for value in list(affected_markets or [])
+                if str(value or "").strip()
+            ],
+            "affected_portfolios": [
+                str(value or "").strip()
+                for value in list(affected_portfolios or [])
+                if str(value or "").strip()
+            ],
+            "paper_only": True,
+            "does_not_submit_orders": True,
+            "does_not_relax_submit_gates": True,
+            "does_not_change_submit_decision": True,
+        }
+
+    if bool(submit.get("ready", False)):
+        return finish(
+            status="submit_review_ready",
+            primary_action="operator_review_selected_paper_plan",
+            reason=str(submit.get("reason") or "safe_paper_submit_candidate_ready"),
+            phase="operator_review",
+            source="submit_plan",
+            target_market=_market(submit.get("selected_market")),
+            target_portfolio_id=str(submit.get("selected_portfolio_id") or ""),
+            target_symbols=str(submit.get("selected_planned_order_symbols") or ""),
+            request_policy="no_refresh_when_submit_plan_is_ready",
+        )
+
+    recovery_status = str(recovery.get("status") or "").strip()
+    if recovery_status and recovery_status not in {"manual_review_required"}:
+        first_step = next(
+            (
+                dict(step)
+                for step in list(recovery.get("steps") or [])
+                if isinstance(step, Mapping)
+            ),
+            {},
+        )
+        return finish(
+            status=recovery_status,
+            primary_action=str(recovery.get("primary_action") or first_step.get("action") or ""),
+            reason=str(recovery.get("reason") or recovery_status),
+            phase=str(first_step.get("phase") or recovery_status),
+            source="recovery_plan",
+            requires_gateway=bool(first_step.get("requires_ibkr_gateway", False)),
+            target_market=str(recovery.get("target_market") or first_step.get("market") or ""),
+            target_portfolio_id=str(
+                recovery.get("target_portfolio_id") or first_step.get("portfolio_id") or ""
+            ),
+            target_symbols=str(recovery.get("target_symbols") or ""),
+            request_policy=str(recovery.get("request_policy") or "single_highest_quality_frontier_only"),
+        )
+
+    primary_remediation = next(
+        (
+            dict(row)
+            for row in remediations
+            if str(row.get("severity") or "").strip().lower() == "block"
+        ),
+        {},
+    )
+    reason = str(primary_remediation.get("reason") or "").strip()
+    if reason:
+        affected_markets = list(primary_remediation.get("affected_markets") or [])
+        affected_portfolios = list(primary_remediation.get("affected_portfolios") or [])
+        if reason in {"weekly_review_missing", "weekly_review_stale"}:
+            return finish(
+                status="local_weekly_review_required",
+                primary_action="refresh_weekly_review",
+                reason=reason,
+                phase="local_evidence",
+                source="remediation_plan",
+                affected_markets=affected_markets,
+                affected_portfolios=affected_portfolios,
+            )
+        if reason in {"preflight_missing", "preflight_failed", "preflight_stale"}:
+            return finish(
+                status="local_preflight_refresh_required",
+                primary_action="refresh_supervisor_preflight",
+                reason=reason,
+                phase="local_evidence",
+                source="remediation_plan",
+                affected_markets=affected_markets,
+                affected_portfolios=affected_portfolios,
+            )
+        if reason == "ibkr_gateway_unavailable":
+            return finish(
+                status="gateway_restore_required",
+                primary_action="restore_ibkr_gateway_paper_api",
+                reason=reason,
+                phase="gateway_recovery",
+                source="remediation_plan",
+                affected_markets=affected_markets,
+                affected_portfolios=affected_portfolios,
+            )
+        if reason == "gateway_budget_degraded":
+            return finish(
+                status="wait_gateway_budget",
+                primary_action="hold_high_request_scans_until_gateway_budget_recovers",
+                reason=reason,
+                phase="gateway_budget",
+                source="remediation_plan",
+                request_policy="wait_for_gateway_budget_before_refresh",
+                affected_markets=affected_markets,
+                affected_portfolios=affected_portfolios,
+            )
+        if reason in {"market_readiness_missing", "market_readiness_not_ready"}:
+            return finish(
+                status="market_readiness_review_required",
+                primary_action="review_market_readiness_before_gateway_refresh",
+                reason=reason,
+                phase="local_evidence",
+                source="remediation_plan",
+                request_policy="inspect_market_readiness_before_gateway_requests",
+                affected_markets=affected_markets,
+                affected_portfolios=affected_portfolios,
+            )
+        return finish(
+            status="manual_blocker_review_required",
+            primary_action="review_auto_order_primary_blocker",
+            reason=reason,
+            phase="manual_review",
+            source="remediation_plan",
+            affected_markets=affected_markets,
+            affected_portfolios=affected_portfolios,
+        )
+
+    frequency_status = str(frequency.get("status") or "").strip()
+    if frequency_status == "seed_evidence_queue_ready":
+        return finish(
+            status="candidate_evidence_required",
+            primary_action=str(frequency.get("primary_action") or "run_seed_candidate_evidence_review"),
+            reason=str(frequency.get("reason") or frequency_status),
+            phase="candidate_supply",
+            source="frequency_plan",
+            target_market=str(frequency.get("seed_evidence_primary_market") or ""),
+            target_symbols=",".join(
+                str(symbol)
+                for symbol in list(frequency.get("seed_evidence_primary_symbols") or [])
+                if str(symbol).strip()
+            ),
+            request_policy="candidate_evidence_review_no_submit",
+        )
+    if frequency_status == "seed_evidence_quality_rejected":
+        return finish(
+            status="candidate_source_replacement_required",
+            primary_action=str(frequency.get("primary_action") or "source_higher_quality_seed_candidates"),
+            reason=str(frequency.get("reason") or frequency_status),
+            phase="candidate_supply",
+            source="frequency_plan",
+            request_policy="source_candidates_before_gateway_refresh",
+        )
+
+    return finish(
+        status="manual_review_required",
+        primary_action="review_submit_frontier_and_candidate_evidence",
+        reason=str(recovery.get("reason") or frequency.get("reason") or "no_actionable_unblock_path"),
+        phase="manual_review",
+        source="summary",
+    )
+
+
 def evaluate_auto_order_recovery_eligibility(
     recovery_plan: Mapping[str, Any] | None,
     *,
@@ -2916,6 +3123,12 @@ def build_auto_order_readiness_summary(
         stale_execution_refresh_plan=stale_execution_refresh_plan,
         global_hard_blocks=sorted_hard_block_counts,
     )
+    unblock_plan = build_auto_order_unblock_plan(
+        submit_plan=submit_plan,
+        recovery_plan=recovery_plan,
+        frequency_plan=frequency_plan,
+        remediation_plan=remediation_plan,
+    )
     return {
         "status": status,
         "summary_text": (
@@ -2943,6 +3156,7 @@ def build_auto_order_readiness_summary(
         "submit_plan": submit_plan,
         "frequency_plan": frequency_plan,
         "recovery_plan": recovery_plan,
+        "unblock_plan": unblock_plan,
         "stale_execution_refresh_plan": stale_execution_refresh_plan,
         "candidate_supply_status": str(frequency_plan.get("status") or ""),
         "candidate_supply_reason": str(frequency_plan.get("reason") or ""),
