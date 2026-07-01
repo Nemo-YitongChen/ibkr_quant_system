@@ -803,3 +803,12 @@
 - 用真实 runtime summary 构建 dashboard 验证：顶层、ops overview 和 Ops Health block 都显示 `next_action=restart_supervisor_current_code`、`blocks_recovery_refresh=true`、`submit_orders=false`。
 - 交易含义：dashboard、CLI、auto-order recovery gate 现在对旧 Supervisor/缺 code revision 的下一步判断一致；仍然不连接 IBKR、不刷新 Gateway-backed evidence、不提交订单、不放宽任何 submit gate。
 - 验证：`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_supervisor_runtime_status.py tests/test_dashboard_shutdown_history.py tests/test_dashboard_blocks.py tests/test_generate_dashboard_helpers.py` -> `66 passed`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider --maxfail=1 -x` -> `778 passed`。
+
+## 61. 2026-07-02 Auto-order readiness reuses Supervisor runtime contract
+
+- `auto_order_readiness` 的 Supervisor revision gate 现在复用 `build_supervisor_runtime_status_from_payloads`，不再单独维护一套 running/missing/mismatch 判断。
+- 既有 submit hard block 保持兼容：运行中的 Supervisor 缺 `code_revision` 仍为 `supervisor_code_revision_missing`，版本不一致仍为 `supervisor_code_revision_mismatch`，非运行态不会因为 revision 产生 block。
+- 每个 auto-order readiness row 新增 `supervisor_runtime_next_action`、`supervisor_runtime_restart_required`、`supervisor_runtime_blocks_recovery_refresh`、`supervisor_runtime_request_policy`、`supervisor_runtime_health_status`。
+- READY / missing / mismatch 三类测试已锁定 runtime action：READY 指向 `continue_monitoring_supervisor_runtime`；missing/mismatch 指向 `restart_supervisor_current_code` 且 request policy 为 `no_ibkr_requests_until_supervisor_runtime_current`。
+- 交易含义：auto-order CLI、dashboard、runtime review、recovery plan 对旧 Supervisor 的下一步判断现在完全一致；本次不新增 stale-lock/liveness submit block，不连接 IBKR，不刷新 evidence，不提交订单，不放宽任何 risk/edge/quality gate。
+- 验证：`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_auto_order_readiness.py tests/test_supervisor_runtime_status.py` -> `67 passed`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider --maxfail=1 -x` -> `778 passed`。

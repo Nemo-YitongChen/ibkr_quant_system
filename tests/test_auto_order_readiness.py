@@ -111,6 +111,9 @@ def test_auto_order_readiness_allows_fresh_paper_submit() -> None:
     assert result["status"] == READY_STATUS
     assert result["primary_reason"] == "ready"
     assert result["supervisor_code_revision_status"] == "match"
+    assert result["supervisor_runtime_next_action"] == "continue_monitoring_supervisor_runtime"
+    assert result["supervisor_runtime_restart_required"] is False
+    assert result["supervisor_runtime_blocks_recovery_refresh"] is False
 
 
 def test_auto_order_readiness_blocks_running_supervisor_missing_code_revision() -> None:
@@ -130,6 +133,10 @@ def test_auto_order_readiness_blocks_running_supervisor_missing_code_revision() 
     assert result["primary_reason"] == "supervisor_code_revision_missing"
     assert "supervisor_code_revision_missing" in result["hard_blocks"]
     assert result["supervisor_code_revision_status"] == "missing"
+    assert result["supervisor_runtime_next_action"] == "restart_supervisor_current_code"
+    assert result["supervisor_runtime_restart_required"] is True
+    assert result["supervisor_runtime_blocks_recovery_refresh"] is True
+    assert result["supervisor_runtime_request_policy"] == "no_ibkr_requests_until_supervisor_runtime_current"
 
 
 def test_auto_order_readiness_blocks_running_supervisor_code_revision_mismatch() -> None:
@@ -148,6 +155,9 @@ def test_auto_order_readiness_blocks_running_supervisor_code_revision_mismatch()
     assert result["primary_reason"] == "supervisor_code_revision_mismatch"
     assert "supervisor_code_revision_mismatch" in result["hard_blocks"]
     assert result["supervisor_code_revision_status"] == "mismatch"
+    assert result["supervisor_runtime_next_action"] == "restart_supervisor_current_code"
+    assert result["supervisor_runtime_restart_required"] is True
+    assert result["supervisor_runtime_blocks_recovery_refresh"] is True
 
 
 def test_auto_order_readiness_blocks_market_readiness_not_ready() -> None:

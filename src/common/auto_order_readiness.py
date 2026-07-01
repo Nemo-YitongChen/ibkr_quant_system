@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import math
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping
 
 from .freshness import age_hours_from_timestamp, parse_utc_datetime
+from .supervisor_runtime_status import build_supervisor_runtime_status_from_payloads
 from .watchlist_expansion import summarize_seed_promotion_quality
 
 READY_STATUS = "READY"
@@ -75,20 +77,35 @@ def _market(value: Any) -> str:
 def _supervisor_code_revision_gate(
     supervisor_status: Mapping[str, Any] | None,
     current_code_revision: str,
-) -> Dict[str, str]:
+) -> Dict[str, Any]:
     status = dict(supervisor_status or {})
     running_state = _status(status.get("status"))
+    runtime = build_supervisor_runtime_status_from_payloads(
+        summary_dir=Path("."),
+        shutdown_status=status,
+        current_revision=str(current_code_revision or "").strip(),
+        pid_alive_func=lambda _pid: None,
+    )
+    supervisor_revision = str(runtime.get("supervisor_code_revision") or "").strip()
+    current_revision = str(runtime.get("current_code_revision") or "").strip()
+    revision_status = str(runtime.get("supervisor_code_revision_status") or "")
+    runtime_fields = {
+        "runtime_next_action": str(runtime.get("next_action") or ""),
+        "runtime_restart_required": bool(runtime.get("restart_required")),
+        "runtime_blocks_recovery_refresh": bool(runtime.get("blocks_recovery_refresh")),
+        "runtime_request_policy": str(runtime.get("request_policy") or ""),
+        "runtime_health_status": str(runtime.get("health_status") or ""),
+    }
     if running_state not in {"running", "running_degraded"}:
         return {
             "revision_status": "not_running",
             "reason": "",
             "detail": "",
-            "supervisor_code_revision": str(status.get("code_revision") or "").strip(),
-            "current_code_revision": str(current_code_revision or "").strip(),
+            "supervisor_code_revision": supervisor_revision,
+            "current_code_revision": current_revision,
+            **runtime_fields,
         }
-    supervisor_revision = str(status.get("code_revision") or "").strip()
-    current_revision = str(current_code_revision or "").strip()
-    if not supervisor_revision:
+    if revision_status == "missing":
         return {
             "revision_status": "missing",
             "reason": "supervisor_code_revision_missing",
@@ -98,8 +115,9 @@ def _supervisor_code_revision_gate(
             ),
             "supervisor_code_revision": supervisor_revision,
             "current_code_revision": current_revision,
+            **runtime_fields,
         }
-    if current_revision and supervisor_revision != current_revision:
+    if revision_status == "mismatch":
         return {
             "revision_status": "mismatch",
             "reason": "supervisor_code_revision_mismatch",
@@ -109,9 +127,10 @@ def _supervisor_code_revision_gate(
             ),
             "supervisor_code_revision": supervisor_revision,
             "current_code_revision": current_revision,
+            **runtime_fields,
         }
     return {
-        "revision_status": "match",
+        "revision_status": "match" if revision_status in {"", "unknown"} else revision_status,
         "reason": "",
         "detail": (
             f"status={running_state} pid={status.get('pid', '')} "
@@ -119,6 +138,7 @@ def _supervisor_code_revision_gate(
         ),
         "supervisor_code_revision": supervisor_revision,
         "current_code_revision": current_revision,
+        **runtime_fields,
     }
 
 
@@ -1722,6 +1742,19 @@ def evaluate_auto_order_readiness(
         "supervisor_code_revision_status": str(supervisor_revision_gate.get("revision_status") or ""),
         "supervisor_code_revision": str(supervisor_revision_gate.get("supervisor_code_revision") or ""),
         "current_code_revision": str(supervisor_revision_gate.get("current_code_revision") or ""),
+        "supervisor_runtime_next_action": str(supervisor_revision_gate.get("runtime_next_action") or ""),
+        "supervisor_runtime_restart_required": bool(
+            supervisor_revision_gate.get("runtime_restart_required")
+        ),
+        "supervisor_runtime_blocks_recovery_refresh": bool(
+            supervisor_revision_gate.get("runtime_blocks_recovery_refresh")
+        ),
+        "supervisor_runtime_request_policy": str(
+            supervisor_revision_gate.get("runtime_request_policy") or ""
+        ),
+        "supervisor_runtime_health_status": str(
+            supervisor_revision_gate.get("runtime_health_status") or ""
+        ),
         **offline_recovery,
     }
 
