@@ -782,3 +782,15 @@
 - Dashboard 指标现在会显示 `recovery_plan_status=runtime_restart_required`、`recovery_plan_primary_action=restart_supervisor_current_code`、`recovery_eligibility_eligible=0`、`recovery_eligibility_reason=supervisor_runtime_restart_required`。
 - 这让 operator 即使只看 dashboard v2，也能先看到“重启当前代码”这个 no-IBKR 前置动作，而不是误以为下一步应该继续 stale execution refresh。
 - 验证：`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_dashboard_blocks.py tests/test_auto_order_readiness.py` -> `76 passed`。
+
+## 59. 2026-07-02 Supervisor runtime status review CLI
+
+- 新增只读 `src.common.supervisor_runtime_status` 与 `python -m src.tools.review_supervisor_runtime`，用于把 `supervisor.lock`、`supervisor_shutdown_status.json`、当前 git revision 和 PID liveness 组合成 `supervisor_runtime_status.json/md`。
+- 该工具不启动/停止 Supervisor、不连接 IBKR、不刷新 report/opportunity/execution、不提交订单；输出显式包含 `submit_orders=false` 与 `does_not_relax_submit_gates=true`。
+- 当前真实 runtime review 写到 `/private/tmp/ibkr_supervisor_runtime_status/`：`supervisor_status=running`、`supervisor_reason=ignored_signal:SIGHUP`、`supervisor_code_revision_status=missing`、`health_status=warning`、`restart_required=true`、`blocks_recovery_refresh=true`、`next_action=restart_supervisor_current_code`。
+- `SIGHUP` 不是自动 shutdown 原因；Supervisor 代码中该信号被记录为 ignored 并继续运行。真正会退出的是 SIGINT/SIGTERM、KeyboardInterrupt，或连续 `run_cycle()` 异常达到 `max_consecutive_cycle_errors_before_shutdown`。
+- 当前 shell `ps -o pid,ppid,etime,stat,command -p 77976` 确认 PID `77976` 仍在运行；sandbox 内直接 `os.kill(pid, 0)` 和未授权 `ps` subprocess 可能被拒绝，因此 artifact 可保守显示 `supervisor_liveness_status=unknown`。
+- 同轮重新生成 HK outcome validation 到 `/private/tmp/ibkr_hk_opportunity_outcomes/`：HK positive post-cost candidates 仍为 `OUTCOME_WEAK_OR_MIXED`，bluechip `5d=65.87bps/20d=-129.20bps`，tech growth `5d=72.54bps/20d=-127.94bps`。
+- HK close `WAIT_PULLBACK` 仍为 `OUTCOME_SUPPORTS_GROUP`，bluechip `5d=125.96bps/20d=212.07bps`，tech growth `5d=126.74bps/20d=222.09bps`；trial-qualified symbols 为 `3988.HK,2388.HK,1398.HK,0939.HK,0005.HK,3328.HK`，`1288.HK,2359.HK` 被排除。
+- 交易含义：不支持扩大 HK post-cost threshold trial；只支持在 Supervisor 重启到当前代码并刷新 fresh BUY/no-submit execution evidence 后，继续评估严格 paper-only near-entry limit trial。
+- 验证：`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_supervisor_runtime_status.py tests/test_review_opportunity_outcomes.py` -> `8 passed`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider --maxfail=1 -x` -> `777 passed`。
