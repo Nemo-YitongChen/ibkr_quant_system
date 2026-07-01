@@ -44,11 +44,16 @@ def test_dashboard_surfaces_supervisor_shutdown_history(tmp_path: Path) -> None:
 
     payload = build_dashboard(str(cfg_path), str(summary_dir))
 
+    assert payload["supervisor_runtime_status"]["supervisor_status"] == "crashed"
+    assert payload["supervisor_runtime_status"]["health_status"] == "degraded"
+    assert payload["supervisor_runtime_status"]["blocks_recovery_refresh"] is True
+    assert payload["supervisor_runtime_status"]["submit_orders"] is False
     assert payload["supervisor_shutdown_status"]["status"] == "crashed"
     assert len(payload["supervisor_shutdown_events"]) == 2
     assert payload["ops_overview"]["supervisor_shutdown_status"] == "crashed"
     assert payload["ops_overview"]["supervisor_shutdown_health_status"] == "degraded"
     assert payload["ops_overview"]["supervisor_shutdown_reason"] == "exception:RuntimeError"
+    assert payload["ops_overview"]["supervisor_runtime_blocks_recovery_refresh"] is True
     assert payload["ops_overview"]["supervisor_shutdown_event_count"] == 2
     assert any(row.get("category") == "SUPERVISOR" for row in payload["ops_overview"]["alert_rows"])
     ops_block = next(block for block in payload["dashboard_v2_blocks"] if block.get("id") == "ops_health")

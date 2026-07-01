@@ -423,6 +423,12 @@ def build_ops_health_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "supervisor_code_revision_status": str(ops.get("supervisor_code_revision_status") or ""),
             "supervisor_code_revision": str(ops.get("supervisor_code_revision") or ""),
             "dashboard_code_revision": str(ops.get("dashboard_code_revision") or ""),
+            "supervisor_runtime_next_action": str(ops.get("supervisor_runtime_next_action") or ""),
+            "supervisor_runtime_restart_required": bool(ops.get("supervisor_runtime_restart_required", False)),
+            "supervisor_runtime_blocks_recovery_refresh": bool(
+                ops.get("supervisor_runtime_blocks_recovery_refresh", False)
+            ),
+            "supervisor_runtime_request_policy": str(ops.get("supervisor_runtime_request_policy") or ""),
             "supervisor_shutdown_event_count": _int(ops.get("supervisor_shutdown_event_count")),
         },
         "rows": alert_rows,

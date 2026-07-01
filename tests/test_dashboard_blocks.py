@@ -37,6 +37,10 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
             "supervisor_shutdown_health_status": "degraded",
             "supervisor_shutdown_reason": "exception:RuntimeError",
             "supervisor_shutdown_last_signal_name": "",
+            "supervisor_runtime_next_action": "inspect_crash_then_restart_supervisor",
+            "supervisor_runtime_restart_required": False,
+            "supervisor_runtime_blocks_recovery_refresh": True,
+            "supervisor_runtime_request_policy": "no_ibkr_requests_until_supervisor_runtime_current",
             "supervisor_shutdown_event_count": 3,
             "alert_rows": [{"status": "warn", "name": "stale"}],
         },
@@ -583,6 +587,12 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
     assert by_id["ops_health"]["metrics"]["supervisor_shutdown_status"] == "crashed"
     assert by_id["ops_health"]["metrics"]["supervisor_shutdown_health_status"] == "degraded"
     assert by_id["ops_health"]["metrics"]["supervisor_shutdown_reason"] == "exception:RuntimeError"
+    assert by_id["ops_health"]["metrics"]["supervisor_runtime_next_action"] == "inspect_crash_then_restart_supervisor"
+    assert by_id["ops_health"]["metrics"]["supervisor_runtime_blocks_recovery_refresh"] is True
+    assert (
+        by_id["ops_health"]["metrics"]["supervisor_runtime_request_policy"]
+        == "no_ibkr_requests_until_supervisor_runtime_current"
+    )
     assert by_id["ops_health"]["metrics"]["supervisor_shutdown_event_count"] == 3
     assert by_id["open_market_analysis"]["metrics"]["open_market_count"] == 1
     assert by_id["open_market_analysis"]["metrics"]["auto_blocked_open_count"] == 1

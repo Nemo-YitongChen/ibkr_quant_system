@@ -5,7 +5,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from src.common import supervisor_runtime_status
-from src.common.supervisor_runtime_status import build_supervisor_runtime_status, pid_alive
+from src.common.supervisor_runtime_status import (
+    build_supervisor_runtime_status,
+    build_supervisor_runtime_status_from_payloads,
+    pid_alive,
+)
 
 
 def _write_json(path: Path, payload: dict) -> None:
@@ -69,6 +73,29 @@ def test_supervisor_runtime_status_marks_current_running_runtime_ready(tmp_path:
     assert payload["restart_required"] is False
     assert payload["blocks_recovery_refresh"] is False
     assert payload["next_action"] == "continue_monitoring_supervisor_runtime"
+
+
+def test_supervisor_runtime_status_from_payloads_handles_running_degraded_revision_mismatch(tmp_path: Path) -> None:
+    payload = build_supervisor_runtime_status_from_payloads(
+        summary_dir=tmp_path / "reports_supervisor",
+        lock_owner={"pid": 123},
+        shutdown_status={
+            "status": "running_degraded",
+            "reason": "cycle_exception:RuntimeError",
+            "pid": 123,
+            "code_revision": "old",
+        },
+        current_revision="new",
+        now=datetime(2026, 7, 2, 1, 0, tzinfo=timezone.utc),
+        pid_alive_func=lambda pid: True,
+    )
+
+    assert payload["supervisor_status"] == "running_degraded"
+    assert payload["health_status"] == "degraded"
+    assert payload["supervisor_code_revision_status"] == "mismatch"
+    assert payload["restart_required"] is True
+    assert payload["blocks_recovery_refresh"] is True
+    assert payload["next_action"] == "restart_supervisor_current_code"
 
 
 def test_supervisor_runtime_status_blocks_on_stale_lock(tmp_path: Path) -> None:

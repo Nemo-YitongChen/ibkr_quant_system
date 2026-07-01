@@ -4,10 +4,8 @@ import argparse
 import csv
 import html
 import json
-import os
 import re
 import sqlite3
-import subprocess
 from collections import deque
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -48,6 +46,12 @@ from ..common.open_market_analysis import build_open_market_analysis_summary
 from ..common.runtime_paths import resolve_repo_path, resolve_scoped_runtime_path, scope_from_ibkr_config
 from ..common.sqlite_utils import connect_sqlite
 from ..common.storage import Storage
+from ..common.supervisor_runtime_status import (
+    RUNNING_SUPERVISOR_STATES,
+    build_supervisor_runtime_status_from_payloads,
+    current_git_revision as _common_current_git_revision,
+    pid_alive as _common_pid_alive,
+)
 from ..common.watchlist_expansion import WatchlistExpansionPolicy, summarize_watchlist_expansion
 from .dashboard_blocks import build_dashboard_v2_blocks, build_evidence_quality_block
 
@@ -5916,36 +5920,11 @@ def _ops_alert_row(category: str, name: str, status: str, detail: str) -> Dict[s
 
 
 def _supervisor_pid_alive(pid_value: Any) -> bool | None:
-    try:
-        pid = int(pid_value or 0)
-    except (TypeError, ValueError):
-        return None
-    if pid <= 0:
-        return None
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except (PermissionError, OSError):
-        return None
-    return True
+    return _common_pid_alive(pid_value)
 
 
 def _current_git_revision() -> str:
-    try:
-        completed = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=str(BASE_DIR),
-            text=True,
-            capture_output=True,
-            timeout=2,
-            check=False,
-        )
-    except Exception:
-        return ""
-    if completed.returncode != 0:
-        return ""
-    return str(completed.stdout or "").strip()
+    return _common_current_git_revision(BASE_DIR)
 
 
 def _with_ops_alert_classification(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -6058,6 +6037,7 @@ def _build_ops_overview(
     open_market_analysis_summary: Dict[str, Any] | None = None,
     supervisor_shutdown_status: Dict[str, Any] | None = None,
     supervisor_shutdown_events: List[Dict[str, Any]] | None = None,
+    supervisor_runtime_status: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     # 运维总览只聚合“现在最值得先处理”的信号：preflight、报告新鲜度、组合健康度和执行模式偏差。
     checks = [dict(row) for row in list(preflight_summary.get("checks", []) or []) if isinstance(row, dict)]
@@ -6175,35 +6155,39 @@ def _build_ops_overview(
     open_market_primary_reason = str(open_market_analysis.get("primary_reason") or "").strip()
     shutdown_status = dict(supervisor_shutdown_status or {})
     shutdown_events = [dict(row) for row in list(supervisor_shutdown_events or []) if isinstance(row, dict)]
-    supervisor_shutdown_state = str(shutdown_status.get("status") or "").strip().lower()
-    supervisor_shutdown_reason = str(shutdown_status.get("reason") or "").strip()
+    dashboard_code_revision = _current_git_revision()
+    runtime_status = dict(supervisor_runtime_status or {})
+    if not runtime_status:
+        runtime_status = build_supervisor_runtime_status_from_payloads(
+            summary_dir=BASE_DIR,
+            shutdown_status=shutdown_status,
+            current_revision=dashboard_code_revision,
+            pid_alive_func=_supervisor_pid_alive,
+        )
+    supervisor_shutdown_state = str(runtime_status.get("supervisor_status") or "").strip().lower()
+    supervisor_shutdown_reason = str(runtime_status.get("supervisor_reason") or "").strip()
     supervisor_shutdown_written_at = str(shutdown_status.get("written_at") or "").strip()
     supervisor_shutdown_last_signal = str(shutdown_status.get("last_signal_name") or "").strip()
-    supervisor_shutdown_pid = int(_safe_float(shutdown_status.get("pid"), 0.0) or 0.0)
-    supervisor_shutdown_pid_alive = _supervisor_pid_alive(supervisor_shutdown_pid)
-    supervisor_shutdown_liveness_status = (
-        "alive"
-        if supervisor_shutdown_pid_alive is True
-        else "dead"
-        if supervisor_shutdown_pid_alive is False
-        else "unknown"
+    supervisor_shutdown_pid = int(_safe_float(runtime_status.get("supervisor_pid"), 0.0) or 0.0)
+    supervisor_shutdown_liveness_status = str(runtime_status.get("supervisor_liveness_status") or "unknown")
+    supervisor_shutdown_pid_alive = (
+        True
+        if supervisor_shutdown_liveness_status == "alive"
+        else False
+        if supervisor_shutdown_liveness_status == "dead"
+        else None
     )
-    supervisor_code_revision = str(shutdown_status.get("code_revision") or "").strip()
-    dashboard_code_revision = _current_git_revision()
-    if supervisor_shutdown_state != "running":
-        supervisor_code_revision_status = ""
-    elif supervisor_code_revision and dashboard_code_revision:
-        supervisor_code_revision_status = (
-            "match" if supervisor_code_revision == dashboard_code_revision else "mismatch"
-        )
-    elif not supervisor_code_revision:
-        supervisor_code_revision_status = "missing"
-    else:
-        supervisor_code_revision_status = "unknown"
+    supervisor_code_revision = str(runtime_status.get("supervisor_code_revision") or "").strip()
+    dashboard_code_revision = str(runtime_status.get("current_code_revision") or dashboard_code_revision)
+    supervisor_code_revision_status = str(runtime_status.get("supervisor_code_revision_status") or "")
+    supervisor_runtime_next_action = str(runtime_status.get("next_action") or "")
+    supervisor_runtime_restart_required = bool(runtime_status.get("restart_required", False))
+    supervisor_runtime_blocks_recovery_refresh = bool(runtime_status.get("blocks_recovery_refresh", False))
+    supervisor_runtime_request_policy = str(runtime_status.get("request_policy") or "")
     if supervisor_shutdown_state == "crashed":
         supervisor_shutdown_health_status = "degraded"
         supervisor_shutdown_status_label = "Supervisor 异常退出"
-    elif supervisor_shutdown_state == "running" and supervisor_shutdown_pid_alive is False:
+    elif supervisor_shutdown_state in RUNNING_SUPERVISOR_STATES and supervisor_shutdown_pid_alive is False:
         supervisor_shutdown_health_status = "degraded"
         supervisor_shutdown_status_label = "Supervisor 状态失效"
         supervisor_shutdown_reason = (
@@ -6211,20 +6195,20 @@ def _build_ops_overview(
             if supervisor_shutdown_pid > 0
             else "running_status_pid_not_alive"
         )
-    elif supervisor_shutdown_state == "running" and supervisor_code_revision_status == "mismatch":
+    elif supervisor_shutdown_state in RUNNING_SUPERVISOR_STATES and supervisor_code_revision_status == "mismatch":
         supervisor_shutdown_health_status = "degraded"
         supervisor_shutdown_status_label = "Supervisor 代码版本不一致"
         supervisor_shutdown_reason = (
             f"running_code_revision_mismatch:{supervisor_code_revision[:12]}!={dashboard_code_revision[:12]}"
         )
-    elif supervisor_shutdown_state == "running" and supervisor_code_revision_status == "missing":
+    elif supervisor_shutdown_state in RUNNING_SUPERVISOR_STATES and supervisor_code_revision_status == "missing":
         supervisor_shutdown_health_status = "warning"
         supervisor_shutdown_status_label = "Supervisor 代码版本未记录"
         supervisor_shutdown_reason = "running_code_revision_missing"
     elif supervisor_shutdown_state in {"stopping", "stopped"}:
         supervisor_shutdown_health_status = "warning"
         supervisor_shutdown_status_label = "Supervisor 已停止"
-    elif supervisor_shutdown_state == "running":
+    elif supervisor_shutdown_state in RUNNING_SUPERVISOR_STATES:
         supervisor_shutdown_health_status = "ready"
         supervisor_shutdown_status_label = "Supervisor 运行中"
     else:
@@ -6498,6 +6482,10 @@ def _build_ops_overview(
         "supervisor_code_revision": supervisor_code_revision,
         "dashboard_code_revision": dashboard_code_revision,
         "supervisor_code_revision_status": supervisor_code_revision_status,
+        "supervisor_runtime_next_action": supervisor_runtime_next_action,
+        "supervisor_runtime_restart_required": supervisor_runtime_restart_required,
+        "supervisor_runtime_blocks_recovery_refresh": supervisor_runtime_blocks_recovery_refresh,
+        "supervisor_runtime_request_policy": supervisor_runtime_request_policy,
         "supervisor_shutdown_event_count": int(len(shutdown_events)),
         "control_service_status": str(service_state.get("status", "disabled") or "disabled"),
         "gateway_runtime_summary": gateway_runtime_summary,
@@ -8121,6 +8109,14 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
     auto_order_readiness = _load_json(summary_dir / "auto_order_readiness.json")
     opportunity_outcome_validation = _load_json(summary_dir / "opportunity_outcome_validation.json")
     supervisor_shutdown_status = _load_json(summary_dir / "supervisor_shutdown_status.json")
+    supervisor_lock_owner = _load_json(summary_dir / "supervisor.lock")
+    supervisor_runtime_status = build_supervisor_runtime_status_from_payloads(
+        summary_dir=summary_dir,
+        lock_owner=supervisor_lock_owner,
+        shutdown_status=supervisor_shutdown_status,
+        current_revision=_current_git_revision(),
+        pid_alive_func=_supervisor_pid_alive,
+    )
     supervisor_shutdown_events = _load_jsonl_tail(summary_dir / "supervisor_shutdown_events.jsonl", limit=20)
     auto_order_policy = dict(cfg.get("auto_order_readiness") or {})
     auto_order_readiness_max_age_hours = float(
@@ -8270,6 +8266,7 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
         open_market_analysis_summary=open_market_analysis_summary,
         supervisor_shutdown_status=supervisor_shutdown_status,
         supervisor_shutdown_events=supervisor_shutdown_events,
+        supervisor_runtime_status=supervisor_runtime_status,
     )
     gateway_runtime_summary = dict(ops_overview.get("gateway_runtime_summary", {}) or {})
     for card in list(trade_cards) + list(dry_run_cards):
@@ -8283,6 +8280,7 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
         "auto_order_readiness": auto_order_readiness,
         "auto_order_readiness_health": auto_order_readiness_health,
         "opportunity_outcome_validation": opportunity_outcome_validation,
+        "supervisor_runtime_status": supervisor_runtime_status,
         "supervisor_shutdown_status": supervisor_shutdown_status,
         "supervisor_shutdown_events": supervisor_shutdown_events,
         "open_market_analysis_summary": open_market_analysis_summary,

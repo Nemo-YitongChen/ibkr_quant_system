@@ -794,3 +794,12 @@
 - HK close `WAIT_PULLBACK` 仍为 `OUTCOME_SUPPORTS_GROUP`，bluechip `5d=125.96bps/20d=212.07bps`，tech growth `5d=126.74bps/20d=222.09bps`；trial-qualified symbols 为 `3988.HK,2388.HK,1398.HK,0939.HK,0005.HK,3328.HK`，`1288.HK,2359.HK` 被排除。
 - 交易含义：不支持扩大 HK post-cost threshold trial；只支持在 Supervisor 重启到当前代码并刷新 fresh BUY/no-submit execution evidence 后，继续评估严格 paper-only near-entry limit trial。
 - 验证：`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_supervisor_runtime_status.py tests/test_review_opportunity_outcomes.py` -> `8 passed`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider --maxfail=1 -x` -> `777 passed`。
+
+## 60. 2026-07-02 Dashboard reuses Supervisor runtime contract
+
+- `src.common.supervisor_runtime_status` 新增 `build_supervisor_runtime_status_from_payloads`，让 dashboard 已加载的 `supervisor.lock` / `supervisor_shutdown_status.json` 与 CLI 使用同一 runtime contract。
+- `generate_dashboard.py` 现在会输出顶层 `supervisor_runtime_status`，同时 `ops_overview` 继续保留既有 `supervisor_shutdown_*` / `supervisor_code_revision_*` 字段，避免破坏旧 dashboard consumer。
+- v2 `Ops Health` block 新增 `supervisor_runtime_next_action`、`supervisor_runtime_restart_required`、`supervisor_runtime_blocks_recovery_refresh`、`supervisor_runtime_request_policy`。
+- 用真实 runtime summary 构建 dashboard 验证：顶层、ops overview 和 Ops Health block 都显示 `next_action=restart_supervisor_current_code`、`blocks_recovery_refresh=true`、`submit_orders=false`。
+- 交易含义：dashboard、CLI、auto-order recovery gate 现在对旧 Supervisor/缺 code revision 的下一步判断一致；仍然不连接 IBKR、不刷新 Gateway-backed evidence、不提交订单、不放宽任何 submit gate。
+- 验证：`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_supervisor_runtime_status.py tests/test_dashboard_shutdown_history.py tests/test_dashboard_blocks.py tests/test_generate_dashboard_helpers.py` -> `66 passed`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider --maxfail=1 -x` -> `778 passed`。

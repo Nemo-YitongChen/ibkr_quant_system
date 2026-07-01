@@ -91,6 +91,13 @@ def _revision_status(status: str, supervisor_revision: str, current_revision: st
     return "unknown"
 
 
+def _int(value: Any, default: int = 0) -> int:
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return int(default)
+
+
 def build_supervisor_runtime_status(
     *,
     summary_dir: Path,
@@ -101,27 +108,53 @@ def build_supervisor_runtime_status(
     pid_alive_func: Callable[[Any], bool | None] = pid_alive,
 ) -> Dict[str, Any]:
     """Build a read-only Supervisor runtime contract from lock/status artifacts."""
+    summary = Path(summary_dir).resolve()
+    lock_path = summary / "supervisor.lock"
+    status_path = summary / "supervisor_shutdown_status.json"
+    return build_supervisor_runtime_status_from_payloads(
+        summary_dir=summary,
+        lock_owner=load_json_file(lock_path),
+        shutdown_status=load_json_file(status_path),
+        config_path=config_path,
+        repo_root=repo_root,
+        now=now,
+        current_revision=current_revision,
+        pid_alive_func=pid_alive_func,
+    )
+
+
+def build_supervisor_runtime_status_from_payloads(
+    *,
+    summary_dir: Path,
+    lock_owner: Mapping[str, Any] | None = None,
+    shutdown_status: Mapping[str, Any] | None = None,
+    config_path: Path | str = "",
+    repo_root: Path | None = None,
+    now: datetime | None = None,
+    current_revision: str | None = None,
+    pid_alive_func: Callable[[Any], bool | None] = pid_alive,
+) -> Dict[str, Any]:
+    """Build a Supervisor runtime contract from already-loaded artifacts."""
     root = Path(repo_root or Path.cwd()).resolve()
     generated_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     summary = Path(summary_dir).resolve()
     lock_path = summary / "supervisor.lock"
     status_path = summary / "supervisor_shutdown_status.json"
-    lock_owner = load_json_file(lock_path)
-    shutdown_status = load_json_file(status_path)
-
-    status = str(shutdown_status.get("status") or "").strip().lower()
-    reason = str(shutdown_status.get("reason") or "").strip()
-    status_pid = int(float(shutdown_status.get("pid") or 0) or 0)
-    lock_pid = int(float(lock_owner.get("pid") or 0) or 0)
+    lock = dict(lock_owner or {})
+    shutdown = dict(shutdown_status or {})
+    status = str(shutdown.get("status") or "").strip().lower()
+    reason = str(shutdown.get("reason") or "").strip()
+    status_pid = _int(shutdown.get("pid"), 0)
+    lock_pid = _int(lock.get("pid"), 0)
     effective_pid = status_pid or lock_pid
     alive = pid_alive_func(effective_pid)
     liveness_status = _liveness_label(alive)
     current = str(current_revision if current_revision is not None else current_git_revision(root) or "").strip()
-    supervisor_revision = str(shutdown_status.get("code_revision") or "").strip()
+    supervisor_revision = str(shutdown.get("code_revision") or "").strip()
     revision_status = _revision_status(status, supervisor_revision, current)
 
     lock_status = "missing"
-    if lock_owner:
+    if lock:
         lock_status = "held"
         if alive is False:
             lock_status = "stale_lock"
@@ -132,7 +165,7 @@ def build_supervisor_runtime_status(
     blocks_recovery_refresh = False
     next_action = "inspect_supervisor_runtime"
     health_status = "warning"
-    if not lock_owner and not shutdown_status:
+    if not lock and not shutdown:
         next_action = "start_supervisor_current_code"
         health_status = "warning"
     elif status == "crashed":
@@ -164,12 +197,12 @@ def build_supervisor_runtime_status(
         "schema_version": "2026Q3.supervisor_runtime_status.v1",
         "generated_at": generated_at.isoformat(),
         "summary_dir": str(summary),
-        "config_path": str(config_path or shutdown_status.get("config_path") or lock_owner.get("config_path") or ""),
+        "config_path": str(config_path or shutdown.get("config_path") or lock.get("config_path") or ""),
         "lock_path": str(lock_path),
         "status_path": str(status_path),
         "lock_status": lock_status,
-        "lock_owner": lock_owner,
-        "shutdown_status": shutdown_status,
+        "lock_owner": lock,
+        "shutdown_status": shutdown,
         "supervisor_status": status,
         "supervisor_reason": reason,
         "supervisor_pid": effective_pid,
