@@ -773,3 +773,12 @@
 - `evaluate_auto_order_recovery_eligibility` 对该状态返回 `active=true`、`eligible=false`、`reason=supervisor_runtime_restart_required`、`allowed_actions=[]`。
 - 这使“旧 Supervisor / 代码版本未知”成为所有 Gateway-backed recovery refresh 前的硬前置条件，避免恢复流程继续消耗 IBKR 请求预算或影响自动下单路径。
 - 验证：`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_auto_order_readiness.py` -> `62 passed`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider --maxfail=1 -x` -> `772 passed`。
+
+## 58. 2026-07-02 Dashboard auto-order block overlays Supervisor runtime restart gate
+
+- 发现实际 `auto_order_readiness.json` 仍由旧 Supervisor 生成，artifact 内的 recovery plan 可能仍是 legacy `manual_review_required` / stale refresh，而 dashboard `ops_overview` 已经能识别 `supervisor_code_revision_status=missing/mismatch`。
+- `build_auto_order_readiness_block` 现在会读取 `ops_overview.supervisor_shutdown_status` 与 `supervisor_code_revision_status`。
+- 当 Supervisor 正在运行且 code revision 为 `missing` 或 `mismatch` 时，Auto Order block 会补入对应 revision hard block count，并覆盖 legacy recovery 展示为 `runtime_restart_required`。
+- Dashboard 指标现在会显示 `recovery_plan_status=runtime_restart_required`、`recovery_plan_primary_action=restart_supervisor_current_code`、`recovery_eligibility_eligible=0`、`recovery_eligibility_reason=supervisor_runtime_restart_required`。
+- 这让 operator 即使只看 dashboard v2，也能先看到“重启当前代码”这个 no-IBKR 前置动作，而不是误以为下一步应该继续 stale execution refresh。
+- 验证：`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_dashboard_blocks.py tests/test_auto_order_readiness.py` -> `76 passed`。

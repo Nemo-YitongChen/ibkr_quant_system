@@ -1171,6 +1171,80 @@ def test_auto_order_readiness_block_backfills_seed_metrics_for_legacy_frequency_
     assert block["rows"]["execution_evidence_maintenance"]["status"] == "COMPLETE"
 
 
+def test_auto_order_readiness_block_overrides_legacy_recovery_when_supervisor_revision_missing():
+    payload = {
+        "ops_overview": {
+            "supervisor_shutdown_status": "running",
+            "supervisor_code_revision_status": "missing",
+            "supervisor_shutdown_reason": "running_code_revision_missing",
+        },
+        "auto_order_readiness": {
+            "summary": {
+                "status": "blocked",
+                "portfolio_count": 1,
+                "blocked_count": 1,
+                "primary_block_reason": "weekly_review_stale",
+                "hard_block_counts": {
+                    "weekly_review_stale": 1,
+                    "market_readiness_not_ready": 1,
+                },
+                "submit_plan": {
+                    "status": "BLOCKED",
+                    "reason": "no_single_safe_submit_candidate",
+                    "frontier_candidates": [
+                        {
+                            "market": "US",
+                            "portfolio_id": "US:watchlist",
+                            "planned_order_symbols": "SCHX",
+                            "submit_quality_status": "NO_BUY_ORDERS",
+                        }
+                    ],
+                },
+                "recovery_plan": {
+                    "status": "manual_review_required",
+                    "primary_action": "review_submit_frontier_and_candidate_evidence",
+                    "gateway_refresh_portfolio_limit": 0,
+                    "estimated_gateway_refresh_count": 0,
+                    "paper_only": True,
+                    "does_not_submit_orders": True,
+                    "does_not_relax_submit_gates": True,
+                },
+                "recovery_eligibility": {
+                    "active": False,
+                    "eligible": False,
+                    "reason": "recovery_plan_not_active",
+                },
+            },
+            "rows": [
+                {
+                    "market": "US",
+                    "portfolio_id": "US:watchlist",
+                    "status": "BLOCKED",
+                    "hard_blocks": ["weekly_review_stale", "market_readiness_not_ready"],
+                    "market_readiness_status": "NEEDS_REFRESH",
+                    "market_readiness_artifact_health_status": "STALE",
+                    "market_readiness_reason": "STALE_EXECUTION_ARTIFACT",
+                    "post_cost_positive_edge_count": 10,
+                    "wait_pullback_close_count": 2,
+                    "submit_quality_status": "NO_BUY_ORDERS",
+                }
+            ],
+        },
+    }
+
+    block = _by_id(build_dashboard_v2_blocks(payload))["auto_order_readiness"]
+
+    assert block["metrics"]["supervisor_code_revision_missing_count"] == 1
+    assert block["metrics"]["supervisor_revision_block_count"] == 1
+    assert block["metrics"]["recovery_plan_status"] == "runtime_restart_required"
+    assert block["metrics"]["recovery_plan_primary_action"] == "restart_supervisor_current_code"
+    assert block["metrics"]["recovery_plan_gateway_refresh_portfolio_limit"] == 0
+    assert block["metrics"]["recovery_eligibility_active"] == 1
+    assert block["metrics"]["recovery_eligibility_eligible"] == 0
+    assert block["metrics"]["recovery_eligibility_reason"] == "supervisor_runtime_restart_required"
+    assert block["rows"]["recovery_plan"]["steps"][0]["requires_ibkr_gateway"] is False
+
+
 def test_evidence_focus_actions_block_keeps_sample_collection_non_warning():
     payload = {
         "evidence_focus_actions": [

@@ -432,6 +432,7 @@ def build_ops_health_block(payload: Dict[str, Any]) -> Dict[str, Any]:
 def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
     auto_order = _dict(payload.get("auto_order_readiness"))
     health = _dict(payload.get("auto_order_readiness_health"))
+    ops = _dict(payload.get("ops_overview"))
     summary = _dict(auto_order.get("summary"))
     submit_plan = _dict(summary.get("submit_plan"))
     submit_capacity_plan = _dict(submit_plan.get("submit_capacity_plan"))
@@ -444,13 +445,35 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
     if not stale_execution_refresh_plan and rows:
         stale_execution_refresh_plan = build_stale_execution_refresh_plan(rows)
         stale_execution_refresh_plan["source"] = "dashboard_legacy_readiness_fallback"
-    recovery_plan = _dict(summary.get("recovery_plan")) or build_auto_order_recovery_plan(
-        rows,
-        submit_plan=submit_plan,
-    )
+    hard_block_counts = _dict(summary.get("hard_block_counts"))
+    supervisor_code_status = str(ops.get("supervisor_code_revision_status") or "").strip().lower()
+    supervisor_state = str(ops.get("supervisor_shutdown_status") or "").strip().lower()
+    ops_revision_block_reason = ""
+    if supervisor_state == "running" and supervisor_code_status in {"missing", "mismatch"}:
+        ops_revision_block_reason = (
+            "supervisor_code_revision_missing"
+            if supervisor_code_status == "missing"
+            else "supervisor_code_revision_mismatch"
+        )
+        hard_block_counts[ops_revision_block_reason] = max(
+            _int(hard_block_counts.get(ops_revision_block_reason)),
+            _int(summary.get("blocked_count")) or 1,
+        )
+    recovery_plan = _dict(summary.get("recovery_plan"))
+    if ops_revision_block_reason and str(recovery_plan.get("status") or "") != "runtime_restart_required":
+        recovery_plan = {}
+    if not recovery_plan:
+        recovery_plan = build_auto_order_recovery_plan(
+            rows,
+            submit_plan=submit_plan,
+            stale_execution_refresh_plan=stale_execution_refresh_plan,
+            global_hard_blocks=hard_block_counts,
+        )
     recovery_eligibility = _dict(
         summary.get("recovery_eligibility")
     ) or evaluate_auto_order_recovery_eligibility(recovery_plan)
+    if ops_revision_block_reason and str(recovery_plan.get("status") or "") == "runtime_restart_required":
+        recovery_eligibility = evaluate_auto_order_recovery_eligibility(recovery_plan)
     execution_evidence_maintenance = _dict(
         auto_order.get("execution_evidence_maintenance")
     )
@@ -535,7 +558,6 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
     health_status = str(health.get("status") or "ready").strip().lower()
     health_reason = str(health.get("reason") or "").strip()
     health_summary = str(health.get("summary_text") or "").strip()
-    hard_block_counts = _dict(summary.get("hard_block_counts"))
     if not auto_order:
         status = "warn"
         summary_text = "auto_order_readiness artifact missing"
