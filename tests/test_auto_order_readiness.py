@@ -2004,6 +2004,66 @@ def test_auto_order_recovery_eligibility_allows_stale_no_submit_refresh_without_
     assert result["submit_orders"] is False
 
 
+def test_auto_order_recovery_requires_runtime_restart_before_stale_refresh() -> None:
+    summary = build_auto_order_readiness_summary(
+        [
+            {
+                "status": BLOCKED_STATUS,
+                "ready": False,
+                "primary_reason": "supervisor_code_revision_missing",
+                "hard_blocks": [
+                    "supervisor_code_revision_missing",
+                    "weekly_review_stale",
+                    "market_readiness_not_ready",
+                ],
+                "hard_block_details": [
+                    {
+                        "reason": "supervisor_code_revision_missing",
+                        "detail": "status=running pid=77976 code_revision is missing",
+                        "remediation": "Restart Supervisor with the current code before allowing automated submit.",
+                    }
+                ],
+                "warnings": [],
+                "market": "US",
+                "portfolio_id": "US:watchlist",
+                "market_readiness_status": "NEEDS_REFRESH",
+                "market_readiness_artifact_health_status": "STALE",
+                "market_readiness_reason": "STALE_EXECUTION_ARTIFACT",
+                "offline_recovery_required": True,
+                "offline_recovery_reasons": ["market_readiness_artifact_stale", "weekly_review_stale"],
+                "order_count": 1,
+                "planned_buy_order_value": 0.0,
+                "planned_sell_order_value": 29.59,
+                "planned_order_symbols": "SCHX",
+                "post_cost_positive_edge_count": 15,
+                "post_cost_high_cost_positive_edge_count": 10,
+                "wait_pullback_close_count": 2,
+                "submit_quality_status": "NO_BUY_ORDERS",
+                "submit_quality_reason": "no_planned_buy_orders",
+            }
+        ],
+        policy={"enabled": True},
+    )
+
+    plan = summary["recovery_plan"]
+    assert plan["status"] == "runtime_restart_required"
+    assert plan["primary_action"] == "restart_supervisor_current_code"
+    assert plan["gateway_refresh_portfolio_limit"] == 0
+    assert plan["estimated_gateway_refresh_count"] == 0
+    assert plan["steps"][0]["requires_ibkr_gateway"] is False
+    assert plan["steps"][0]["submit_orders"] is False
+
+    eligibility = evaluate_auto_order_recovery_eligibility(
+        plan,
+        now=datetime(2026, 7, 2, 1, 0, tzinfo=timezone.utc),
+    )
+
+    assert eligibility["active"] is True
+    assert eligibility["eligible"] is False
+    assert eligibility["reason"] == "supervisor_runtime_restart_required"
+    assert eligibility["allowed_actions"] == []
+
+
 def test_stale_frontier_uses_non_blocking_evidence_maintenance() -> None:
     rows = [
         {

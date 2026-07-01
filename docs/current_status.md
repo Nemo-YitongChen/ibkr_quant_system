@@ -762,3 +762,14 @@
 - 用当前真实 runtime 只读刷新到 `/private/tmp/ibkr_auto_order_revision_gate/` 验证：active PID `77976` 仍是旧长进程且未上报 `code_revision`，因此 `primary_block_reason=supervisor_code_revision_missing`，6 个可提交组合全部被阻断。
 - 当前仍有其他阻塞：`weekly_review_stale=6`、`market_readiness_not_ready=6`、US `gateway_budget_degraded=2`、HK `strategy_suggestion_stale=2`。但在这些解除之前，旧 Supervisor 也不能自动 submit。
 - 交易含义：这不会降低下单频率；它防止“代码已更新但旧长进程仍在用旧 submit gate”导致错误提交。下一步应在合适窗口优雅重启 Supervisor，然后刷新 weekly review / market readiness / no-submit execution evidence。
+
+## 57. 2026-07-02 Auto-order recovery waits for current Supervisor runtime
+
+- 当前真实 runtime 仍由 PID `77976` 持有 `supervisor.lock`，该长进程从 2026-06-16 启动，`supervisor_shutdown_status.json` 仍缺 `code_revision/current_code_revision`。
+- 用当前代码只读刷新 `review_auto_order_readiness` 到 `/private/tmp/ibkr_auto_order_readiness_after_runtime_gate/` 后，`primary_block_reason=supervisor_code_revision_missing`。
+- 之前 submit 已会被 stale Supervisor revision 阻断，但 recovery plan 仍可能给出 `stale_execution_refresh_required` 且 `recovery_eligibility.eligible=true`，这会让旧运行态下继续尝试 report + execution no-submit refresh。
+- `build_auto_order_recovery_plan` 现在接收 summary 级 `global_hard_blocks`；只要存在 `supervisor_code_revision_missing` 或 `supervisor_code_revision_mismatch`，recovery plan 优先变成 `runtime_restart_required`。
+- `runtime_restart_required` 的唯一 step 是 `restart_supervisor_current_code`，`requires_ibkr_gateway=false`、`gateway_refresh_portfolio_limit=0`、`estimated_gateway_refresh_count=0`、`submit_orders=false`。
+- `evaluate_auto_order_recovery_eligibility` 对该状态返回 `active=true`、`eligible=false`、`reason=supervisor_runtime_restart_required`、`allowed_actions=[]`。
+- 这使“旧 Supervisor / 代码版本未知”成为所有 Gateway-backed recovery refresh 前的硬前置条件，避免恢复流程继续消耗 IBKR 请求预算或影响自动下单路径。
+- 验证：`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_auto_order_readiness.py` -> `62 passed`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider --maxfail=1 -x` -> `772 passed`。

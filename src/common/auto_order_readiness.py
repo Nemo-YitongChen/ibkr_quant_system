@@ -2170,6 +2170,7 @@ def build_auto_order_recovery_plan(
     *,
     submit_plan: Mapping[str, Any] | None = None,
     stale_execution_refresh_plan: Mapping[str, Any] | None = None,
+    global_hard_blocks: Mapping[str, Any] | Iterable[str] | None = None,
 ) -> Dict[str, Any]:
     """Build the minimum-request recovery path for the highest-quality paper frontier."""
     clean_rows = [dict(row) for row in list(rows or []) if isinstance(row, Mapping)]
@@ -2181,6 +2182,58 @@ def build_auto_order_recovery_plan(
         if isinstance(row, Mapping)
     ]
     top_frontier = dict(frontier_candidates[0]) if frontier_candidates else {}
+    if isinstance(global_hard_blocks, Mapping):
+        global_block_reasons = {
+            str(reason or "").strip()
+            for reason, count in dict(global_hard_blocks).items()
+            if str(reason or "").strip() and _int(count, 0) > 0
+        }
+    else:
+        global_block_reasons = {
+            str(reason or "").strip()
+            for reason in list(global_hard_blocks or [])
+            if str(reason or "").strip()
+        }
+    supervisor_revision_blocks = [
+        reason
+        for reason in ("supervisor_code_revision_missing", "supervisor_code_revision_mismatch")
+        if reason in global_block_reasons
+    ]
+    if supervisor_revision_blocks:
+        primary_reason = supervisor_revision_blocks[0]
+        return {
+            "status": "runtime_restart_required",
+            "primary_action": "restart_supervisor_current_code",
+            "reason": primary_reason,
+            "target_market": "",
+            "target_portfolio_id": "",
+            "target_symbols": "",
+            "target_submit_quality_status": "",
+            "target_net_edge_bps": 0.0,
+            "target_edge_margin_bps": 0.0,
+            "target_ranking_bucket": "",
+            "target_gateway_budget_blocked": False,
+            "gateway_budget_projected_recovery_at": "",
+            "gateway_refresh_portfolio_limit": 0,
+            "estimated_gateway_refresh_count": 0,
+            "request_policy": "restart_supervisor_before_any_recovery_refresh",
+            "step_count": 1,
+            "steps": [
+                {
+                    "order": 1,
+                    "phase": "runtime_restart",
+                    "action": "restart_supervisor_current_code",
+                    "requires_ibkr_gateway": False,
+                    "market": "",
+                    "portfolio_id": "",
+                    "condition": "running Supervisor code revision is missing or mismatched; do not run recovery refresh before restart",
+                    "submit_orders": False,
+                }
+            ],
+            "paper_only": True,
+            "does_not_submit_orders": True,
+            "does_not_relax_submit_gates": True,
+        }
     if bool(plan.get("ready", False)):
         selected_portfolio_id = str(plan.get("selected_portfolio_id") or "").strip()
         selected_market = _market(plan.get("selected_market"))
@@ -2494,6 +2547,7 @@ def evaluate_auto_order_recovery_eligibility(
         "targeted_frontier_refresh_required",
         "stale_execution_refresh_required",
     }
+    runtime_restart_required = status == "runtime_restart_required"
     maintenance_status = status == "evidence_maintenance_required"
     maintenance_eligible = bool(
         maintenance_status
@@ -2502,10 +2556,14 @@ def evaluate_auto_order_recovery_eligibility(
         and contract_safe
         and target_quality == "PASS"
     )
-    active = status in active_statuses and bool(target_market and target_portfolio_id)
+    active = bool(runtime_restart_required or (status in active_statuses and target_market and target_portfolio_id))
     eligible = False
     reason = "recovery_plan_not_active"
-    if status == "submit_review_ready":
+    if runtime_restart_required:
+        reason = str(plan.get("reason") or "supervisor_runtime_restart_required")
+        if reason in {"supervisor_code_revision_missing", "supervisor_code_revision_mismatch"}:
+            reason = "supervisor_runtime_restart_required"
+    elif status == "submit_review_ready":
         reason = "submit_plan_ready_no_refresh"
     elif maintenance_status:
         reason = (
@@ -2823,6 +2881,7 @@ def build_auto_order_readiness_summary(
         clean_rows,
         submit_plan=submit_plan,
         stale_execution_refresh_plan=stale_execution_refresh_plan,
+        global_hard_blocks=sorted_hard_block_counts,
     )
     return {
         "status": status,
