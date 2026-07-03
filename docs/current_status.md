@@ -856,3 +856,11 @@
 - `run_cycle` 在 per-item execution submit readiness gate 中传入 recovery context 的 rows；找不到匹配时仍回退到旧的 direct evaluation 路径。
 - 交易含义：同一 Supervisor cycle 内 readiness、submit plan、recovery context 使用同一份 readiness snapshot，减少重复本地 artifact 读取和分叉风险；本次不连接 IBKR、不提交订单、不改变候选、不放宽任何 risk/edge/cost/liquidity/market-rule/Gateway/submit-quality gate。
 - 验证：`python -m py_compile src/app/supervisor.py`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_supervisor_cli.py::SupervisorCliTests::test_auto_order_readiness_for_item_uses_cycle_cached_row tests/test_supervisor_cli.py::SupervisorCliTests::test_auto_order_submit_plan_allows_only_selected_portfolio` -> `2 passed`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_supervisor_cli.py tests/test_auto_order_readiness.py` -> `196 passed`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider --maxfail=1 -x` -> `782 passed`。
+
+## 67. 2026-07-03 Supervisor initializes submit-plan cache from recovery context
+
+- 新增 `_auto_order_submit_plan_from_recovery_context`，从 `recovery_context.summary.submit_plan` 提取 submit plan 副本。
+- `run_cycle` 的 `auto_order_submit_plan_cache` 现在优先使用 recovery context 已生成的 submit plan；只有 recovery context 缺失或无 submit plan 时，才在首次 submit gate 走原来的 lazy fallback。
+- 这使 readiness rows、submit plan、recovery plan、unblock plan 在同一 cycle 内都可来自同一份 auto-order summary snapshot。
+- 交易含义：进一步减少同 cycle 内重复读取 artifacts / 重建 summary 的机会，也降低 submit gate 与 recovery/dashboard 视图分叉风险；本次不连接 IBKR、不提交订单、不改变候选、不放宽任何 risk/edge/cost/liquidity/market-rule/Gateway/submit-quality gate。
+- 验证：`python -m py_compile src/app/supervisor.py`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_supervisor_cli.py::SupervisorCliTests::test_auto_order_submit_plan_from_recovery_context_returns_copy tests/test_supervisor_cli.py::SupervisorCliTests::test_auto_order_submit_plan_allows_only_selected_portfolio tests/test_supervisor_cli.py::SupervisorCliTests::test_auto_order_readiness_for_item_uses_cycle_cached_row` -> `3 passed`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_supervisor_cli.py tests/test_auto_order_readiness.py` -> `197 passed`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider --maxfail=1 -x` -> `783 passed`。

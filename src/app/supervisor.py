@@ -3788,6 +3788,16 @@ class Supervisor:
         context = self._auto_order_readiness_summary_context()
         return dict(dict(context.get("summary") or {}).get("submit_plan") or {})
 
+    @staticmethod
+    def _auto_order_submit_plan_from_recovery_context(
+        recovery_context: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        summary = dict((recovery_context or {}).get("summary") or {})
+        submit_plan = summary.get("submit_plan")
+        if not isinstance(submit_plan, dict) or not submit_plan:
+            return None
+        return dict(submit_plan)
+
     def _auto_order_recovery_context(self, now: datetime) -> Dict[str, Any]:
         if not self._auto_order_readiness_enabled():
             return {
@@ -6120,7 +6130,9 @@ class Supervisor:
                     exc,
                 )
                 recovery_context = {}
-            auto_order_submit_plan_cache: Optional[Dict[str, Any]] = None
+            auto_order_submit_plan_cache = self._auto_order_submit_plan_from_recovery_context(
+                recovery_context
+            )
             auto_order_readiness_rows_cache: List[Dict[str, Any]] = [
                 dict(row)
                 for row in list(recovery_context.get("rows") or [])

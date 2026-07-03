@@ -165,6 +165,21 @@ class SupervisorCliTests(unittest.TestCase):
             self.assertTrue(readiness["ready"])
             self.assertEqual(readiness["primary_reason"], "ready")
 
+    def test_auto_order_submit_plan_from_recovery_context_returns_copy(self):
+        plan = {
+            "ready": True,
+            "status": "READY_SINGLE_CANDIDATE",
+            "selected_portfolio_id": "US:watchlist",
+        }
+
+        cached = Supervisor._auto_order_submit_plan_from_recovery_context(
+            {"summary": {"submit_plan": plan}}
+        )
+
+        self.assertEqual(cached, plan)
+        self.assertIsNot(cached, plan)
+        self.assertIsNone(Supervisor._auto_order_submit_plan_from_recovery_context({}))
+
     def test_auto_order_recovery_action_allows_only_target_report_and_dry_run_execution(self):
         with tempfile.TemporaryDirectory() as tmp:
             cfg_path = Path(tmp) / "supervisor.yaml"
