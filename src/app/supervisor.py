@@ -28,7 +28,6 @@ from ..common.adaptive_strategy import (
 )
 from ..common.auto_order_readiness import (
     build_auto_order_readiness_summary,
-    build_auto_order_submit_plan,
     evaluate_auto_order_readiness,
     evaluate_auto_order_recovery_eligibility,
 )
@@ -3570,6 +3569,49 @@ class Supervisor:
                 )
         return rows
 
+    def _auto_order_readiness_summary_context(
+        self,
+        *,
+        now: Optional[datetime] = None,
+        common_inputs: Optional[Dict[str, Any]] = None,
+        include_maintenance_state: bool = False,
+    ) -> Dict[str, Any]:
+        common = common_inputs or self._auto_order_readiness_common_inputs()
+        rows = self._auto_order_readiness_rows(common_inputs=common)
+        summary = build_auto_order_readiness_summary(
+            rows,
+            policy=common["policy"],
+            watchlist_expansion_summary=common.get("watchlist_expansion_summary"),
+            weekly_summary=common.get("weekly_summary"),
+        )
+        summary["recovery_eligibility"] = evaluate_auto_order_recovery_eligibility(
+            summary.get("recovery_plan"),
+            now=now or datetime.now(timezone.utc),
+        )
+        maintenance_state: Dict[str, Any] = {}
+        if include_maintenance_state:
+            maintenance_state = _load_json_file(
+                self._execution_evidence_maintenance_state_path()
+            )
+            summary["execution_evidence_maintenance_status"] = str(
+                maintenance_state.get("status") or ""
+            )
+            summary["execution_evidence_maintenance_reason"] = str(
+                maintenance_state.get("reason") or ""
+            )
+            summary["execution_evidence_maintenance_target_market"] = str(
+                maintenance_state.get("target_market") or ""
+            )
+            summary["execution_evidence_maintenance_target_portfolio_id"] = str(
+                maintenance_state.get("target_portfolio_id") or ""
+            )
+        return {
+            "common": common,
+            "rows": rows,
+            "summary": summary,
+            "maintenance_state": maintenance_state,
+        }
+
     def _execution_evidence_maintenance_readiness_rows(
         self,
         now: datetime,
@@ -3726,15 +3768,8 @@ class Supervisor:
         return True
 
     def _auto_order_submit_plan(self) -> Dict[str, Any]:
-        common = self._auto_order_readiness_common_inputs()
-        return build_auto_order_submit_plan(
-            self._auto_order_readiness_rows(common_inputs=common),
-            policy=common["policy"],
-            weekly_summary=common["weekly_summary"],
-            account_growth_tier_plan=dict(common.get("watchlist_expansion_summary") or {}).get(
-                "account_growth_tier_plan"
-            ),
-        )
+        context = self._auto_order_readiness_summary_context()
+        return dict(dict(context.get("summary") or {}).get("submit_plan") or {})
 
     def _auto_order_recovery_context(self, now: datetime) -> Dict[str, Any]:
         if not self._auto_order_readiness_enabled():
@@ -3747,21 +3782,14 @@ class Supervisor:
                     "reason": "auto_order_readiness_disabled",
                 },
             }
-        common = self._auto_order_readiness_common_inputs()
-        rows = self._auto_order_readiness_rows(common_inputs=common)
-        summary = build_auto_order_readiness_summary(
-            rows,
-            policy=common["policy"],
-            weekly_summary=common["weekly_summary"],
-            watchlist_expansion_summary=common.get("watchlist_expansion_summary"),
-        )
+        context = self._auto_order_readiness_summary_context(now=now)
+        summary = dict(context.get("summary") or {})
         recovery_plan = dict(summary.get("recovery_plan") or {})
-        eligibility = evaluate_auto_order_recovery_eligibility(recovery_plan, now=now)
         return {
             "plan": recovery_plan,
             "unblock_plan": dict(summary.get("unblock_plan") or {}),
             "stale_execution_refresh_plan": dict(summary.get("stale_execution_refresh_plan") or {}),
-            "eligibility": eligibility,
+            "eligibility": dict(summary.get("recovery_eligibility") or {}),
             "summary": summary,
         }
 
@@ -4122,33 +4150,13 @@ class Supervisor:
         policy = self._auto_order_readiness_policy()
         if not bool(policy.get("enabled", False)):
             return False
-        common = self._auto_order_readiness_common_inputs()
-        rows = self._auto_order_readiness_rows(common_inputs=common)
-        summary = build_auto_order_readiness_summary(
-            rows,
-            policy=policy,
-            watchlist_expansion_summary=common.get("watchlist_expansion_summary"),
-            weekly_summary=common.get("weekly_summary"),
-        )
-        summary["recovery_eligibility"] = evaluate_auto_order_recovery_eligibility(
-            summary.get("recovery_plan"),
+        context = self._auto_order_readiness_summary_context(
             now=now,
+            include_maintenance_state=True,
         )
-        maintenance_state = _load_json_file(
-            self._execution_evidence_maintenance_state_path()
-        )
-        summary["execution_evidence_maintenance_status"] = str(
-            maintenance_state.get("status") or ""
-        )
-        summary["execution_evidence_maintenance_reason"] = str(
-            maintenance_state.get("reason") or ""
-        )
-        summary["execution_evidence_maintenance_target_market"] = str(
-            maintenance_state.get("target_market") or ""
-        )
-        summary["execution_evidence_maintenance_target_portfolio_id"] = str(
-            maintenance_state.get("target_portfolio_id") or ""
-        )
+        rows = list(context.get("rows") or [])
+        summary = dict(context.get("summary") or {})
+        maintenance_state = dict(context.get("maintenance_state") or {})
         payload_fields = {
             "schema_version": "2026Q2.auto_order_readiness.v1",
             "config_path": str(_resolve_path(self.config_path)),

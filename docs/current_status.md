@@ -831,3 +831,12 @@
 - 如果 primary blocker 是 weekly review stale/missing，context 的 unblock plan 指向 `local_weekly_review_required / refresh_weekly_review`，不会创建 Gateway-backed recovery checkpoint。
 - 交易含义：恢复流程更难误消耗 IBKR Gateway 请求预算，也更难和 dashboard 展示分叉；本次不执行恢复、不连接 IBKR、不提交订单、不放宽任何交易门。
 - 验证：`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_supervisor_cli.py::SupervisorCliTests::test_auto_order_recovery_context_uses_summary_runtime_restart_unblock_plan tests/test_supervisor_cli.py::SupervisorCliTests::test_auto_order_recovery_context_routes_weekly_stale_to_local_unblock tests/test_auto_order_readiness.py` -> `65 passed`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_dashboard_blocks.py tests/test_supervisor_cli.py` -> `146 passed`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider --maxfail=1 -x` -> `781 passed`。
+
+## 64. 2026-07-03 Supervisor auto-order summary context removes duplicate plan composition
+
+- Supervisor 新增 `_auto_order_readiness_summary_context`，统一生成 rows、summary、recovery eligibility，并按需附加 execution evidence maintenance state。
+- `_auto_order_submit_plan` 现在直接返回 shared summary 中的 `submit_plan`，不再单独调用 submit-plan builder。
+- `_auto_order_recovery_context` 和 `_write_auto_order_readiness_summary` 也复用同一 helper，减少 submit/recovery/artifact 三条路径对 auto-order inputs 的重复组装。
+- 移除了 Supervisor 对 `build_auto_order_submit_plan` 的直接依赖；submit plan 仍由 common summary builder 生成，行为保持兼容。
+- 交易含义：自动下单、恢复和 dashboard artifact 更不容易在未来改动后分叉；本次不连接 IBKR、不提交订单、不改变 candidate selection、不放宽任何 risk/edge/cost/liquidity/market-rule/Gateway/submit-quality gate。
+- 验证：`python -m py_compile src/app/supervisor.py`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_supervisor_cli.py tests/test_auto_order_readiness.py` -> `195 passed`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider --maxfail=1 -x` -> `781 passed`。
