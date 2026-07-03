@@ -840,3 +840,11 @@
 - 移除了 Supervisor 对 `build_auto_order_submit_plan` 的直接依赖；submit plan 仍由 common summary builder 生成，行为保持兼容。
 - 交易含义：自动下单、恢复和 dashboard artifact 更不容易在未来改动后分叉；本次不连接 IBKR、不提交订单、不改变 candidate selection、不放宽任何 risk/edge/cost/liquidity/market-rule/Gateway/submit-quality gate。
 - 验证：`python -m py_compile src/app/supervisor.py`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_supervisor_cli.py tests/test_auto_order_readiness.py` -> `195 passed`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider --maxfail=1 -x` -> `781 passed`。
+
+## 65. 2026-07-03 Supervisor reuses submit plan within one cycle
+
+- `_auto_order_submit_plan_allows_item` 新增可选 `submit_plan` 参数；旧调用不传参数仍会自行计算，保持兼容。
+- `run_cycle` 现在在第一次需要 submit-plan gate 时懒加载 `auto_order_submit_plan_cache`，同一 cycle 内后续 execution item 复用同一份 plan。
+- 显式传入空/blocked plan 时不会回退重算，避免测试或运行路径中出现“传入 plan 被忽略”的隐性分叉。
+- 交易含义：多个市场/组合在同一 Supervisor cycle 内使用一致的 submit-plan 决策，减少重复读取 artifacts 和重复构建 summary；本次不连接 IBKR、不提交订单、不改变候选、不放宽任何 risk/edge/cost/liquidity/market-rule/Gateway/submit-quality gate。
+- 验证：`python -m py_compile src/app/supervisor.py`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_supervisor_cli.py::SupervisorCliTests::test_auto_order_submit_plan_allows_only_selected_portfolio tests/test_supervisor_cli.py::SupervisorCliTests::test_targeted_recovery_force_run_bypasses_schedule_and_previous_dry_run` -> `2 passed`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_supervisor_cli.py tests/test_auto_order_readiness.py` -> `195 passed`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider --maxfail=1 -x` -> `781 passed`。

@@ -109,6 +109,16 @@ class SupervisorCliTests(unittest.TestCase):
             self.assertFalse(allowed)
             self.assertEqual(plan["reason"], "not_selected_by_submit_plan")
 
+            with patch.object(supervisor, "_auto_order_submit_plan") as mock_plan:
+                allowed, plan = supervisor._auto_order_submit_plan_allows_item(
+                    item,
+                    "US",
+                    submit_plan=selected_plan,
+                )
+            mock_plan.assert_not_called()
+            self.assertTrue(allowed)
+            self.assertEqual(plan["selected_portfolio_id"], "US:watchlist")
+
     def test_auto_order_recovery_action_allows_only_target_report_and_dry_run_execution(self):
         with tempfile.TemporaryDirectory() as tmp:
             cfg_path = Path(tmp) / "supervisor.yaml"

@@ -4192,8 +4192,14 @@ class Supervisor:
         log.info("Wrote auto-order readiness summary -> %s", json_path)
         return True
 
-    def _auto_order_submit_plan_allows_item(self, item: Dict[str, Any], report_market: str) -> tuple[bool, Dict[str, Any]]:
-        plan = self._auto_order_submit_plan()
+    def _auto_order_submit_plan_allows_item(
+        self,
+        item: Dict[str, Any],
+        report_market: str,
+        *,
+        submit_plan: Optional[Dict[str, Any]] = None,
+    ) -> tuple[bool, Dict[str, Any]]:
+        plan = dict(self._auto_order_submit_plan() if submit_plan is None else submit_plan)
         portfolio_id = self._portfolio_id_for_item(item, report_market)
         if not bool(plan.get("ready", False)):
             return False, plan
@@ -6092,6 +6098,7 @@ class Supervisor:
                     exc,
                 )
                 recovery_context = {}
+            auto_order_submit_plan_cache: Optional[Dict[str, Any]] = None
 
             for idx, market in enumerate(self._ordered_markets(now), start=1):
                 market_now = self._market_now(now, market)
@@ -6410,7 +6417,13 @@ class Supervisor:
                                 ",".join(str(value) for value in list(readiness.get("warnings", []) or [])),
                             )
                             continue
-                        submit_plan_allowed, submit_plan = self._auto_order_submit_plan_allows_item(item, report_market)
+                        if auto_order_submit_plan_cache is None:
+                            auto_order_submit_plan_cache = self._auto_order_submit_plan()
+                        submit_plan_allowed, submit_plan = self._auto_order_submit_plan_allows_item(
+                            item,
+                            report_market,
+                            submit_plan=auto_order_submit_plan_cache,
+                        )
                         if not submit_plan_allowed:
                             reason = str(submit_plan.get("reason") or "submit_plan_not_ready")
                             self._add_reason(
