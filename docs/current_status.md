@@ -863,4 +863,25 @@
 - `run_cycle` 的 `auto_order_submit_plan_cache` 现在优先使用 recovery context 已生成的 submit plan；只有 recovery context 缺失或无 submit plan 时，才在首次 submit gate 走原来的 lazy fallback。
 - 这使 readiness rows、submit plan、recovery plan、unblock plan 在同一 cycle 内都可来自同一份 auto-order summary snapshot。
 - 交易含义：进一步减少同 cycle 内重复读取 artifacts / 重建 summary 的机会，也降低 submit gate 与 recovery/dashboard 视图分叉风险；本次不连接 IBKR、不提交订单、不改变候选、不放宽任何 risk/edge/cost/liquidity/market-rule/Gateway/submit-quality gate。
-- 验证：`python -m py_compile src/app/supervisor.py`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_supervisor_cli.py::SupervisorCliTests::test_auto_order_submit_plan_from_recovery_context_returns_copy tests/test_supervisor_cli.py::SupervisorCliTests::test_auto_order_submit_plan_allows_only_selected_portfolio tests/test_supervisor_cli.py::SupervisorCliTests::test_auto_order_readiness_for_item_uses_cycle_cached_row` -> `3 passed`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_supervisor_cli.py tests/test_auto_order_readiness.py` -> `197 passed`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider --maxfail=1 -x` -> `783 passed`。
+- 验证：`python -m py_compile src/app/supervisor.py`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_supervisor_cli.py::SupervisorCliTests::test_auto_order_cycle_cache_from_recovery_context_returns_copies tests/test_supervisor_cli.py::SupervisorCliTests::test_auto_order_submit_plan_allows_only_selected_portfolio tests/test_supervisor_cli.py::SupervisorCliTests::test_auto_order_readiness_for_item_uses_cycle_cached_row` -> `3 passed`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_supervisor_cli.py tests/test_auto_order_readiness.py` -> `197 passed`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider --maxfail=1 -x` -> `783 passed`。
+
+## 68. 2026-07-03 Supervisor refreshes auto-order caches after same-cycle reports
+
+- 新增 `_auto_order_cycle_cache_from_context`，从 auto-order summary context 同时提取 submit plan 和 readiness rows 副本；`_auto_order_submit_plan_from_recovery_context` 复用该 helper。
+- `run_cycle` 仍优先从 recovery context 初始化 cache，但当 `_generate_reports` 后有任一 report 切换到当前交易日时，会重建 auto-order summary context 并刷新 `auto_order_submit_plan_cache` / `auto_order_readiness_rows_cache`。
+- 如果 report 后 cache refresh 失败，系统清空缓存并回退到直接 per-item evaluation，避免使用过期 pre-report cache。
+- 交易含义：同一 cycle 中“先生成 report，再尝试 execution submit”时，submit gate 不会继续使用 report 前的 readiness/submit-plan 快照；本次不连接 IBKR、不提交订单、不改变候选、不放宽任何 risk/edge/cost/liquidity/market-rule/Gateway/submit-quality gate。
+- 验证：`python -m py_compile src/app/supervisor.py`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_supervisor_cli.py::SupervisorCliTests::test_auto_order_cycle_cache_from_recovery_context_returns_copies tests/test_supervisor_cli.py::SupervisorCliTests::test_auto_order_readiness_for_item_uses_cycle_cached_row` -> `2 passed`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_supervisor_cli.py tests/test_auto_order_readiness.py` -> `197 passed`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider --maxfail=1 -x` -> `783 passed`。
+
+## 69. 2026-07-03 HK outcome and Supervisor shutdown diagnosis refresh
+
+- 重新用最新运行时 `runtime_data/paper_investment_only_duq152001/reports_supervisor/market_readiness.json` 和 `reports_investment_weekly/weekly_unified_evidence.csv` 运行 HK-only `review_opportunity_outcomes`。
+- 输出写入 `runtime_data/paper_investment_only_duq152001/reports_supervisor/hk_opportunity_outcome_validation/`，避免覆盖全市场 validation artifact。
+- HK positive post-cost candidates 当前不是整体放宽依据：bluechip `0005.HK,2359.HK` 为 `OUTCOME_WEAK_OR_MIXED`，`5d=+65.87bps`、`20d=-129.20bps`；tech growth `0005.HK,2359.HK` 为 `OUTCOME_WEAK_OR_MIXED`，`5d=+72.54bps`、`20d=-127.94bps`。
+- 弱点集中在 `2359.HK`：bluechip `5d=-127.86bps/20d=-681.37bps`，tech growth `5d=-83.17bps/20d=-647.84bps`；`0005.HK` 单独是正 5d 且接近/略正 20d，但不足以支持整组 post-cost threshold 扩大。
+- HK close `WAIT_PULLBACK` 仍支持严格 paper-only near-entry limit trial 复核：bluechip `5d=+125.96bps/20d=+212.07bps`，tech growth `5d=+126.74bps/20d=+222.09bps`。
+- trial-qualified symbols 为 `3988.HK,2388.HK,1398.HK,0939.HK,0005.HK,3328.HK`；`1288.HK,2359.HK` 因 5/20d outcome 为负继续排除。
+- Supervisor shutdown 判因：当前 dashboard runtime contract 显示 `supervisor_status=running`、PID `77976`、`liveness=alive`，但 `supervisor_code_revision_status=missing`，说明旧 Supervisor 长进程仍在运行且需要重启到当前代码；这不是 crash。
+- 真正会让 Supervisor 顶层退出的路径仍是 `--once` 正常一轮退出、重复实例因 `supervisor.lock` 退出、SIGINT/SIGTERM/KeyboardInterrupt、或连续 `run_cycle()` 异常达到 `max_consecutive_cycle_errors_before_shutdown`。交易子进程 `src.main` 在无 active live market 时被 Supervisor 停止是设计行为，不等于 Supervisor 自动 shutdown。
+- 当前自动下单主要阻塞仍是 `weekly_review_stale`、`market_readiness_not_ready`、HK `strategy_suggestion_stale` 和旧 Supervisor revision gate；不是 HK outcome 证据本身。
+- 验证命令：`python -m src.tools.review_opportunity_outcomes --market HK --market_readiness runtime_data/paper_investment_only_duq152001/reports_supervisor/market_readiness.json --weekly_unified_evidence reports_investment_weekly/weekly_unified_evidence.csv --out_dir runtime_data/paper_investment_only_duq152001/reports_supervisor/hk_opportunity_outcome_validation`。

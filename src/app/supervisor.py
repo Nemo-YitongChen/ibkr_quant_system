@@ -3792,11 +3792,21 @@ class Supervisor:
     def _auto_order_submit_plan_from_recovery_context(
         recovery_context: Dict[str, Any],
     ) -> Optional[Dict[str, Any]]:
-        summary = dict((recovery_context or {}).get("summary") or {})
+        submit_plan, _ = Supervisor._auto_order_cycle_cache_from_context(recovery_context)
+        return submit_plan
+
+    @staticmethod
+    def _auto_order_cycle_cache_from_context(
+        context: Dict[str, Any],
+    ) -> tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
+        summary = dict((context or {}).get("summary") or {})
         submit_plan = summary.get("submit_plan")
-        if not isinstance(submit_plan, dict) or not submit_plan:
-            return None
-        return dict(submit_plan)
+        rows = [
+            dict(row)
+            for row in list((context or {}).get("rows") or [])
+            if isinstance(row, dict)
+        ]
+        return (dict(submit_plan) if isinstance(submit_plan, dict) and submit_plan else None), rows
 
     def _auto_order_recovery_context(self, now: datetime) -> Dict[str, Any]:
         if not self._auto_order_readiness_enabled():
@@ -6130,14 +6140,9 @@ class Supervisor:
                     exc,
                 )
                 recovery_context = {}
-            auto_order_submit_plan_cache = self._auto_order_submit_plan_from_recovery_context(
+            auto_order_submit_plan_cache, auto_order_readiness_rows_cache = self._auto_order_cycle_cache_from_context(
                 recovery_context
             )
-            auto_order_readiness_rows_cache: List[Dict[str, Any]] = [
-                dict(row)
-                for row in list(recovery_context.get("rows") or [])
-                if isinstance(row, dict)
-            ]
 
             for idx, market in enumerate(self._ordered_markets(now), start=1):
                 market_now = self._market_now(now, market)
@@ -6238,8 +6243,10 @@ class Supervisor:
                         market_now=market_now,
                         recovery_context=recovery_context,
                     )
+                    auto_order_artifacts_changed = False
                     for item in market.reports:
                         if str(item.get("_last_successful_report_day", "") or "") == day_key and report_days_before.get(id(item), "") != day_key:
+                            auto_order_artifacts_changed = True
                             market_summary["reports_run"] = int(market_summary["reports_run"]) + 1
                             market_summary["notable_actions"].append(f"report:{Path(str(item['watchlist_yaml'])).stem}")
                             if str(item.get("_last_local_paper_run_day", "") or "") == day_key:
@@ -6250,6 +6257,21 @@ class Supervisor:
                             if bool(item.get("run_baseline_regression", False)):
                                 market_summary["baselines_run"] = int(market_summary["baselines_run"]) + 1
                                 market_summary["notable_actions"].append(f"baseline:{Path(str(item['watchlist_yaml'])).stem}")
+                    if auto_order_artifacts_changed and self._auto_order_readiness_enabled():
+                        try:
+                            refreshed_auto_order_context = self._auto_order_readiness_summary_context(now=now)
+                            (
+                                auto_order_submit_plan_cache,
+                                auto_order_readiness_rows_cache,
+                            ) = self._auto_order_cycle_cache_from_context(refreshed_auto_order_context)
+                        except Exception as exc:
+                            auto_order_submit_plan_cache = None
+                            auto_order_readiness_rows_cache = []
+                            log.warning(
+                                "Auto-order cycle cache refresh after report update failed: %s: %s",
+                                type(exc).__name__,
+                                exc,
+                            )
                     all_done_for_day = all(str(item.get("_last_successful_report_day", "") or "") == day_key for item in market.reports)
                     market.last_report_day = day_key if all_done_for_day else ""
 

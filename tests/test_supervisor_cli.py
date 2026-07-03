@@ -165,19 +165,28 @@ class SupervisorCliTests(unittest.TestCase):
             self.assertTrue(readiness["ready"])
             self.assertEqual(readiness["primary_reason"], "ready")
 
-    def test_auto_order_submit_plan_from_recovery_context_returns_copy(self):
+    def test_auto_order_cycle_cache_from_recovery_context_returns_copies(self):
         plan = {
             "ready": True,
             "status": "READY_SINGLE_CANDIDATE",
             "selected_portfolio_id": "US:watchlist",
         }
+        rows = [{"market": "US", "portfolio_id": "US:watchlist", "ready": True}]
 
-        cached = Supervisor._auto_order_submit_plan_from_recovery_context(
-            {"summary": {"submit_plan": plan}}
+        cached, cached_rows = Supervisor._auto_order_cycle_cache_from_context(
+            {"summary": {"submit_plan": plan}, "rows": rows}
         )
 
         self.assertEqual(cached, plan)
         self.assertIsNot(cached, plan)
+        self.assertEqual(cached_rows, rows)
+        self.assertIsNot(cached_rows[0], rows[0])
+        self.assertEqual(
+            Supervisor._auto_order_submit_plan_from_recovery_context(
+                {"summary": {"submit_plan": plan}}
+            ),
+            plan,
+        )
         self.assertIsNone(Supervisor._auto_order_submit_plan_from_recovery_context({}))
 
     def test_auto_order_recovery_action_allows_only_target_report_and_dry_run_execution(self):
