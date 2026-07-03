@@ -119,6 +119,52 @@ class SupervisorCliTests(unittest.TestCase):
             self.assertTrue(allowed)
             self.assertEqual(plan["selected_portfolio_id"], "US:watchlist")
 
+    def test_auto_order_readiness_for_item_uses_cycle_cached_row(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = Path(tmp) / "supervisor.yaml"
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        "markets:",
+                        '  - name: "us"',
+                        '    market: "US"',
+                        "    enabled: true",
+                        "    watchlists: []",
+                        "    reports:",
+                        '      - kind: "investment"',
+                        '        watchlist_yaml: "config/watchlist.yaml"',
+                        "        run_investment_execution: true",
+                        "        submit_investment_execution: true",
+                        "    short_safety_sync:",
+                        "      enabled: false",
+                        "    trading:",
+                        "      enabled: false",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(cfg_path))
+            item = supervisor.markets[0].reports[0]
+            cached_row = {
+                "market": "US",
+                "portfolio_id": "US:watchlist",
+                "status": "READY",
+                "ready": True,
+                "primary_reason": "ready",
+            }
+
+            with patch.object(supervisor, "_auto_order_readiness_common_inputs") as mock_common:
+                readiness = supervisor._auto_order_readiness_for_item(
+                    item,
+                    "US",
+                    readiness_rows=[cached_row],
+                )
+
+            mock_common.assert_not_called()
+            self.assertTrue(readiness["ready"])
+            self.assertEqual(readiness["primary_reason"], "ready")
+
     def test_auto_order_recovery_action_allows_only_target_report_and_dry_run_execution(self):
         with tempfile.TemporaryDirectory() as tmp:
             cfg_path = Path(tmp) / "supervisor.yaml"

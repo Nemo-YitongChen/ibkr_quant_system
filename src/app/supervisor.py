@@ -3532,8 +3532,25 @@ class Supervisor:
             "policy": self._auto_order_readiness_policy(),
         }
 
-    def _auto_order_readiness_for_item(self, item: Dict[str, Any], report_market: str) -> Dict[str, Any]:
+    def _auto_order_readiness_for_item(
+        self,
+        item: Dict[str, Any],
+        report_market: str,
+        *,
+        readiness_rows: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
         portfolio = self._auto_order_portfolio_for_item(item, report_market)
+        expected_market = resolve_market_code(str(portfolio.get("market") or report_market))
+        expected_portfolio_id = str(portfolio.get("portfolio_id") or "").strip()
+        if readiness_rows is not None:
+            for row in readiness_rows:
+                if not isinstance(row, dict):
+                    continue
+                if (
+                    resolve_market_code(str(row.get("market") or "")) == expected_market
+                    and str(row.get("portfolio_id") or "").strip() == expected_portfolio_id
+                ):
+                    return dict(row)
         common = self._auto_order_readiness_common_inputs()
         return evaluate_auto_order_readiness(
             portfolio,
@@ -3791,6 +3808,11 @@ class Supervisor:
             "stale_execution_refresh_plan": dict(summary.get("stale_execution_refresh_plan") or {}),
             "eligibility": dict(summary.get("recovery_eligibility") or {}),
             "summary": summary,
+            "rows": [
+                dict(row)
+                for row in list(context.get("rows") or [])
+                if isinstance(row, dict)
+            ],
         }
 
     def _auto_order_recovery_checkpoint_path(self) -> Path:
@@ -6099,6 +6121,11 @@ class Supervisor:
                 )
                 recovery_context = {}
             auto_order_submit_plan_cache: Optional[Dict[str, Any]] = None
+            auto_order_readiness_rows_cache: List[Dict[str, Any]] = [
+                dict(row)
+                for row in list(recovery_context.get("rows") or [])
+                if isinstance(row, dict)
+            ]
 
             for idx, market in enumerate(self._ordered_markets(now), start=1):
                 market_now = self._market_now(now, market)
@@ -6401,7 +6428,11 @@ class Supervisor:
                         and not recovery_force_no_submit
                         and self._auto_order_readiness_enabled()
                     ):
-                        readiness = self._auto_order_readiness_for_item(item, report_market)
+                        readiness = self._auto_order_readiness_for_item(
+                            item,
+                            report_market,
+                            readiness_rows=auto_order_readiness_rows_cache,
+                        )
                         if not bool(readiness.get("ready", False)):
                             reason = str(readiness.get("primary_reason") or "not_ready")
                             self._add_reason(

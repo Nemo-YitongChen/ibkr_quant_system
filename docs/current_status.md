@@ -848,3 +848,11 @@
 - 显式传入空/blocked plan 时不会回退重算，避免测试或运行路径中出现“传入 plan 被忽略”的隐性分叉。
 - 交易含义：多个市场/组合在同一 Supervisor cycle 内使用一致的 submit-plan 决策，减少重复读取 artifacts 和重复构建 summary；本次不连接 IBKR、不提交订单、不改变候选、不放宽任何 risk/edge/cost/liquidity/market-rule/Gateway/submit-quality gate。
 - 验证：`python -m py_compile src/app/supervisor.py`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_supervisor_cli.py::SupervisorCliTests::test_auto_order_submit_plan_allows_only_selected_portfolio tests/test_supervisor_cli.py::SupervisorCliTests::test_targeted_recovery_force_run_bypasses_schedule_and_previous_dry_run` -> `2 passed`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_supervisor_cli.py tests/test_auto_order_readiness.py` -> `195 passed`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider --maxfail=1 -x` -> `781 passed`。
+
+## 66. 2026-07-03 Supervisor reuses readiness rows within one cycle
+
+- `_auto_order_recovery_context` 现在返回本 cycle 已生成的 auto-order readiness `rows`。
+- `_auto_order_readiness_for_item` 新增可选 `readiness_rows` 参数；传入缓存时按 normalized market + portfolio id 匹配，命中则直接返回 cached row，不再读取 artifacts 和重算 readiness。
+- `run_cycle` 在 per-item execution submit readiness gate 中传入 recovery context 的 rows；找不到匹配时仍回退到旧的 direct evaluation 路径。
+- 交易含义：同一 Supervisor cycle 内 readiness、submit plan、recovery context 使用同一份 readiness snapshot，减少重复本地 artifact 读取和分叉风险；本次不连接 IBKR、不提交订单、不改变候选、不放宽任何 risk/edge/cost/liquidity/market-rule/Gateway/submit-quality gate。
+- 验证：`python -m py_compile src/app/supervisor.py`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_supervisor_cli.py::SupervisorCliTests::test_auto_order_readiness_for_item_uses_cycle_cached_row tests/test_supervisor_cli.py::SupervisorCliTests::test_auto_order_submit_plan_allows_only_selected_portfolio` -> `2 passed`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_supervisor_cli.py tests/test_auto_order_readiness.py` -> `196 passed`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider --maxfail=1 -x` -> `782 passed`。
