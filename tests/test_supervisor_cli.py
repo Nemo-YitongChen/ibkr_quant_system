@@ -408,6 +408,116 @@ class SupervisorCliTests(unittest.TestCase):
             self.assertEqual(checkpoint["target_portfolio_id"], "HK:resolved_hk_top100_tech_growth")
             self.assertFalse(checkpoint["submit_orders"])
 
+    def test_auto_order_recovery_context_uses_summary_runtime_restart_unblock_plan(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = Path(tmp) / "supervisor.yaml"
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        "auto_order_readiness:",
+                        "  enabled: true",
+                        "markets: []",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(cfg_path))
+            now = datetime(2026, 7, 3, 10, 0, tzinfo=supervisor.tz)
+            row = {
+                "status": "BLOCKED",
+                "ready": False,
+                "primary_reason": "supervisor_code_revision_missing",
+                "hard_blocks": ["supervisor_code_revision_missing", "weekly_review_stale"],
+                "hard_block_details": [
+                    {
+                        "reason": "supervisor_code_revision_missing",
+                        "detail": "status=running pid=77976 code_revision is missing",
+                        "remediation": "Restart Supervisor with the current code before automated submit.",
+                    }
+                ],
+                "market": "US",
+                "portfolio_id": "US:watchlist",
+            }
+
+            with patch.object(
+                supervisor,
+                "_auto_order_readiness_common_inputs",
+                return_value={
+                    "policy": {"enabled": True},
+                    "weekly_summary": {},
+                    "watchlist_expansion_summary": {},
+                },
+            ), patch.object(
+                supervisor,
+                "_auto_order_readiness_rows",
+                return_value=[row],
+            ):
+                context = supervisor._auto_order_recovery_context(now)
+
+            self.assertEqual(context["plan"]["status"], "runtime_restart_required")
+            self.assertEqual(context["unblock_plan"]["status"], "runtime_restart_required")
+            self.assertEqual(context["unblock_plan"]["primary_action"], "restart_supervisor_current_code")
+            self.assertFalse(context["unblock_plan"]["requires_ibkr_gateway"])
+            self.assertFalse(context["unblock_plan"]["submit_orders"])
+            self.assertTrue(context["eligibility"]["active"])
+            self.assertFalse(context["eligibility"]["eligible"])
+            self.assertEqual(context["eligibility"]["reason"], "supervisor_runtime_restart_required")
+
+    def test_auto_order_recovery_context_routes_weekly_stale_to_local_unblock(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = Path(tmp) / "supervisor.yaml"
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        "auto_order_readiness:",
+                        "  enabled: true",
+                        "markets: []",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            supervisor = Supervisor(str(cfg_path))
+            now = datetime(2026, 7, 3, 10, 0, tzinfo=supervisor.tz)
+            row = {
+                "status": "BLOCKED",
+                "ready": False,
+                "primary_reason": "weekly_review_stale",
+                "hard_blocks": ["weekly_review_stale", "market_readiness_not_ready"],
+                "hard_block_details": [
+                    {
+                        "reason": "weekly_review_stale",
+                        "remediation": "Refresh weekly review before automated submit.",
+                    }
+                ],
+                "market": "HK",
+                "portfolio_id": "HK:resolved_hk_top100_tech_growth",
+            }
+
+            with patch.object(
+                supervisor,
+                "_auto_order_readiness_common_inputs",
+                return_value={
+                    "policy": {"enabled": True},
+                    "weekly_summary": {},
+                    "watchlist_expansion_summary": {},
+                },
+            ), patch.object(
+                supervisor,
+                "_auto_order_readiness_rows",
+                return_value=[row],
+            ):
+                context = supervisor._auto_order_recovery_context(now)
+
+            self.assertEqual(context["plan"]["status"], "manual_review_required")
+            self.assertEqual(context["unblock_plan"]["status"], "local_weekly_review_required")
+            self.assertEqual(context["unblock_plan"]["primary_action"], "refresh_weekly_review")
+            self.assertFalse(context["unblock_plan"]["requires_ibkr_gateway"])
+            self.assertFalse(context["unblock_plan"]["submit_orders"])
+            self.assertFalse(context["eligibility"]["active"])
+            self.assertEqual(context["eligibility"]["reason"], "recovery_plan_not_active")
+
     def test_targeted_recovery_force_run_bypasses_schedule_and_previous_dry_run(self):
         with tempfile.TemporaryDirectory() as tmp:
             cfg_path = Path(tmp) / "supervisor.yaml"

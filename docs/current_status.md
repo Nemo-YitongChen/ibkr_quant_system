@@ -822,3 +822,12 @@
 - `review_auto_order_readiness.md` 新增 `Next Unblock Plan` section；dashboard v2 Auto Order block 新增 unblock plan metrics，并能从旧 auto-order artifact fallback 构建该 plan。
 - 交易含义：系统现在能在 JSON/Markdown/dashboard 上一致显示“先本地解阻塞、再 Gateway dry-run、最后才考虑 paper submit”的顺序；本次不自动执行、不连接 IBKR、不提交订单、不放宽任何 risk/edge/cost/liquidity/market-rule/Gateway/submit-quality gate。
 - 验证：`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_auto_order_readiness.py tests/test_dashboard_blocks.py` -> `77 passed`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider --maxfail=1 -x` -> `779 passed`。
+
+## 63. 2026-07-03 Supervisor recovery context consumes the same unblock plan
+
+- `_auto_order_recovery_context` 现在复用 `build_auto_order_readiness_summary`，不再手写 submit plan、stale execution refresh plan、recovery plan 的组合逻辑。
+- recovery context 现在带出 `unblock_plan` 和完整 `summary`，Supervisor 执行路径、CLI JSON/Markdown、dashboard v2 看到的是同一套 next-unblock contract。
+- 该路径继承 summary 级 global hard blocks：如果 Supervisor code revision missing/mismatch，context 的 recovery plan 直接是 `runtime_restart_required`，eligibility 为 `supervisor_runtime_restart_required`。
+- 如果 primary blocker 是 weekly review stale/missing，context 的 unblock plan 指向 `local_weekly_review_required / refresh_weekly_review`，不会创建 Gateway-backed recovery checkpoint。
+- 交易含义：恢复流程更难误消耗 IBKR Gateway 请求预算，也更难和 dashboard 展示分叉；本次不执行恢复、不连接 IBKR、不提交订单、不放宽任何交易门。
+- 验证：`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_supervisor_cli.py::SupervisorCliTests::test_auto_order_recovery_context_uses_summary_runtime_restart_unblock_plan tests/test_supervisor_cli.py::SupervisorCliTests::test_auto_order_recovery_context_routes_weekly_stale_to_local_unblock tests/test_auto_order_readiness.py` -> `65 passed`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_dashboard_blocks.py tests/test_supervisor_cli.py` -> `146 passed`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider --maxfail=1 -x` -> `781 passed`。

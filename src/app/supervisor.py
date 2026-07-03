@@ -28,8 +28,6 @@ from ..common.adaptive_strategy import (
 )
 from ..common.auto_order_readiness import (
     build_auto_order_readiness_summary,
-    build_auto_order_recovery_plan,
-    build_stale_execution_refresh_plan,
     build_auto_order_submit_plan,
     evaluate_auto_order_readiness,
     evaluate_auto_order_recovery_eligibility,
@@ -3742,6 +3740,7 @@ class Supervisor:
         if not self._auto_order_readiness_enabled():
             return {
                 "plan": {},
+                "unblock_plan": {},
                 "eligibility": {
                     "active": False,
                     "eligible": False,
@@ -3750,24 +3749,20 @@ class Supervisor:
             }
         common = self._auto_order_readiness_common_inputs()
         rows = self._auto_order_readiness_rows(common_inputs=common)
-        submit_plan = build_auto_order_submit_plan(
+        summary = build_auto_order_readiness_summary(
             rows,
             policy=common["policy"],
             weekly_summary=common["weekly_summary"],
-            account_growth_tier_plan=dict(common.get("watchlist_expansion_summary") or {}).get(
-                "account_growth_tier_plan"
-            ),
+            watchlist_expansion_summary=common.get("watchlist_expansion_summary"),
         )
-        stale_execution_refresh_plan = build_stale_execution_refresh_plan(rows)
-        recovery_plan = build_auto_order_recovery_plan(
-            rows,
-            submit_plan=submit_plan,
-            stale_execution_refresh_plan=stale_execution_refresh_plan,
-        )
+        recovery_plan = dict(summary.get("recovery_plan") or {})
+        eligibility = evaluate_auto_order_recovery_eligibility(recovery_plan, now=now)
         return {
             "plan": recovery_plan,
-            "stale_execution_refresh_plan": stale_execution_refresh_plan,
-            "eligibility": evaluate_auto_order_recovery_eligibility(recovery_plan, now=now),
+            "unblock_plan": dict(summary.get("unblock_plan") or {}),
+            "stale_execution_refresh_plan": dict(summary.get("stale_execution_refresh_plan") or {}),
+            "eligibility": eligibility,
+            "summary": summary,
         }
 
     def _auto_order_recovery_checkpoint_path(self) -> Path:
