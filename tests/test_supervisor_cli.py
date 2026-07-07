@@ -744,6 +744,10 @@ class SupervisorCliTests(unittest.TestCase):
             self.assertTrue(changed)
             self.assertEqual(payload["summary"]["portfolio_count"], 1)
             self.assertEqual(payload["rows"][0]["portfolio_id"], "US:watchlist")
+            self.assertIsInstance(payload["summary"].get("unblock_plan"), dict)
+            self.assertTrue(payload["summary"]["unblock_plan"])
+            self.assertFalse(payload["summary"]["unblock_plan"]["submit_orders"])
+            self.assertTrue(payload["summary"]["unblock_plan"]["does_not_change_submit_decision"])
 
     def test_auto_order_local_dependency_refresh_updates_preflight_and_market_readiness(self):
         with tempfile.TemporaryDirectory() as tmp:

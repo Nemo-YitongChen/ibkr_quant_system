@@ -849,6 +849,23 @@ def test_auto_order_readiness_health_warns_when_older_than_gateway_budget() -> N
     assert "gateway_budget_generated_at=2026-05-28T23:04:35+00:00" in health["summary_text"]
 
 
+def test_auto_order_readiness_health_warns_when_unblock_plan_missing() -> None:
+    health = _build_auto_order_readiness_health(
+        {
+            "generated_at": "2026-07-07T09:40:46+00:00",
+            "summary": {"status": "blocked", "primary_block_reason": "weekly_review_stale"},
+        },
+        weekly_ibkr_gateway_budget_payload={"generated_at": "2026-07-07T09:30:00+00:00"},
+        max_age_hours=24,
+        now=datetime(2026, 7, 7, 10, 0, tzinfo=timezone.utc),
+    )
+
+    assert health["status"] == "warning"
+    assert health["reason"] == "missing_unblock_plan"
+    assert health["missing_unblock_plan"] is True
+    assert health["older_than_gateway_budget"] is False
+
+
 def test_load_watchlist_expansion_payload_counts_selected_and_reject_reasons(tmp_path: Path) -> None:
     summary_dir = tmp_path / "reports_supervisor"
     expansion_dir = summary_dir / "watchlist_expansion"

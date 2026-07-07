@@ -625,6 +625,7 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "readiness_max_age_hours": float(health.get("max_age_hours", 0.0) or 0.0),
             "gateway_budget_generated_at": str(health.get("gateway_budget_generated_at") or ""),
             "readiness_older_than_gateway_budget": int(bool(health.get("older_than_gateway_budget", False))),
+            "readiness_missing_unblock_plan": int(bool(health.get("missing_unblock_plan", False))),
             "readiness_secondary_reasons": list(health.get("secondary_reasons") or []),
             "submit_plan_status": submit_status,
             "submit_plan_ready": bool(submit_plan.get("ready", False)),

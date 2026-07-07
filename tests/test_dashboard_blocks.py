@@ -1414,3 +1414,38 @@ def test_auto_order_readiness_block_warns_on_stale_readiness_health():
     assert block["metrics"]["readiness_age_hours"] == 23.59
     assert block["metrics"]["readiness_older_than_gateway_budget"] == 1
     assert "自动下单证据过旧" in block["summary"]
+
+
+def test_auto_order_readiness_block_surfaces_missing_unblock_plan_health():
+    payload = {
+        "auto_order_readiness": {
+            "summary": {
+                "status": "blocked",
+                "summary_text": "blocked by stale weekly review",
+                "blocked_count": 1,
+                "submit_plan": {
+                    "status": "BLOCKED",
+                    "ready": False,
+                    "reason": "no_single_safe_submit_candidate",
+                },
+            }
+        },
+        "auto_order_readiness_health": {
+            "status": "warning",
+            "reason": "missing_unblock_plan",
+            "summary_text": "自动下单证据过旧: missing_unblock_plan",
+            "generated_at": "2026-07-07T09:40:46+00:00",
+            "age_hours": 0.33,
+            "max_age_hours": 24,
+            "older_than_gateway_budget": False,
+            "missing_unblock_plan": True,
+            "secondary_reasons": [],
+        },
+    }
+
+    block = _by_id(build_dashboard_v2_blocks(payload))["auto_order_readiness"]
+
+    assert block["status"] == "warn"
+    assert block["metrics"]["readiness_health_status"] == "warning"
+    assert block["metrics"]["readiness_health_reason"] == "missing_unblock_plan"
+    assert block["metrics"]["readiness_missing_unblock_plan"] == 1

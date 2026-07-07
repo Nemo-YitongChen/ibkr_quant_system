@@ -956,6 +956,8 @@ def _build_auto_order_readiness_health(
     auto_ts = parse_utc_datetime(generated_at)
     gateway_ts = parse_utc_datetime(gateway_generated_at)
     older_than_gateway_budget = bool(auto_ts is not None and gateway_ts is not None and auto_ts < gateway_ts)
+    summary = dict(payload.get("summary") or {}) if isinstance(payload.get("summary"), dict) else {}
+    missing_unblock_plan = bool(payload and not dict(summary.get("unblock_plan") or {}))
     status = "ready"
     reason = "fresh"
 
@@ -971,11 +973,16 @@ def _build_auto_order_readiness_health(
     elif older_than_gateway_budget:
         status = "warning"
         reason = "older_than_gateway_budget"
+    elif missing_unblock_plan:
+        status = "warning"
+        reason = "missing_unblock_plan"
 
     label = "自动下单证据新鲜" if status == "ready" else "自动下单证据过旧"
     secondary_reasons = []
     if older_than_gateway_budget and reason != "older_than_gateway_budget":
         secondary_reasons.append("older_than_gateway_budget")
+    if missing_unblock_plan and reason != "missing_unblock_plan":
+        secondary_reasons.append("missing_unblock_plan")
     detail_bits = []
     if generated_at:
         detail_bits.append(f"generated_at={generated_at}")
@@ -996,6 +1003,7 @@ def _build_auto_order_readiness_health(
         "gateway_budget_generated_at": gateway_generated_at,
         "gateway_budget_age_hours": gateway_age_hours,
         "older_than_gateway_budget": older_than_gateway_budget,
+        "missing_unblock_plan": missing_unblock_plan,
         "secondary_reasons": secondary_reasons,
         "summary_text": f"{label}: {reason} | {detail}",
     }
