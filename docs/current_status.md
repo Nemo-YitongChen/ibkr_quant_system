@@ -906,3 +906,13 @@
 - 当前实测 PID `77976` 仍存在，但 shutdown status 最后写入时间是 `2026-06-17T08:41:20Z`，诊断为 stale heartbeat；这不同于 crash，也不同于无活动市场窗口下 `src.main` 子交易进程被设计性停止。
 - 交易含义：HK outcome 证据不支持放宽 HK post-cost/cost 门；下一步仍应先重启 Supervisor 到当前代码、刷新 weekly/market readiness，再只对合格 close `WAIT_PULLBACK` 符号评估严格 paper-only 小额限价试单。
 - 验证：`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_supervisor_runtime_status.py tests/test_generate_dashboard_helpers.py::test_build_ops_overview_degrades_stale_running_supervisor_heartbeat` -> `7 passed`；`PYTHONDONTWRITEBYTECODE=1 python -m src.tools.review_opportunity_outcomes --market HK --market_readiness runtime_data/paper_investment_only_duq152001/reports_supervisor/market_readiness.json --weekly_unified_evidence reports_investment_weekly/weekly_unified_evidence.csv --out_dir /private/tmp/hk_opportunity_outcome_validation_20260707`；`python -m src.tools.review_supervisor_runtime --config config/supervisor.yaml --runtime_root runtime_data/paper_investment_only_duq152001 --out_dir /private/tmp/ibkr_supervisor_runtime_status_20260707`。
+
+## 72. 2026-07-07 Supervisor runtime recovery dry-run tool
+
+- 新增 `src/common/supervisor_runtime_recovery.py`，把 stale Supervisor recovery 从人工 PID 判断推进为可测试、可审计的 recovery plan。
+- 新增 `src/tools/recover_supervisor_runtime.py` 和 console script `ibkr-quant-supervisor-recovery`；默认 dry-run，只写 JSON/Markdown plan。
+- 工具只允许已知 runtime restart action，且必须确认目标进程命令包含 `python -m src.app.supervisor`，否则拒绝终止 PID；空命令行证据现在明确标记为 `supervisor_process_command_unavailable`，不同于真实 command mismatch。
+- `--apply` 才会执行 SIGTERM 或删除 stale lock；`--start` 是单独显式开关，因为启动 Supervisor 会恢复正常 scheduler 行为，可能触发配置允许的 IBKR 请求。
+- 当前真实 runtime 的提升权限 dry-run 写入 `/private/tmp/ibkr_supervisor_recovery_20260707/`，结果为 `status=ready`、`reason=restart_stale_supervisor_heartbeat_current_code`、`terminate_pid=77976`、`applied=false`、`submit_orders=false`、`connects_to_ibkr=false`。
+- 交易含义：后续恢复可以先生成计划，再显式 apply，避免旧 Supervisor 心跳过期继续阻塞 weekly/market readiness 刷新；本次没有终止进程、没有启动 Supervisor、没有连接 IBKR、没有提交订单。
+- 验证：`python -m py_compile src/common/supervisor_runtime_recovery.py src/tools/recover_supervisor_runtime.py`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_supervisor_runtime_recovery.py tests/test_supervisor_runtime_status.py tests/test_project_packaging.py` -> `14 passed`。

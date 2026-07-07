@@ -31,6 +31,7 @@ def test_pyproject_declares_console_scripts_and_runtime_metadata() -> None:
     assert scripts["ibkr-quant-execution-review"] == "src.tools.review_investment_execution:main"
     assert scripts["ibkr-quant-auto-order-readiness"] == "src.tools.review_auto_order_readiness:main"
     assert scripts["ibkr-quant-market-readiness"] == "src.tools.review_market_readiness:main"
+    assert scripts["ibkr-quant-supervisor-recovery"] == "src.tools.recover_supervisor_runtime:main"
     assert scripts["ibkr-quant-walk-forward"] == "src.tools.review_market_walk_forward:main"
     assert scripts["ibkr-quant-label-snapshots"] == "src.tools.label_investment_snapshots:main"
     assert scripts["ibkr-quant-trade-report"] == "src.tools.generate_trade_report:main"
