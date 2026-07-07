@@ -621,6 +621,10 @@ class Supervisor:
             str(self._dashboard_control_action_audit_path()),
             "--days",
             str(int(self.cfg.get("weekly_review_days", 7) or 7)),
+            "--feedback_calibration_lookback_days",
+            str(int(self.cfg.get("weekly_review_feedback_calibration_lookback_days", 180) or 180)),
+            "--position_lookback_days",
+            str(int(self.cfg.get("weekly_review_position_lookback_days", 45) or 45)),
         ]
         market_filter = str(self.cfg.get("weekly_review_market", "") or "").strip()
         portfolio_filter = str(self.cfg.get("weekly_review_portfolio_id", "") or "").strip()

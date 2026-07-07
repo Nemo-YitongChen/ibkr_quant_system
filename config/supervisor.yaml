@@ -140,6 +140,8 @@ run_investment_weekly_review: true
 weekly_review_interval_min: 180
 weekly_review_only_when_all_markets_closed: true
 weekly_review_timeout_sec: 300
+weekly_review_feedback_calibration_lookback_days: 45
+weekly_review_position_lookback_days: 45
 weekly_review_auto_apply_paper: true
 weekly_review_auto_apply_live: false
 weekly_review_overlay_dir: "auto_feedback_configs"

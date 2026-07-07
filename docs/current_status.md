@@ -916,3 +916,17 @@
 - 当前真实 runtime 的提升权限 dry-run 写入 `/private/tmp/ibkr_supervisor_recovery_20260707/`，结果为 `status=ready`、`reason=restart_stale_supervisor_heartbeat_current_code`、`terminate_pid=77976`、`applied=false`、`submit_orders=false`、`connects_to_ibkr=false`。
 - 交易含义：后续恢复可以先生成计划，再显式 apply，避免旧 Supervisor 心跳过期继续阻塞 weekly/market readiness 刷新；本次没有终止进程、没有启动 Supervisor、没有连接 IBKR、没有提交订单。
 - 验证：`python -m py_compile src/common/supervisor_runtime_recovery.py src/tools/recover_supervisor_runtime.py`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_supervisor_runtime_recovery.py tests/test_supervisor_runtime_status.py tests/test_project_packaging.py` -> `14 passed`。
+
+## 73. 2026-07-07 Weekly review query bounds and HK outcome refresh
+
+- 重新用当前 `runtime_data/paper_investment_only_duq152001/reports_supervisor/market_readiness.json` 和现有 `reports_investment_weekly/weekly_unified_evidence.csv` 刷新 HK-only outcome validation，输出到 `runtime_data/paper_investment_only_duq152001/reports_supervisor/hk_opportunity_outcome_validation/`。
+- 当前 HK `positive_post_cost_candidates` 不支持放宽 gate：bluechip `0005.HK,2359.HK` 为 `OUTCOME_WEAK_OR_MIXED`，`5d=+65.87bps/20d=-129.20bps`；tech growth `0005.HK,2359.HK` 为 `OUTCOME_WEAK_OR_MIXED`，`5d=+72.54bps/20d=-127.94bps`。
+- 当前 HK `close_wait_pullback` 候选已收窄到 `0002.HK`，也是 mixed：bluechip `5d=-95.57bps/20d=+146.91bps`，tech growth `5d=-82.04bps/20d=+215.51bps`。因此本轮不应基于 HK outcome 放宽 WAIT_PULLBACK anchor，只应继续收集证据。
+- Supervisor 当前状态文件显示 `status=running`、`reason=cycle_complete`、PID `54465`、`consecutive_cycle_error_count=0`；当前没有自动 shutdown。
+- 主程序“自动 shutdown”真实路径仍是 `--once` 正常退出、重复 instance lock、SIGINT/SIGTERM/KeyboardInterrupt、或连续 `run_cycle()` 异常达到 `max_consecutive_cycle_errors_before_shutdown`。本轮看到的核心问题是 weekly review 子进程在 37GB `audit.db` 上被系统以 exit `137` 杀掉，造成 weekly evidence stale 和 submit readiness block。
+- `src/tools/review_investment_weekly.py` 增加 `--feedback_calibration_lookback_days`、`--position_lookback_days` 和 `_weekly_audit_where()`，并给 `fills`、`risk_events`、`investment_positions`、candidate snapshot/outcome 查询加时间窗、portfolio scope 和缺列空结果保护。
+- `src/app/supervisor.py` 现在从 config 传入 weekly review 的 calibration/position lookback；`config/supervisor.yaml` 的 paper runtime 设为 `weekly_review_feedback_calibration_lookback_days: 45` 和 `weekly_review_position_lookback_days: 45`。
+- `src/common/storage.py` 新增 weekly/evidence 查询索引定义：fills、risk_events、investment_positions、investment_trades、investment_candidate_snapshots、investment_candidate_outcomes。
+- 注意：现有 37GB `audit.db` 还没有实际建出新索引，即使用 45 天 calibration 窗口重跑 weekly review 仍以 exit `137` 结束；第一次受控迁移/重启可能 IO 较重，应放在非活跃交易窗口执行。在此之前，HK outcome 验证继续用 CSV streaming 路径。
+- 归档：`docs/change_archive_2026-07-07_weekly_review_query_bounds_hk_outcome.md`。
+- 验证：`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_review_investment_weekly.py -k weekly_audit_where` -> `3 passed`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_storage_sqlite_locking.py` -> `3 passed`；`PYTHONDONTWRITEBYTECODE=1 python -m py_compile src/tools/review_investment_weekly.py src/app/supervisor.py src/common/storage.py`；`PYTHONDONTWRITEBYTECODE=1 python -m src.tools.review_opportunity_outcomes --market HK --market_readiness runtime_data/paper_investment_only_duq152001/reports_supervisor/market_readiness.json --weekly_unified_evidence reports_investment_weekly/weekly_unified_evidence.csv --out_dir runtime_data/paper_investment_only_duq152001/reports_supervisor/hk_opportunity_outcome_validation`。

@@ -151,6 +151,7 @@ from ..portfolio.investment_allocator import InvestmentExecutionConfig
 log = get_logger("tools.review_investment_weekly")
 BASE_DIR = Path(__file__).resolve().parents[2]
 FEEDBACK_CALIBRATION_LOOKBACK_DAYS = 180
+DEFAULT_POSITION_LOOKBACK_DAYS = 45
 DEFAULT_PAPER_CFG = InvestmentPaperConfig()
 DEFAULT_EXECUTION_CFG = InvestmentExecutionConfig()
 
@@ -183,6 +184,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional YAML of market-level AUTO_APPLY threshold overrides. Defaults to weekly_review out_dir override file.",
     )
     ap.add_argument("--days", type=int, default=7, help="Lookback window in days for weekly review inputs.")
+    ap.add_argument(
+        "--feedback_calibration_lookback_days",
+        type=int,
+        default=FEEDBACK_CALIBRATION_LOOKBACK_DAYS,
+        help="Lookback window for candidate outcome calibration evidence.",
+    )
+    ap.add_argument(
+        "--position_lookback_days",
+        type=int,
+        default=DEFAULT_POSITION_LOOKBACK_DAYS,
+        help="Bounded lookback window for position baseline snapshots used in holdings-change attribution.",
+    )
     ap.add_argument("--portfolio_id", default="", help="Optional portfolio filter.")
     ap.add_argument("--include_legacy", action="store_true", default=False, help="Include legacy non-portfolio rows when present.")
     return ap
@@ -595,6 +608,34 @@ def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
 
 def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
     return _column_exists_support(conn, table, column)
+
+
+def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
+def _weekly_audit_where(
+    columns: set[str],
+    *,
+    ts_column: str,
+    since_ts: str,
+    market_filter: str = "",
+    portfolio_filter: str = "",
+    include_legacy: bool = False,
+) -> tuple[str, List[Any]]:
+    if ts_column not in columns:
+        return "0=1", []
+    where = [f"{ts_column} >= ?"]
+    params: List[Any] = [since_ts]
+    if market_filter and "market" in columns:
+        where.append("market = ?")
+        params.append(market_filter)
+    if portfolio_filter and "portfolio_id" in columns:
+        where.append("portfolio_id = ?")
+        params.append(portfolio_filter)
+    elif not include_legacy and "portfolio_id" in columns:
+        where.append("portfolio_id IS NOT NULL AND portfolio_id != ''")
+    return " AND ".join(where), params
 
 
 def _build_position_snapshots(
@@ -1146,9 +1187,17 @@ def main(argv: List[str] | None = None) -> None:
 
     market_filter = resolve_market_code(getattr(args, "market", ""))
     portfolio_filter = str(args.portfolio_id or "").strip()
-    since_dt = datetime.now(timezone.utc) - timedelta(days=max(1, int(args.days)))
+    review_query_now = datetime.now(timezone.utc)
+    since_dt = review_query_now - timedelta(days=max(1, int(args.days)))
     since_ts = since_dt.isoformat()
-    feedback_calibration_since_ts = (datetime.now(timezone.utc) - timedelta(days=FEEDBACK_CALIBRATION_LOOKBACK_DAYS)).isoformat()
+    position_since_ts = (
+        review_query_now
+        - timedelta(days=max(1, int(args.days), int(getattr(args, "position_lookback_days", DEFAULT_POSITION_LOOKBACK_DAYS))))
+    ).isoformat()
+    feedback_calibration_since_ts = (
+        review_query_now
+        - timedelta(days=max(1, int(getattr(args, "feedback_calibration_lookback_days", FEEDBACK_CALIBRATION_LOOKBACK_DAYS))))
+    ).isoformat()
     include_legacy = bool(args.include_legacy)
     labeling_dir = _resolve_labeling_summary_dir(str(args.labeling_dir or ""), market_filter)
 
@@ -1198,57 +1247,96 @@ def main(argv: List[str] | None = None) -> None:
                 f"SELECT * FROM investment_execution_orders WHERE {where_sql} ORDER BY ts DESC, id DESC",
                 params,
             ).fetchall()]
+        active_portfolio_ids = sorted(
+            {
+                str(row.get("portfolio_id") or "").strip()
+                for source_rows in (run_rows, execution_run_rows, trade_rows, execution_order_rows)
+                for row in source_rows
+                if str(row.get("portfolio_id") or "").strip()
+            }
+        )
         fill_rows = []
         if _table_exists(conn, "fills"):
+            fill_table_columns = _table_columns(conn, "fills")
             fill_columns = [
-                "ts",
-                "order_id",
-                "exec_id",
-                "symbol",
-                "qty",
-                "price",
-                "pnl",
-                "actual_slippage_bps",
-                "slippage_bps_deviation",
-                "portfolio_id",
-                "system_kind",
-                "execution_run_id",
+                col
+                for col in [
+                    "ts",
+                    "order_id",
+                    "exec_id",
+                    "symbol",
+                    "qty",
+                    "price",
+                    "pnl",
+                    "actual_slippage_bps",
+                    "slippage_bps_deviation",
+                    "portfolio_id",
+                    "system_kind",
+                    "execution_run_id",
+                ]
+                if col in fill_table_columns
             ]
-            if _column_exists(conn, "fills", "order_submit_ts"):
+            if "order_submit_ts" in fill_table_columns:
                 fill_columns.append("order_submit_ts")
-            if _column_exists(conn, "fills", "fill_delay_seconds"):
+            if "fill_delay_seconds" in fill_table_columns:
                 fill_columns.append("fill_delay_seconds")
+            fill_where_sql, fill_params = _weekly_audit_where(
+                fill_table_columns,
+                ts_column="ts",
+                since_ts=since_ts,
+                market_filter=market_filter,
+                portfolio_filter=portfolio_filter,
+                include_legacy=include_legacy,
+            )
             fill_rows = [dict(row) for row in conn.execute(
-                f"SELECT {', '.join(fill_columns)} FROM fills ORDER BY ts DESC, id DESC"
-            ).fetchall()]
+                f"SELECT {', '.join(fill_columns)} FROM fills WHERE {fill_where_sql} ORDER BY ts DESC, id DESC",
+                fill_params,
+            ).fetchall()] if fill_columns and "ts" in fill_table_columns else []
         commission_rows = []
         if _table_exists(conn, "risk_events"):
+            risk_event_columns = _table_columns(conn, "risk_events")
+            commission_columns = [
+                col
+                for col in ["ts", "kind", "value", "exec_id", "symbol", "portfolio_id", "system_kind", "execution_run_id"]
+                if col in risk_event_columns
+            ]
+            commission_audit_where, commission_audit_params = _weekly_audit_where(
+                risk_event_columns,
+                ts_column="ts",
+                since_ts=since_ts,
+                market_filter=market_filter,
+                portfolio_filter=portfolio_filter,
+                include_legacy=include_legacy,
+            )
+            commission_where = ["kind = ?", commission_audit_where] if "kind" in risk_event_columns else [commission_audit_where]
+            commission_params: List[Any] = ["COMMISSION"] if "kind" in risk_event_columns else []
+            commission_params.extend(commission_audit_params)
             commission_rows = [dict(row) for row in conn.execute(
-                """
-                SELECT ts, kind, value, exec_id, symbol, portfolio_id, system_kind, execution_run_id
+                f"""
+                SELECT {', '.join(commission_columns)}
                 FROM risk_events
-                WHERE kind='COMMISSION'
+                WHERE {' AND '.join(commission_where)}
                 ORDER BY ts DESC, id DESC
-                """
-            ).fetchall()]
+                """,
+                commission_params,
+            ).fetchall()] if commission_columns and "ts" in risk_event_columns else []
 
-        pos_where = []
-        pos_params: List[Any] = []
-        if market_filter:
-            pos_where.append("market = ?")
-            pos_params.append(market_filter)
-        if portfolio_filter:
-            pos_where.append("portfolio_id = ?")
-            pos_params.append(portfolio_filter)
-        elif not include_legacy:
-            pos_where.append("portfolio_id IS NOT NULL AND portfolio_id != ''")
-        pos_sql = ("WHERE " + " AND ".join(pos_where)) if pos_where else ""
+        position_columns = _table_columns(conn, "investment_positions")
+        pos_sql, pos_params = _weekly_audit_where(
+            position_columns,
+            ts_column="ts",
+            since_ts=position_since_ts,
+            market_filter=market_filter,
+            portfolio_filter=portfolio_filter,
+            include_legacy=include_legacy,
+        )
         position_rows = [dict(row) for row in conn.execute(
-            f"SELECT * FROM investment_positions {pos_sql} ORDER BY ts ASC, id ASC",
+            f"SELECT * FROM investment_positions WHERE {pos_sql} ORDER BY ts ASC, id ASC",
             pos_params,
-        ).fetchall()]
+        ).fetchall()] if "ts" in position_columns else []
         snapshot_rows = []
         if _table_exists(conn, "investment_candidate_snapshots"):
+            snapshot_columns = _table_columns(conn, "investment_candidate_snapshots")
             snapshot_where = ["ts >= ?"]
             snapshot_params: List[Any] = [feedback_calibration_since_ts]
             if market_filter:
@@ -1257,6 +1345,9 @@ def main(argv: List[str] | None = None) -> None:
             if portfolio_filter:
                 snapshot_where.append("portfolio_id = ?")
                 snapshot_params.append(portfolio_filter)
+            elif active_portfolio_ids:
+                snapshot_where.append(f"portfolio_id IN ({','.join('?' for _ in active_portfolio_ids)})")
+                snapshot_params.extend(active_portfolio_ids)
             elif not include_legacy:
                 snapshot_where.append("portfolio_id IS NOT NULL AND portfolio_id != ''")
             snapshot_sql = " AND ".join(snapshot_where)
@@ -1268,9 +1359,10 @@ def main(argv: List[str] | None = None) -> None:
                 ORDER BY ts DESC, id DESC
                 """,
                 snapshot_params,
-            ).fetchall()]
+            ).fetchall()] if "ts" in snapshot_columns else []
         outcome_rows = []
         if _table_exists(conn, "investment_candidate_outcomes"):
+            outcome_columns = _table_columns(conn, "investment_candidate_outcomes")
             outcome_where = ["outcome_ts >= ?"]
             outcome_params: List[Any] = [feedback_calibration_since_ts]
             if market_filter:
@@ -1279,6 +1371,9 @@ def main(argv: List[str] | None = None) -> None:
             if portfolio_filter:
                 outcome_where.append("portfolio_id = ?")
                 outcome_params.append(portfolio_filter)
+            elif active_portfolio_ids:
+                outcome_where.append(f"portfolio_id IN ({','.join('?' for _ in active_portfolio_ids)})")
+                outcome_params.extend(active_portfolio_ids)
             elif not include_legacy:
                 outcome_where.append("portfolio_id IS NOT NULL AND portfolio_id != ''")
             outcome_sql = " AND ".join(outcome_where)
@@ -1291,7 +1386,7 @@ def main(argv: List[str] | None = None) -> None:
                 ORDER BY outcome_ts DESC, id DESC
                 """,
                 outcome_params,
-            ).fetchall()]
+            ).fetchall()] if "outcome_ts" in outcome_columns else []
     finally:
         conn.close()
 

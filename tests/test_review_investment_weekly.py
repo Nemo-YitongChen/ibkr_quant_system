@@ -66,11 +66,44 @@ from src.tools.review_investment_weekly import (
     _build_sector_rows,
     _build_weekly_tuning_history_overview,
     _max_drawdown,
+    _weekly_audit_where,
 )
 from src.common.storage import Storage
 
 
 class ReviewInvestmentWeeklyTests(unittest.TestCase):
+    def test_weekly_audit_where_applies_market_and_portfolio_filters(self):
+        where_sql, params = _weekly_audit_where(
+            {"ts", "market", "portfolio_id"},
+            ts_column="ts",
+            since_ts="2026-07-01T00:00:00+00:00",
+            market_filter="HK",
+            portfolio_filter="HK:bluechip",
+            include_legacy=False,
+        )
+        self.assertEqual(where_sql, "ts >= ? AND market = ? AND portfolio_id = ?")
+        self.assertEqual(params, ["2026-07-01T00:00:00+00:00", "HK", "HK:bluechip"])
+
+    def test_weekly_audit_where_excludes_legacy_portfolios_by_default(self):
+        where_sql, params = _weekly_audit_where(
+            {"ts", "portfolio_id"},
+            ts_column="ts",
+            since_ts="2026-07-01T00:00:00+00:00",
+            include_legacy=False,
+        )
+        self.assertEqual(where_sql, "ts >= ? AND portfolio_id IS NOT NULL AND portfolio_id != ''")
+        self.assertEqual(params, ["2026-07-01T00:00:00+00:00"])
+
+    def test_weekly_audit_where_returns_empty_condition_without_timestamp(self):
+        where_sql, params = _weekly_audit_where(
+            {"portfolio_id"},
+            ts_column="ts",
+            since_ts="2026-07-01T00:00:00+00:00",
+            portfolio_filter="P1",
+        )
+        self.assertEqual(where_sql, "0=1")
+        self.assertEqual(params, [])
+
     def test_max_drawdown(self):
         self.assertAlmostEqual(_max_drawdown([100.0, 120.0, 90.0, 110.0]), -0.25, places=6)
 

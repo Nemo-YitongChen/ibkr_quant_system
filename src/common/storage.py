@@ -323,6 +323,14 @@ class Storage:
             self._ensure_column(c, "orders", "system_kind TEXT")
             self._ensure_column(c, "orders", "execution_run_id TEXT")
             self._ensure_column(c, "orders", "execution_intent_json TEXT")
+            c.execute(
+                "CREATE INDEX IF NOT EXISTS idx_fills_weekly_lookup "
+                "ON fills (ts DESC, portfolio_id, system_kind, execution_run_id)"
+            )
+            c.execute(
+                "CREATE INDEX IF NOT EXISTS idx_risk_events_weekly_lookup "
+                "ON risk_events (ts DESC, kind, portfolio_id, system_kind, execution_run_id)"
+            )
             c.execute("""
             CREATE TABLE IF NOT EXISTS regime_state (
                 market TEXT PRIMARY KEY,
@@ -381,6 +389,14 @@ class Storage:
             self._ensure_column(c, "investment_runs", "portfolio_id TEXT")
             self._ensure_column(c, "investment_positions", "portfolio_id TEXT")
             self._ensure_column(c, "investment_trades", "portfolio_id TEXT")
+            c.execute(
+                "CREATE INDEX IF NOT EXISTS idx_investment_positions_weekly_lookup "
+                "ON investment_positions (ts DESC, market, portfolio_id)"
+            )
+            c.execute(
+                "CREATE INDEX IF NOT EXISTS idx_investment_trades_weekly_lookup "
+                "ON investment_trades (ts DESC, market, portfolio_id)"
+            )
             c.execute("""
             CREATE TABLE IF NOT EXISTS investment_execution_runs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -854,6 +870,18 @@ class Storage:
                 """
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_investment_candidate_outcome_key
                 ON investment_candidate_outcomes (snapshot_id, horizon_days)
+                """
+            )
+            c.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_investment_candidate_snapshots_weekly_lookup
+                ON investment_candidate_snapshots (ts DESC, market, portfolio_id, stage, symbol)
+                """
+            )
+            c.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_investment_candidate_outcomes_weekly_lookup
+                ON investment_candidate_outcomes (outcome_ts DESC, market, portfolio_id, symbol, horizon_days)
                 """
             )
 
