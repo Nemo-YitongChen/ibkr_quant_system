@@ -58,6 +58,7 @@ def test_supervisor_runtime_status_marks_current_running_runtime_ready(tmp_path:
             "reason": "cycle_complete",
             "pid": 123,
             "code_revision": "abc",
+            "written_at": "2026-07-02T00:58:00+00:00",
         },
     )
 
@@ -70,9 +71,39 @@ def test_supervisor_runtime_status_marks_current_running_runtime_ready(tmp_path:
 
     assert payload["health_status"] == "ready"
     assert payload["supervisor_code_revision_status"] == "match"
+    assert payload["supervisor_heartbeat_status"] == "fresh"
     assert payload["restart_required"] is False
     assert payload["blocks_recovery_refresh"] is False
     assert payload["next_action"] == "continue_monitoring_supervisor_runtime"
+
+
+def test_supervisor_runtime_status_degrades_stale_running_heartbeat(tmp_path: Path) -> None:
+    summary_dir = tmp_path / "reports_supervisor"
+    _write_json(summary_dir / "supervisor.lock", {"pid": 123})
+    _write_json(
+        summary_dir / "supervisor_shutdown_status.json",
+        {
+            "status": "running",
+            "reason": "cycle_complete",
+            "pid": 123,
+            "code_revision": "abc",
+            "written_at": "2026-07-01T12:00:00+00:00",
+        },
+    )
+
+    payload = build_supervisor_runtime_status(
+        summary_dir=summary_dir,
+        current_revision="abc",
+        now=datetime(2026, 7, 2, 1, 0, tzinfo=timezone.utc),
+        pid_alive_func=lambda pid: True,
+    )
+
+    assert payload["health_status"] == "degraded"
+    assert payload["supervisor_heartbeat_status"] == "stale"
+    assert payload["supervisor_heartbeat_age_hours"] == 13.0
+    assert payload["restart_required"] is True
+    assert payload["blocks_recovery_refresh"] is True
+    assert payload["next_action"] == "restart_stale_supervisor_heartbeat_current_code"
 
 
 def test_supervisor_runtime_status_from_payloads_handles_running_degraded_revision_mismatch(tmp_path: Path) -> None:

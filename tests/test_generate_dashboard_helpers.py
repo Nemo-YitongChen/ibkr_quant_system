@@ -1050,6 +1050,56 @@ def test_build_ops_overview_keeps_running_supervisor_with_live_pid_ready(monkeyp
     assert all(row["category"] != "SUPERVISOR" for row in overview["alert_rows"])
 
 
+def test_build_ops_overview_degrades_stale_running_supervisor_heartbeat(monkeypatch) -> None:
+    monkeypatch.setattr(generate_dashboard, "_supervisor_pid_alive", lambda pid: True)
+    monkeypatch.setattr(generate_dashboard, "_current_git_revision", lambda: "abc123")
+    overview = _build_ops_overview(
+        [],
+        preflight_summary={"pass_count": 1, "warn_count": 0, "fail_count": 0, "checks": []},
+        control_payload={"service": {"status": "configured"}, "actions": {}},
+        execution_mode_summary={"mismatch_count": 0},
+        status_rollout_summary={
+            "market_state_missing_count": 0,
+            "data_attention_count": 0,
+            "data_research_fallback_count": 0,
+            "market_rows": [],
+        },
+        artifact_health_summary={"warning_count": 0, "degraded_count": 0},
+        governance_health_summary={"status": "ready"},
+        supervisor_shutdown_status={
+            "status": "running",
+            "reason": "cycle_complete",
+            "pid": 123,
+            "last_signal_name": "",
+            "code_revision": "abc123",
+            "written_at": "2026-07-01T12:00:00+00:00",
+        },
+        supervisor_runtime_status={
+            "supervisor_status": "running",
+            "supervisor_reason": "cycle_complete",
+            "supervisor_pid": 123,
+            "supervisor_liveness_status": "alive",
+            "supervisor_code_revision": "abc123",
+            "current_code_revision": "abc123",
+            "supervisor_code_revision_status": "match",
+            "supervisor_heartbeat_status": "stale",
+            "supervisor_heartbeat_age_hours": 13.0,
+            "next_action": "restart_stale_supervisor_heartbeat_current_code",
+            "restart_required": True,
+            "blocks_recovery_refresh": True,
+            "request_policy": "no_ibkr_requests_until_supervisor_runtime_current",
+        },
+    )
+
+    categories = {row["category"]: row for row in overview["alert_rows"]}
+    assert overview["supervisor_shutdown_health_status"] == "degraded"
+    assert overview["supervisor_shutdown_status_label"] == "Supervisor 心跳过期"
+    assert overview["supervisor_shutdown_reason"] == "running_status_heartbeat_stale:13.00h"
+    assert overview["supervisor_heartbeat_status"] == "stale"
+    assert overview["supervisor_runtime_next_action"] == "restart_stale_supervisor_heartbeat_current_code"
+    assert categories["SUPERVISOR"]["status"] == "FAIL"
+
+
 def test_build_ops_overview_warns_when_running_supervisor_code_revision_missing(monkeypatch) -> None:
     monkeypatch.setattr(generate_dashboard, "_supervisor_pid_alive", lambda pid: True)
     monkeypatch.setattr(generate_dashboard, "_current_git_revision", lambda: "abc123")

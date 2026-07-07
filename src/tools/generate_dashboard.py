@@ -6188,6 +6188,8 @@ def _build_ops_overview(
     supervisor_code_revision = str(runtime_status.get("supervisor_code_revision") or "").strip()
     dashboard_code_revision = str(runtime_status.get("current_code_revision") or dashboard_code_revision)
     supervisor_code_revision_status = str(runtime_status.get("supervisor_code_revision_status") or "")
+    supervisor_heartbeat_status = str(runtime_status.get("supervisor_heartbeat_status") or "").strip()
+    supervisor_heartbeat_age_hours = runtime_status.get("supervisor_heartbeat_age_hours")
     supervisor_runtime_next_action = str(runtime_status.get("next_action") or "")
     supervisor_runtime_restart_required = bool(runtime_status.get("restart_required", False))
     supervisor_runtime_blocks_recovery_refresh = bool(runtime_status.get("blocks_recovery_refresh", False))
@@ -6202,6 +6204,12 @@ def _build_ops_overview(
             f"running_status_pid_not_alive:{supervisor_shutdown_pid}"
             if supervisor_shutdown_pid > 0
             else "running_status_pid_not_alive"
+        )
+    elif supervisor_shutdown_state in RUNNING_SUPERVISOR_STATES and supervisor_heartbeat_status == "stale":
+        supervisor_shutdown_health_status = "degraded"
+        supervisor_shutdown_status_label = "Supervisor 心跳过期"
+        supervisor_shutdown_reason = (
+            f"running_status_heartbeat_stale:{float(supervisor_heartbeat_age_hours or 0.0):.2f}h"
         )
     elif supervisor_shutdown_state in RUNNING_SUPERVISOR_STATES and supervisor_code_revision_status == "mismatch":
         supervisor_shutdown_health_status = "degraded"
@@ -6400,6 +6408,7 @@ def _build_ops_overview(
         f"offline_recovery={auto_order_offline_recovery_required_count} | "
         f"supervisor_shutdown={supervisor_shutdown_state or 'missing'} | "
         f"supervisor_code={supervisor_code_revision_status or 'n/a'} | "
+        f"supervisor_heartbeat={supervisor_heartbeat_status or 'n/a'} | "
         f"mode_mismatch={execution_mismatch_count} | "
         f"gateway_runtime={gateway_runtime_summary.get('status', 'unknown')} | "
         f"governance={governance_status} | "
@@ -6490,6 +6499,8 @@ def _build_ops_overview(
         "supervisor_code_revision": supervisor_code_revision,
         "dashboard_code_revision": dashboard_code_revision,
         "supervisor_code_revision_status": supervisor_code_revision_status,
+        "supervisor_heartbeat_status": supervisor_heartbeat_status,
+        "supervisor_heartbeat_age_hours": supervisor_heartbeat_age_hours,
         "supervisor_runtime_next_action": supervisor_runtime_next_action,
         "supervisor_runtime_restart_required": supervisor_runtime_restart_required,
         "supervisor_runtime_blocks_recovery_refresh": supervisor_runtime_blocks_recovery_refresh,
