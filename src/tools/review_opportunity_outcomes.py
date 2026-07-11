@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping
@@ -59,6 +60,102 @@ def _iter_weekly_evidence_rows(
             if str(row.get("symbol") or "").strip() not in symbols:
                 continue
             yield dict(row)
+
+
+def _has_outcome_values(rows: Iterable[Mapping[str, Any]]) -> bool:
+    for row in rows or []:
+        if not isinstance(row, Mapping):
+            continue
+        if str(row.get("outcome_5d_bps") or "").strip() or str(row.get("outcome_20d_bps") or "").strip():
+            return True
+    return False
+
+
+def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    try:
+        return {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    except sqlite3.Error:
+        return set()
+
+
+def _iter_candidate_outcome_db_rows(
+    path: Path,
+    *,
+    markets: set[str],
+    portfolio_symbols: Mapping[str, set[str]],
+) -> Iterable[Dict[str, Any]]:
+    """Read mature candidate outcome rows directly from the audit DB.
+
+    Weekly unified evidence can be bounded to keep refreshes fast. For markets
+    with dense candidate snapshots, that may leave only fresh snapshots whose
+    5/20d outcomes have not matured yet. This direct long-table fallback keeps
+    opportunity outcome validation from turning into a false pending signal.
+    """
+    if not path.exists() or not portfolio_symbols:
+        return
+    try:
+        conn = sqlite3.connect(str(path))
+        conn.row_factory = sqlite3.Row
+    except sqlite3.Error:
+        return
+    try:
+        columns = _table_columns(conn, "investment_candidate_outcomes")
+        required = {"market", "portfolio_id", "symbol", "horizon_days", "future_return"}
+        if not required.issubset(columns):
+            return
+        where = ["horizon_days IN (5, 20)", "future_return IS NOT NULL"]
+        params: List[Any] = []
+        clean_markets = sorted(value for value in markets if value)
+        if clean_markets:
+            where.append(f"market IN ({','.join('?' for _ in clean_markets)})")
+            params.extend(clean_markets)
+        clean_portfolios = sorted(key for key in portfolio_symbols if key)
+        if clean_portfolios:
+            where.append(f"portfolio_id IN ({','.join('?' for _ in clean_portfolios)})")
+            params.extend(clean_portfolios)
+        symbol_set = sorted({symbol for symbols in portfolio_symbols.values() for symbol in symbols if symbol})
+        if symbol_set:
+            where.append(f"symbol IN ({','.join('?' for _ in symbol_set)})")
+            params.extend(symbol_set)
+        else:
+            return
+        sql = f"""
+            SELECT market, portfolio_id, symbol, horizon_days, snapshot_ts, outcome_ts, future_return
+            FROM investment_candidate_outcomes
+            WHERE {' AND '.join(where)}
+            ORDER BY outcome_ts DESC, id DESC
+        """
+        for raw in conn.execute(sql, params):
+            row = dict(raw)
+            portfolio_id = str(row.get("portfolio_id") or "")
+            symbol = str(row.get("symbol") or "").strip()
+            symbols = portfolio_symbols.get(portfolio_id)
+            if symbols is None or symbol not in symbols:
+                continue
+            horizon_days = _int(row.get("horizon_days"), 0)
+            try:
+                outcome_bps = float(row.get("future_return") or 0.0) * 10000.0
+            except (TypeError, ValueError):
+                continue
+            out = {
+                "market": resolve_market_code(str(row.get("market") or "")),
+                "portfolio_id": portfolio_id,
+                "symbol": symbol,
+                "decision_ts": str(row.get("snapshot_ts") or ""),
+                "outcome_ts": str(row.get("outcome_ts") or ""),
+                "outcome_source": "investment_candidate_outcomes",
+            }
+            if horizon_days == 5:
+                out["outcome_5d_bps"] = outcome_bps
+            elif horizon_days == 20:
+                out["outcome_20d_bps"] = outcome_bps
+            else:
+                continue
+            yield out
+    except sqlite3.Error:
+        return
+    finally:
+        conn.close()
 
 
 def _flatten_validation_row(row: Mapping[str, Any]) -> Dict[str, Any]:
@@ -456,6 +553,7 @@ def build_opportunity_outcome_validation_payload(
     *,
     market_readiness_path: Path,
     weekly_unified_evidence_path: Path,
+    candidate_outcomes_db_path: Path | None = None,
     market: str = "",
 ) -> Dict[str, Any]:
     market_filter = resolve_market_code(market)
@@ -504,6 +602,18 @@ def build_opportunity_outcome_validation_payload(
             portfolio_symbols=portfolio_symbols,
         )
     )
+    outcome_source = "weekly_unified_evidence"
+    if not _has_outcome_values(matched_outcome_rows) and candidate_outcomes_db_path is not None:
+        db_rows = list(
+            _iter_candidate_outcome_db_rows(
+                candidate_outcomes_db_path,
+                markets={value for value in markets if value},
+                portfolio_symbols=portfolio_symbols,
+            )
+        )
+        if db_rows:
+            matched_outcome_rows = db_rows
+            outcome_source = "investment_candidate_outcomes"
     validation_rows: List[Dict[str, Any]] = []
     calibration_by_key: Dict[tuple[str, str, str], Dict[str, Any]] = {}
     for group in groups:
@@ -530,6 +640,8 @@ def build_opportunity_outcome_validation_payload(
         "market": market_filter,
         "market_readiness_path": str(market_readiness_path),
         "weekly_unified_evidence_path": str(weekly_unified_evidence_path),
+        "candidate_outcomes_db_path": str(candidate_outcomes_db_path or ""),
+        "outcome_source": outcome_source,
         "summary": build_candidate_outcome_validation_summary(validation_rows),
         "calibration_suggestion_summary": build_calibration_suggestion_summary(calibration_suggestions),
         "calibration_suggestions": calibration_suggestions,
@@ -727,6 +839,11 @@ def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
         help="Path to weekly_unified_evidence.csv.",
     )
     parser.add_argument(
+        "--db",
+        default="",
+        help="Optional audit.db path used to backfill candidate outcomes when weekly evidence has no mature outcomes.",
+    )
+    parser.add_argument(
         "--out_dir",
         default="runtime_data/paper_investment_only_duq152001/reports_supervisor",
         help="Directory for validation artifacts.",
@@ -741,6 +858,7 @@ def main(argv: List[str] | None = None) -> None:
     payload = build_opportunity_outcome_validation_payload(
         market_readiness_path=Path(args.market_readiness),
         weekly_unified_evidence_path=Path(args.weekly_unified_evidence),
+        candidate_outcomes_db_path=Path(args.db) if str(args.db or "").strip() else None,
         market=str(args.market or ""),
     )
     json_path = out_dir / "opportunity_outcome_validation.json"

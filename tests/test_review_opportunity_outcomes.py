@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import sqlite3
 from pathlib import Path
 
 from src.tools.review_opportunity_outcomes import build_opportunity_outcome_validation_payload
@@ -304,3 +305,108 @@ def test_opportunity_outcome_validation_suggests_hk_post_cost_review(tmp_path: P
     assert trial["requires_submit_quality_pass"] is True
     assert trial["auto_apply"] is False
     assert payload["calibration_trial_plan_summary"]["p1_ready_for_manual_review_count"] == 1
+
+
+def test_opportunity_outcome_validation_backfills_from_candidate_outcomes_db_when_weekly_is_pending(
+    tmp_path: Path,
+) -> None:
+    readiness_path = tmp_path / "market_readiness.json"
+    weekly_path = tmp_path / "weekly_unified_evidence.csv"
+    db_path = tmp_path / "audit.db"
+    readiness_path.write_text(
+        json.dumps(
+            {
+                "opportunity_calibration": {
+                    "post_cost_rows": [
+                        {
+                            "market": "HK",
+                            "portfolio_id": "HK:resolved_hk_top100_bluechip",
+                            "positive_post_cost_rows": [{"symbol": "0005.HK"}],
+                        }
+                    ],
+                    "wait_pullback_rows": [],
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    _write_csv(
+        weekly_path,
+        [
+            {
+                "market": "HK",
+                "portfolio_id": "HK:resolved_hk_top100_bluechip",
+                "symbol": "0005.HK",
+                "outcome_5d_bps": "",
+                "outcome_20d_bps": "",
+            }
+        ],
+    )
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            """
+            CREATE TABLE investment_candidate_outcomes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                market TEXT,
+                portfolio_id TEXT,
+                symbol TEXT,
+                horizon_days INTEGER,
+                snapshot_ts TEXT,
+                outcome_ts TEXT,
+                future_return REAL
+            )
+            """
+        )
+        rows = []
+        for idx in range(5):
+            rows.append(
+                (
+                    "HK",
+                    "HK:resolved_hk_top100_bluechip",
+                    "0005.HK",
+                    5,
+                    f"2026-05-{idx + 1:02d}T00:00:00+00:00",
+                    f"2026-05-{idx + 8:02d}T00:00:00+00:00",
+                    0.012,
+                )
+            )
+            rows.append(
+                (
+                    "HK",
+                    "HK:resolved_hk_top100_bluechip",
+                    "0005.HK",
+                    20,
+                    f"2026-05-{idx + 1:02d}T00:00:00+00:00",
+                    f"2026-05-{idx + 25:02d}T00:00:00+00:00",
+                    0.021,
+                )
+            )
+        conn.executemany(
+            """
+            INSERT INTO investment_candidate_outcomes (
+                market, portfolio_id, symbol, horizon_days, snapshot_ts, outcome_ts, future_return
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    payload = build_opportunity_outcome_validation_payload(
+        market_readiness_path=readiness_path,
+        weekly_unified_evidence_path=weekly_path,
+        candidate_outcomes_db_path=db_path,
+        market="HK",
+    )
+
+    assert payload["outcome_source"] == "investment_candidate_outcomes"
+    row = payload["rows"][0]
+    assert row["status"] == "OUTCOME_SUPPORTS_GROUP"
+    assert row["matched_symbol_count"] == 1
+    assert row["matured_5d_sample_count"] == 5
+    assert row["matured_20d_sample_count"] == 5
+    assert row["avg_outcome_5d_bps"] == 120.0
+    assert row["avg_outcome_20d_bps"] == 210.0
