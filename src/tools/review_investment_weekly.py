@@ -152,6 +152,8 @@ log = get_logger("tools.review_investment_weekly")
 BASE_DIR = Path(__file__).resolve().parents[2]
 FEEDBACK_CALIBRATION_LOOKBACK_DAYS = 180
 DEFAULT_POSITION_LOOKBACK_DAYS = 45
+DEFAULT_CANDIDATE_SNAPSHOT_LIMIT = 20000
+DEFAULT_CANDIDATE_OUTCOME_LIMIT = 60000
 DEFAULT_PAPER_CFG = InvestmentPaperConfig()
 DEFAULT_EXECUTION_CFG = InvestmentExecutionConfig()
 
@@ -195,6 +197,18 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_POSITION_LOOKBACK_DAYS,
         help="Bounded lookback window for position baseline snapshots used in holdings-change attribution.",
+    )
+    ap.add_argument(
+        "--candidate_snapshot_limit",
+        type=int,
+        default=DEFAULT_CANDIDATE_SNAPSHOT_LIMIT,
+        help="Maximum candidate snapshot rows to load for weekly decision evidence.",
+    )
+    ap.add_argument(
+        "--candidate_outcome_limit",
+        type=int,
+        default=DEFAULT_CANDIDATE_OUTCOME_LIMIT,
+        help="Maximum candidate outcome rows to load for weekly decision evidence.",
     )
     ap.add_argument("--portfolio_id", default="", help="Optional portfolio filter.")
     ap.add_argument("--include_legacy", action="store_true", default=False, help="Include legacy non-portfolio rows when present.")
@@ -1198,6 +1212,8 @@ def main(argv: List[str] | None = None) -> None:
         review_query_now
         - timedelta(days=max(1, int(getattr(args, "feedback_calibration_lookback_days", FEEDBACK_CALIBRATION_LOOKBACK_DAYS))))
     ).isoformat()
+    candidate_snapshot_limit = max(1, int(getattr(args, "candidate_snapshot_limit", DEFAULT_CANDIDATE_SNAPSHOT_LIMIT)))
+    candidate_outcome_limit = max(1, int(getattr(args, "candidate_outcome_limit", DEFAULT_CANDIDATE_OUTCOME_LIMIT)))
     include_legacy = bool(args.include_legacy)
     labeling_dir = _resolve_labeling_summary_dir(str(args.labeling_dir or ""), market_filter)
 
@@ -1357,8 +1373,9 @@ def main(argv: List[str] | None = None) -> None:
                 FROM investment_candidate_snapshots
                 WHERE {snapshot_sql}
                 ORDER BY ts DESC, id DESC
+                LIMIT ?
                 """,
-                snapshot_params,
+                [*snapshot_params, candidate_snapshot_limit],
             ).fetchall()] if "ts" in snapshot_columns else []
         outcome_rows = []
         if _table_exists(conn, "investment_candidate_outcomes"):
@@ -1384,8 +1401,9 @@ def main(argv: List[str] | None = None) -> None:
                 FROM investment_candidate_outcomes
                 WHERE {outcome_sql}
                 ORDER BY outcome_ts DESC, id DESC
+                LIMIT ?
                 """,
-                outcome_params,
+                [*outcome_params, candidate_outcome_limit],
             ).fetchall()] if "outcome_ts" in outcome_columns else []
     finally:
         conn.close()

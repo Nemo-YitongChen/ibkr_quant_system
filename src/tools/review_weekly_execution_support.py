@@ -1247,16 +1247,29 @@ def _order_execution_microstructure(row: Dict[str, Any]) -> Dict[str, Any]:
         "market_rule_status": str(_pick("market_rule_status", "") or "").strip().upper(),
     }
 
-def _enrich_snapshot_rows(snapshot_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _enrich_snapshot_rows(
+    snapshot_rows: List[Dict[str, Any]],
+    *,
+    snapshot_ids: set[str] | None = None,
+    portfolio_symbol_keys: set[tuple[str, str, str]] | None = None,
+) -> List[Dict[str, Any]]:
     enriched: List[Dict[str, Any]] = []
     for raw in list(snapshot_rows or []):
         row = dict(raw)
+        snapshot_id = str(row.get("snapshot_id") or "").strip()
+        if snapshot_ids is not None and snapshot_id not in snapshot_ids:
+            continue
+        report_dir = str(row.get("report_dir") or "").strip()
+        portfolio_id = str(row.get("portfolio_id") or "").strip()
+        symbol = str(row.get("symbol") or "").upper().strip()
+        if portfolio_symbol_keys is not None and (report_dir, portfolio_id, symbol) not in portfolio_symbol_keys:
+            continue
         details = _parse_json_dict(row.get("details"))
         stage = str(row.get("stage") or details.get("stage") or "").strip().lower()
         row["details_json"] = details
         row["stage"] = stage
         row["analysis_run_id"] = str(row.get("analysis_run_id") or "").strip()
-        row["report_dir"] = str(row.get("report_dir") or "").strip()
+        row["report_dir"] = report_dir
         row["stage_rank"] = _safe_int(details.get("stage_rank"), 0)
         row["stage1_rank"] = _safe_int(details.get("stage1_rank"), 0)
         row["expected_edge_threshold"] = _safe_float(
@@ -1288,7 +1301,16 @@ def _link_execution_orders_to_candidate_snapshots(
         for row in list(execution_runs or [])
         if str(row.get("run_id") or "").strip()
     }
-    enriched_snapshots = _enrich_snapshot_rows(snapshot_rows)
+    order_lookup_keys: set[tuple[str, str, str]] = set()
+    for raw in list(execution_orders or []):
+        run_id = str(raw.get("run_id") or "").strip()
+        meta = dict(run_meta.get(run_id) or {})
+        report_dir = str(meta.get("report_dir") or "").strip()
+        portfolio_id = str(raw.get("portfolio_id") or meta.get("portfolio_id") or "").strip()
+        symbol = str(raw.get("symbol") or "").upper().strip()
+        if report_dir and portfolio_id and symbol:
+            order_lookup_keys.add((report_dir, portfolio_id, symbol))
+    enriched_snapshots = _enrich_snapshot_rows(snapshot_rows, portfolio_symbol_keys=order_lookup_keys)
     snapshots_by_key: Dict[tuple[str, str, str, str], List[Dict[str, Any]]] = {}
     snapshots_by_symbol: Dict[tuple[str, str, str], List[Dict[str, Any]]] = {}
     for row in enriched_snapshots:
@@ -1626,7 +1648,16 @@ def _build_weekly_outcome_spread_rows(
     outcome_rows: List[Dict[str, Any]],
     execution_parent_rows: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    snapshots = {str(row.get("snapshot_id") or ""): row for row in _enrich_snapshot_rows(snapshot_rows) if str(row.get("snapshot_id") or "").strip()}
+    outcome_snapshot_ids = {
+        str(row.get("snapshot_id") or "").strip()
+        for row in list(outcome_rows or [])
+        if str(row.get("snapshot_id") or "").strip()
+    }
+    snapshots = {
+        str(row.get("snapshot_id") or ""): row
+        for row in _enrich_snapshot_rows(snapshot_rows, snapshot_ids=outcome_snapshot_ids)
+        if str(row.get("snapshot_id") or "").strip()
+    }
     status_by_snapshot: Dict[str, str] = {}
     precedence = {"FILLED": 4, "SUBMITTED": 3, "BLOCKED_EDGE": 2, "BLOCKED_GATE": 1, "PLANNED": 0}
     for row in list(execution_parent_rows or []):

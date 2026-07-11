@@ -625,6 +625,10 @@ class Supervisor:
             str(int(self.cfg.get("weekly_review_feedback_calibration_lookback_days", 180) or 180)),
             "--position_lookback_days",
             str(int(self.cfg.get("weekly_review_position_lookback_days", 45) or 45)),
+            "--candidate_snapshot_limit",
+            str(int(self.cfg.get("weekly_review_candidate_snapshot_limit", 20000) or 20000)),
+            "--candidate_outcome_limit",
+            str(int(self.cfg.get("weekly_review_candidate_outcome_limit", 60000) or 60000)),
         ]
         market_filter = str(self.cfg.get("weekly_review_market", "") or "").strip()
         portfolio_filter = str(self.cfg.get("weekly_review_portfolio_id", "") or "").strip()

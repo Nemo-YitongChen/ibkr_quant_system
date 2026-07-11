@@ -56,19 +56,26 @@ def test_storage_retries_short_lived_sqlite_write_lock(tmp_path):
     assert row == ("lock-retry-run", "HK", "paper-hk")
 
 
-def test_storage_initializes_weekly_review_query_indexes(tmp_path):
+def test_storage_does_not_implicitly_create_heavy_weekly_review_indexes(tmp_path):
     db_path = tmp_path / "audit.db"
     Storage(str(db_path))
 
-    expected_indexes = {
-        "fills": {"idx_fills_weekly_lookup"},
-        "risk_events": {"idx_risk_events_weekly_lookup"},
-        "investment_positions": {"idx_investment_positions_weekly_lookup"},
-        "investment_trades": {"idx_investment_trades_weekly_lookup"},
-        "investment_candidate_snapshots": {"idx_investment_candidate_snapshots_weekly_lookup"},
-        "investment_candidate_outcomes": {"idx_investment_candidate_outcomes_weekly_lookup"},
+    heavy_indexes = {
+        "idx_fills_weekly_lookup",
+        "idx_risk_events_weekly_lookup",
+        "idx_investment_positions_weekly_lookup",
+        "idx_investment_trades_weekly_lookup",
+        "idx_investment_candidate_snapshots_weekly_lookup",
+        "idx_investment_candidate_outcomes_weekly_lookup",
     }
     with sqlite3.connect(str(db_path)) as conn:
-        for table, names in expected_indexes.items():
+        for table in (
+            "fills",
+            "risk_events",
+            "investment_positions",
+            "investment_trades",
+            "investment_candidate_snapshots",
+            "investment_candidate_outcomes",
+        ):
             actual = {str(row[1]) for row in conn.execute(f"PRAGMA index_list({table})").fetchall()}
-            assert names <= actual
+            assert actual.isdisjoint(heavy_indexes)
