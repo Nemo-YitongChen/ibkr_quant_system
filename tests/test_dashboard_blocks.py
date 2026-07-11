@@ -189,6 +189,37 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
                 },
             ],
         },
+        "auto_order_unblock_plan": {
+            "status": "ready",
+            "reason": "safe_no_submit_unblock_plan_built",
+            "generated_at": "2026-07-11T13:20:37+00:00",
+            "apply_requested": False,
+            "submit_orders": False,
+            "target_market": "US",
+            "target_portfolio_id": "US:watchlist",
+            "target_symbols": "SCHX",
+            "commands": [
+                {
+                    "step": "refresh_investment_report",
+                    "requires_gateway": True,
+                    "submit_orders": False,
+                    "argv": ["python", "-m", "src.tools.generate_investment_report"],
+                },
+                {
+                    "step": "refresh_execution_no_submit",
+                    "requires_gateway": True,
+                    "submit_orders": False,
+                    "argv": ["python", "-m", "src.tools.run_investment_execution", "--recovery_evidence_only"],
+                },
+                {
+                    "step": "refresh_dashboard",
+                    "requires_gateway": False,
+                    "submit_orders": False,
+                    "argv": ["python", "-m", "src.tools.generate_dashboard"],
+                },
+            ],
+            "command_results": [],
+        },
         "opportunity_outcome_validation": {
             "summary": {
                 "validation_count": 2,
@@ -640,6 +671,16 @@ def test_dashboard_v2_blocks_include_control_market_and_evidence_layers():
     )
     assert by_id["auto_order_readiness"]["metrics"]["stale_execution_refresh_submit_orders"] == 0
     assert by_id["auto_order_readiness"]["rows"]["stale_execution_refresh_plan"]["rows"][0]["market"] == "HK"
+    assert by_id["auto_order_readiness"]["metrics"]["unblock_plan_artifact_present"] == 1
+    assert by_id["auto_order_readiness"]["metrics"]["unblock_plan_artifact_status"] == "ready"
+    assert by_id["auto_order_readiness"]["metrics"]["unblock_plan_artifact_apply_requested"] == 0
+    assert by_id["auto_order_readiness"]["metrics"]["unblock_plan_artifact_submit_orders"] == 0
+    assert by_id["auto_order_readiness"]["metrics"]["unblock_plan_artifact_command_count"] == 3
+    assert by_id["auto_order_readiness"]["metrics"]["unblock_plan_artifact_gateway_command_count"] == 2
+    assert by_id["auto_order_readiness"]["metrics"]["unblock_plan_artifact_failed_command_count"] == 0
+    assert by_id["auto_order_readiness"]["metrics"]["unblock_plan_artifact_target_market"] == "US"
+    assert by_id["auto_order_readiness"]["metrics"]["unblock_plan_artifact_target_portfolio_id"] == "US:watchlist"
+    assert by_id["auto_order_readiness"]["rows"]["unblock_plan_commands"][1]["step"] == "refresh_execution_no_submit"
     assert by_id["auto_order_readiness"]["metrics"]["post_cost_calibration_portfolio_count"] == 1
     assert by_id["auto_order_readiness"]["metrics"]["post_cost_review_portfolio_count"] == 1
     assert by_id["auto_order_readiness"]["metrics"]["post_cost_high_cost_candidate_count"] == 2

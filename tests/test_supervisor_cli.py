@@ -4322,6 +4322,66 @@ class SupervisorCliTests(unittest.TestCase):
             self.assertIn('data-simple-section="weekly-execution"', html_text)
             self.assertIn("2026-W11", html_text)
 
+    def test_dashboard_loads_auto_order_unblock_plan(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            cfg_path = base / "supervisor.yaml"
+            summary_dir = base / "reports_supervisor"
+            unblock_dir = summary_dir / "auto_order_unblock"
+            unblock_dir.mkdir(parents=True, exist_ok=True)
+            (unblock_dir / "auto_order_unblock_plan.json").write_text(
+                json.dumps(
+                    {
+                        "status": "ready",
+                        "reason": "safe_no_submit_unblock_plan_built",
+                        "apply_requested": False,
+                        "submit_orders": False,
+                        "target_market": "US",
+                        "target_portfolio_id": "US:watchlist",
+                        "target_symbols": "SCHX",
+                        "commands": [
+                            {
+                                "step": "refresh_investment_report",
+                                "requires_gateway": True,
+                                "submit_orders": False,
+                            },
+                            {
+                                "step": "refresh_execution_no_submit",
+                                "requires_gateway": True,
+                                "submit_orders": False,
+                            },
+                        ],
+                        "command_results": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            cfg_path.write_text(
+                "\n".join(
+                    [
+                        'timezone: "Australia/Sydney"',
+                        f'summary_out_dir: "{summary_dir}"',
+                        "poll_sec: 30",
+                        "markets: []",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            payload = build_dashboard(str(cfg_path), str(summary_dir))
+            block_by_id = {row["id"]: row for row in payload["dashboard_v2_blocks"]}
+            auto_order_block = block_by_id["auto_order_readiness"]
+
+            self.assertEqual(payload["auto_order_unblock_plan"]["status"], "ready")
+            self.assertEqual(auto_order_block["metrics"]["unblock_plan_artifact_present"], 1)
+            self.assertEqual(auto_order_block["metrics"]["unblock_plan_artifact_command_count"], 2)
+            self.assertEqual(auto_order_block["metrics"]["unblock_plan_artifact_gateway_command_count"], 2)
+            self.assertEqual(auto_order_block["metrics"]["unblock_plan_artifact_submit_orders"], 0)
+            self.assertEqual(
+                auto_order_block["rows"]["unblock_plan_commands"][1]["step"],
+                "refresh_execution_no_submit",
+            )
+
     def test_dashboard_loads_execution_weekly_groups(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)

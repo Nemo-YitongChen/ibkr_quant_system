@@ -979,3 +979,14 @@
 - 交易含义：这一步不连接 IBKR、不提交订单、不改变候选、不放宽任何 risk/edge/cost/liquidity/market-rule/Gateway/submit-quality gate；它只是把当前最强 blocker 的恢复步骤从手工流程变成可复核 artifact。
 - 归档：`docs/change_archive_2026-07-11_auto_order_unblock_plan_tool.md`。
 - 验证：`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_apply_auto_order_unblock_plan.py tests/test_review_opportunity_outcomes.py tests/test_dashboard_blocks.py` -> `24 passed`；`PYTHONDONTWRITEBYTECODE=1 python -m src.tools.apply_auto_order_unblock_plan --config config/supervisor.yaml --runtime_root runtime_data/paper_investment_only_duq152001` -> `status=ready`、`target_market=US`、`target_portfolio_id=US:watchlist`、`submit_orders=false`、`command_count=5`。
+
+## 78. 2026-07-11 Auto-order unblock visibility in dashboard
+
+- `generate_dashboard` 现在读取 `reports_supervisor/auto_order_unblock/auto_order_unblock_plan.json` 并放入 `payload["auto_order_unblock_plan"]`。
+- `auto_order_readiness` dashboard block 现在直接展示 unblock dry-run artifact，不新增 dashboard block，避免破坏 home/advanced 信息架构和 block 数量契约。
+- 新增 metrics：`unblock_plan_artifact_present/status/reason/generated_at/apply_requested/submit_orders/command_count/gateway_command_count/failed_command_count/target_market/target_portfolio_id/target_symbols`。
+- 新增 rows：`unblock_plan_artifact`、`unblock_plan_commands`、`unblock_plan_command_results`，让 dashboard advanced JSON 可以直接审查恢复命令和执行结果。
+- 已刷新真实 runtime dashboard：`dashboard_v2_blocks` 仍为 `14`；`auto_order_readiness` block 显示 `unblock_plan_artifact_status=ready`、`command_count=5`、`gateway_command_count=2`、`submit_orders=0`、目标 `US:watchlist`。
+- 交易含义：这一步不连接 IBKR、不提交订单、不改变候选、不放宽任何 risk/edge/cost/liquidity/market-rule/Gateway/submit-quality gate；它只让下一步 no-submit 恢复计划在 dashboard 中可见，减少人工翻 filesystem 的恢复风险。
+- 归档：`docs/change_archive_2026-07-11_auto_order_unblock_dashboard_visibility.md`。
+- 验证：`PYTHONDONTWRITEBYTECODE=1 python -m py_compile src/tools/dashboard_blocks.py src/tools/generate_dashboard.py`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_dashboard_blocks.py tests/test_apply_auto_order_unblock_plan.py` -> `18 passed`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_supervisor_cli.py::SupervisorCliTests::test_dashboard_loads_auto_order_unblock_plan` -> `1 passed`；`PYTHONDONTWRITEBYTECODE=1 python -m src.tools.generate_dashboard --config config/supervisor.yaml --out_dir runtime_data/paper_investment_only_duq152001/reports_supervisor` 完成。

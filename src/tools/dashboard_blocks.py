@@ -438,6 +438,7 @@ def build_ops_health_block(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
     auto_order = _dict(payload.get("auto_order_readiness"))
+    auto_order_unblock_plan = _dict(payload.get("auto_order_unblock_plan"))
     health = _dict(payload.get("auto_order_readiness_health"))
     ops = _dict(payload.get("ops_overview"))
     summary = _dict(auto_order.get("summary"))
@@ -487,6 +488,17 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
         frequency_plan=frequency_plan,
         remediation_plan=_rows(summary.get("remediation_plan"), limit=20),
     )
+    unblock_plan_commands = _rows(auto_order_unblock_plan.get("commands"), limit=20)
+    unblock_plan_results = _rows(auto_order_unblock_plan.get("command_results"), limit=20)
+    unblock_plan_failed_results = [
+        row for row in unblock_plan_results if not bool(row.get("ok", False))
+    ]
+    unblock_plan_gateway_command_count = sum(
+        1 for row in unblock_plan_commands if bool(row.get("requires_gateway", False))
+    )
+    unblock_plan_any_submit_orders = any(
+        bool(row.get("submit_orders", False)) for row in unblock_plan_commands
+    ) or bool(auto_order_unblock_plan.get("submit_orders", False))
     execution_evidence_maintenance = _dict(
         auto_order.get("execution_evidence_maintenance")
     )
@@ -728,6 +740,22 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "unblock_plan_target_portfolio_id": str(
                 unblock_plan.get("target_portfolio_id") or ""
             ),
+            "unblock_plan_artifact_present": int(bool(auto_order_unblock_plan)),
+            "unblock_plan_artifact_status": str(auto_order_unblock_plan.get("status") or ""),
+            "unblock_plan_artifact_reason": str(auto_order_unblock_plan.get("reason") or ""),
+            "unblock_plan_artifact_generated_at": str(auto_order_unblock_plan.get("generated_at") or ""),
+            "unblock_plan_artifact_apply_requested": int(
+                bool(auto_order_unblock_plan.get("apply_requested", False))
+            ),
+            "unblock_plan_artifact_submit_orders": int(bool(unblock_plan_any_submit_orders)),
+            "unblock_plan_artifact_command_count": len(unblock_plan_commands),
+            "unblock_plan_artifact_gateway_command_count": int(unblock_plan_gateway_command_count),
+            "unblock_plan_artifact_failed_command_count": len(unblock_plan_failed_results),
+            "unblock_plan_artifact_target_market": str(auto_order_unblock_plan.get("target_market") or ""),
+            "unblock_plan_artifact_target_portfolio_id": str(
+                auto_order_unblock_plan.get("target_portfolio_id") or ""
+            ),
+            "unblock_plan_artifact_target_symbols": str(auto_order_unblock_plan.get("target_symbols") or ""),
             "execution_evidence_maintenance_status": str(
                 execution_evidence_maintenance.get("status")
                 or summary.get("execution_evidence_maintenance_status")
@@ -884,6 +912,9 @@ def build_auto_order_readiness_block(payload: Dict[str, Any]) -> Dict[str, Any]:
             "recovery_plan": recovery_plan,
             "recovery_eligibility": recovery_eligibility,
             "unblock_plan": unblock_plan,
+            "unblock_plan_artifact": auto_order_unblock_plan,
+            "unblock_plan_commands": unblock_plan_commands,
+            "unblock_plan_command_results": unblock_plan_results,
             "execution_evidence_maintenance": execution_evidence_maintenance,
             "opportunity_outcome_validation": opportunity_outcome_validation,
             "opportunity_calibration_suggestions": calibration_suggestions,

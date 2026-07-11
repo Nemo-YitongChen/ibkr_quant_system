@@ -8126,6 +8126,7 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
     dashboard_control = _load_dashboard_control_payload(summary_dir, cfg, cards)
     _attach_dashboard_control(cards, dashboard_control)
     auto_order_readiness = _load_json(summary_dir / "auto_order_readiness.json")
+    auto_order_unblock_plan = _load_json(summary_dir / "auto_order_unblock" / "auto_order_unblock_plan.json")
     opportunity_outcome_validation = _load_json(summary_dir / "opportunity_outcome_validation.json")
     supervisor_shutdown_status = _load_json(summary_dir / "supervisor_shutdown_status.json")
     supervisor_lock_owner = _load_json(summary_dir / "supervisor.lock")
@@ -8298,6 +8299,7 @@ def build_dashboard(config_path: str, out_dir: str) -> Dict[str, Any]:
         "ops_overview": ops_overview,
         "auto_order_readiness": auto_order_readiness,
         "auto_order_readiness_health": auto_order_readiness_health,
+        "auto_order_unblock_plan": auto_order_unblock_plan,
         "opportunity_outcome_validation": opportunity_outcome_validation,
         "supervisor_runtime_status": supervisor_runtime_status,
         "supervisor_shutdown_status": supervisor_shutdown_status,
