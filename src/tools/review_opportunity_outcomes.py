@@ -23,6 +23,21 @@ def _load_json_dict(path: Path) -> Dict[str, Any]:
         return {}
 
 
+def _infer_candidate_outcomes_db_path(*paths: Path) -> Path | None:
+    for raw_path in paths:
+        path = Path(raw_path)
+        search_roots = [path.parent, *path.parents]
+        seen: set[Path] = set()
+        for root in search_roots:
+            if root in seen:
+                continue
+            seen.add(root)
+            candidate = root / "audit.db"
+            if candidate.exists():
+                return candidate
+    return None
+
+
 def _rows(value: Any) -> List[Dict[str, Any]]:
     if not isinstance(value, list):
         return []
@@ -855,10 +870,17 @@ def main(argv: List[str] | None = None) -> None:
     args = parse_args(argv)
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    market_readiness_path = Path(args.market_readiness)
+    weekly_unified_evidence_path = Path(args.weekly_unified_evidence)
+    candidate_outcomes_db_path = (
+        Path(args.db)
+        if str(args.db or "").strip()
+        else _infer_candidate_outcomes_db_path(market_readiness_path, weekly_unified_evidence_path)
+    )
     payload = build_opportunity_outcome_validation_payload(
-        market_readiness_path=Path(args.market_readiness),
-        weekly_unified_evidence_path=Path(args.weekly_unified_evidence),
-        candidate_outcomes_db_path=Path(args.db) if str(args.db or "").strip() else None,
+        market_readiness_path=market_readiness_path,
+        weekly_unified_evidence_path=weekly_unified_evidence_path,
+        candidate_outcomes_db_path=candidate_outcomes_db_path,
         market=str(args.market or ""),
     )
     json_path = out_dir / "opportunity_outcome_validation.json"

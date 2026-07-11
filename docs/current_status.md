@@ -957,3 +957,14 @@
 - 交易含义：不放宽 HK risk/edge/cost/liquidity/market-rule/Gateway/submit-quality gate；继续要求 fresh BUY plan、whole-share feasible、post-cost positive、limit order、Gateway budget OK 和 submit-quality pass 后，才可人工评估 paper-only 小额 trial。
 - 归档：`docs/change_archive_2026-07-11_hk_outcome_db_backfill_and_shutdown_diagnosis.md`。
 - 验证：`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_review_opportunity_outcomes.py` -> `5 passed`；`PYTHONDONTWRITEBYTECODE=1 python -m src.tools.review_opportunity_outcomes --market HK ... --db runtime_data/paper_investment_only_duq152001/audit.db` 完成；`PYTHONDONTWRITEBYTECODE=1 python -m src.tools.review_opportunity_outcomes ... --db runtime_data/paper_investment_only_duq152001/audit.db --out_dir runtime_data/paper_investment_only_duq152001/reports_supervisor` 完成；`PYTHONDONTWRITEBYTECODE=1 python -m src.tools.generate_dashboard --config config/supervisor.yaml --out_dir runtime_data/paper_investment_only_duq152001/reports_supervisor` 完成。
+
+## 76. 2026-07-11 Opportunity outcome validation infers runtime audit DB
+
+- `review_opportunity_outcomes` 保留显式 `--db`，同时在未传 `--db` 时会从 `market_readiness.json` 和 `weekly_unified_evidence.csv` 的标准 runtime 路径向上寻找 `audit.db`。
+- DB fallback 仍只在 matched weekly evidence 没有任何 5d/20d outcome 值时启用；如果 weekly evidence 已经有 outcome，不会重复读取 DB 或双算。
+- 这减少了 dashboard/outcome 刷新时漏传 `--db` 的人工错误，使 bounded weekly review 与 mature outcome 验证可以并存。
+- 已用无 `--db` 命令刷新 HK-only artifact，自动推断到 `runtime_data/paper_investment_only_duq152001/audit.db`，`outcome_source=investment_candidate_outcomes`，HK summary 为 validations `4`、matched symbols `6`、matured 5d `943`、matured 20d `499`。
+- 已用无 `--db` 命令刷新 root `opportunity_outcome_validation.json`，并重建 dashboard；当前 dashboard 继续显示 root outcome source 为 `investment_candidate_outcomes`。
+- 当前 auto-order strongest blocker 仍是 `market_readiness_not_ready` / `STALE_EXECUTION_ARTIFACT`，unblock plan 是 `US:watchlist` 单目标 no-submit stale execution refresh；本轮没有执行 IBKR-backed refresh、没有提交订单、没有放宽任何 risk/edge/cost/liquidity/market-rule/Gateway/submit-quality gate。
+- 归档：`docs/change_archive_2026-07-11_opportunity_outcome_runtime_db_inference.md`。
+- 验证：`PYTHONDONTWRITEBYTECODE=1 python -m py_compile src/tools/review_opportunity_outcomes.py`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_review_opportunity_outcomes.py` -> `6 passed`；`PYTHONDONTWRITEBYTECODE=1 python -m src.tools.review_opportunity_outcomes --market HK ... --out_dir runtime_data/paper_investment_only_duq152001/reports_supervisor/hk_opportunity_outcome_validation` 完成；`PYTHONDONTWRITEBYTECODE=1 python -m src.tools.review_opportunity_outcomes ... --out_dir runtime_data/paper_investment_only_duq152001/reports_supervisor` 完成；`PYTHONDONTWRITEBYTECODE=1 python -m src.tools.generate_dashboard --config config/supervisor.yaml --out_dir runtime_data/paper_investment_only_duq152001/reports_supervisor` 完成。

@@ -6,6 +6,7 @@ import sqlite3
 from pathlib import Path
 
 from src.tools.review_opportunity_outcomes import build_opportunity_outcome_validation_payload
+from src.tools.review_opportunity_outcomes import main as review_opportunity_outcomes_main
 
 
 def _write_csv(path: Path, rows: list[dict]) -> None:
@@ -410,3 +411,114 @@ def test_opportunity_outcome_validation_backfills_from_candidate_outcomes_db_whe
     assert row["matured_20d_sample_count"] == 5
     assert row["avg_outcome_5d_bps"] == 120.0
     assert row["avg_outcome_20d_bps"] == 210.0
+
+
+def test_opportunity_outcome_validation_cli_infers_runtime_audit_db_when_db_not_passed(tmp_path: Path) -> None:
+    runtime_root = tmp_path / "runtime"
+    summary_dir = runtime_root / "reports_supervisor"
+    weekly_dir = runtime_root / "reports_investment_weekly"
+    out_dir = runtime_root / "hk_outcomes"
+    readiness_path = summary_dir / "market_readiness.json"
+    weekly_path = weekly_dir / "weekly_unified_evidence.csv"
+    db_path = runtime_root / "audit.db"
+    readiness_path.parent.mkdir(parents=True, exist_ok=True)
+    weekly_path.parent.mkdir(parents=True, exist_ok=True)
+    readiness_path.write_text(
+        json.dumps(
+            {
+                "opportunity_calibration": {
+                    "post_cost_rows": [
+                        {
+                            "market": "HK",
+                            "portfolio_id": "HK:resolved_hk_top100_bluechip",
+                            "positive_post_cost_rows": [{"symbol": "0005.HK"}],
+                        }
+                    ],
+                    "wait_pullback_rows": [],
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    _write_csv(
+        weekly_path,
+        [
+            {
+                "market": "HK",
+                "portfolio_id": "HK:resolved_hk_top100_bluechip",
+                "symbol": "0005.HK",
+                "outcome_5d_bps": "",
+                "outcome_20d_bps": "",
+            }
+        ],
+    )
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            """
+            CREATE TABLE investment_candidate_outcomes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                market TEXT,
+                portfolio_id TEXT,
+                symbol TEXT,
+                horizon_days INTEGER,
+                snapshot_ts TEXT,
+                outcome_ts TEXT,
+                future_return REAL
+            )
+            """
+        )
+        conn.executemany(
+            """
+            INSERT INTO investment_candidate_outcomes (
+                market, portfolio_id, symbol, horizon_days, snapshot_ts, outcome_ts, future_return
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    "HK",
+                    "HK:resolved_hk_top100_bluechip",
+                    "0005.HK",
+                    5,
+                    f"2026-05-{idx + 1:02d}T00:00:00+00:00",
+                    f"2026-05-{idx + 8:02d}T00:00:00+00:00",
+                    0.01,
+                )
+                for idx in range(5)
+            ]
+            + [
+                (
+                    "HK",
+                    "HK:resolved_hk_top100_bluechip",
+                    "0005.HK",
+                    20,
+                    f"2026-05-{idx + 1:02d}T00:00:00+00:00",
+                    f"2026-05-{idx + 25:02d}T00:00:00+00:00",
+                    0.02,
+                )
+                for idx in range(5)
+            ],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    review_opportunity_outcomes_main(
+        [
+            "--market",
+            "HK",
+            "--market_readiness",
+            str(readiness_path),
+            "--weekly_unified_evidence",
+            str(weekly_path),
+            "--out_dir",
+            str(out_dir),
+        ]
+    )
+
+    payload = json.loads((out_dir / "opportunity_outcome_validation.json").read_text(encoding="utf-8"))
+    assert payload["candidate_outcomes_db_path"] == str(db_path)
+    assert payload["outcome_source"] == "investment_candidate_outcomes"
+    assert payload["summary"]["matured_5d_sample_count"] == 5
+    assert payload["summary"]["matured_20d_sample_count"] == 5
