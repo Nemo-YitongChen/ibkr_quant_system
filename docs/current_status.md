@@ -968,3 +968,14 @@
 - 当前 auto-order strongest blocker 仍是 `market_readiness_not_ready` / `STALE_EXECUTION_ARTIFACT`，unblock plan 是 `US:watchlist` 单目标 no-submit stale execution refresh；本轮没有执行 IBKR-backed refresh、没有提交订单、没有放宽任何 risk/edge/cost/liquidity/market-rule/Gateway/submit-quality gate。
 - 归档：`docs/change_archive_2026-07-11_opportunity_outcome_runtime_db_inference.md`。
 - 验证：`PYTHONDONTWRITEBYTECODE=1 python -m py_compile src/tools/review_opportunity_outcomes.py`；`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_review_opportunity_outcomes.py` -> `6 passed`；`PYTHONDONTWRITEBYTECODE=1 python -m src.tools.review_opportunity_outcomes --market HK ... --out_dir runtime_data/paper_investment_only_duq152001/reports_supervisor/hk_opportunity_outcome_validation` 完成；`PYTHONDONTWRITEBYTECODE=1 python -m src.tools.review_opportunity_outcomes ... --out_dir runtime_data/paper_investment_only_duq152001/reports_supervisor` 完成；`PYTHONDONTWRITEBYTECODE=1 python -m src.tools.generate_dashboard --config config/supervisor.yaml --out_dir runtime_data/paper_investment_only_duq152001/reports_supervisor` 完成。
+
+## 77. 2026-07-11 Auto-order unblock plan dry-run tool
+
+- 新增 `src/tools/apply_auto_order_unblock_plan.py` 和 console script `ibkr-quant-auto-order-unblock`，把 `auto_order_readiness.summary.unblock_plan` 转换为可审计的恢复命令计划。
+- 工具默认 dry-run，只写 `auto_order_unblock_plan.json/md`；只有显式 `--apply` 才会执行命令。
+- 安全约束写入代码级 contract：只支持 `stale_execution_refresh_required / refresh_stale_execution_target_no_submit`；如果源 unblock plan 出现 `submit_orders=true`、未知 action/status、找不到目标 portfolio，直接输出 blocked 且不生成命令。
+- 生成的 execution refresh 命令强制包含 `--recovery_evidence_only`，并且永远不包含 `--submit`；所有 command spec 均标记 `submit_orders=false`、`paper_only=true`。
+- 已对真实 runtime 生成 dry-run artifact：`runtime_data/paper_investment_only_duq152001/reports_supervisor/auto_order_unblock/auto_order_unblock_plan.json`，当前目标为 `US:watchlist` / `SCHX`，共 5 步：US report refresh、US execution no-submit refresh、market readiness、auto-order readiness、dashboard。
+- 交易含义：这一步不连接 IBKR、不提交订单、不改变候选、不放宽任何 risk/edge/cost/liquidity/market-rule/Gateway/submit-quality gate；它只是把当前最强 blocker 的恢复步骤从手工流程变成可复核 artifact。
+- 归档：`docs/change_archive_2026-07-11_auto_order_unblock_plan_tool.md`。
+- 验证：`PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider tests/test_apply_auto_order_unblock_plan.py tests/test_review_opportunity_outcomes.py tests/test_dashboard_blocks.py` -> `24 passed`；`PYTHONDONTWRITEBYTECODE=1 python -m src.tools.apply_auto_order_unblock_plan --config config/supervisor.yaml --runtime_root runtime_data/paper_investment_only_duq152001` -> `status=ready`、`target_market=US`、`target_portfolio_id=US:watchlist`、`submit_orders=false`、`command_count=5`。
